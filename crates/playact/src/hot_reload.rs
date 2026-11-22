@@ -15,13 +15,10 @@ use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::config::{ConfigBuildError, ConfigError, NodeRegistry, TreeSpec};
+use crate::config::{ConfigBuildError, ConfigError, NodeRegistry, TreeParser, TreeSpec};
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
-
-/// 配置文本解析器。JSON/TOML/YAML/RON 构造器会自动提供。
-pub type TreeParser = fn(&str) -> Result<TreeSpec, ConfigError>;
 
 /// 热重载错误。
 #[derive(Debug)]

@@ -295,6 +295,29 @@ let tree = playact::bt!(World, "player", reactive_selector {
 - 未知节点、叶子带 body、装饰器子节点数量不对都会在宏展开期报错；最后仍走 builder 的 typestate 检查；
 - `bt!` 返回 `Result<BehaviorTree<W>, BuildError>`。
 
+## 远程配置
+
+启用 `remote-config` feature（使用 `reqwest::blocking`）：
+
+```rust
+use playact::remote_config::RemoteTreeLoader;
+
+let mut loader = RemoteTreeLoader::<World>::json("https://example.com/ai.json", registry)?
+    .with_refresh_interval(Duration::from_secs(30));
+
+loop {
+    loader.poll()?; // 到间隔才发起请求，304 不重建
+    loader.tree_mut().tick(&mut world, time);
+}
+```
+
+- 初次加载失败直接返回错误；之后刷新失败保留旧树；
+- 支持 ETag / Last-Modified 条件请求，304 返回 `false`；
+- 刷新成功保留黑板数据、重置节点内部状态；Tracer 不保留；
+- `with_client` 可配置代理、超时、TLS；`json`/`toml`/`yaml`/`ron` 随 feature 提供；
+- 请求在调用 `poll`/`tick` 的线程同步执行，高延迟环境请放到工作线程，或给 Client 设置超时；
+- 不暴露 async runtime；`reqwest::blocking` 的内部运行时不进入 playact API。
+
 ## Feature 矩阵
 
 | feature | 内容 |
@@ -306,6 +329,7 @@ let tree = playact::bt!(World, "player", reactive_selector {
 | `ron` | `from_ron_str` |
 | `tracing` | `TracingTracer` |
 | `hot-reload` | `TreeWatcher` + `notify` 文件监听（依赖 `config`） |
+| `remote-config` | `RemoteTreeLoader` + `reqwest::blocking` HTTP 配置（依赖 `config`） |
 | `macros` | `playact-macros` 的 `bt!` proc-macro DSL |
 | `full` | 以上全部 |
 
@@ -317,6 +341,7 @@ let tree = playact::bt!(World, "player", reactive_selector {
 - 不要求 `Sync`；
 - `W` 不必 `Send`/`Sync`，因为树只在一帧内借用 `&mut W`，不存储它；
 - `hot-reload` 的 `notify` 回调只在后台线程发送事件；重建与 tick 仍在调用 `poll`/`tick` 的线程同步执行；
+- `remote-config` 的 HTTP 请求在调用线程同步执行；高延迟场景请放到工作线程或自定义 `Client` 超时；
 - `AsyncAction` 在 tick 线程 poll；`ThreadTask` 的工作线程只用 channel 回报，取消是协作式的；
 - 黑板值要求 `Send + 'static`；
 - 每个 AI 持有自己的树和黑板，多 AI 用工厂函数分别构建；共享世界由驱动方顺序 tick 或自行同步。
@@ -364,10 +389,11 @@ cargo doc --workspace --all-features --no-deps
 - `SubtreeFactory`：可克隆、可重复实例化的子树工厂；
 - `MemParallel`：跨 tick 累计终态的并行节点；
 - `hot-reload`：`TreeWatcher` 文件监听、去抖重载、黑板保留、失败回退旧树；
+- `remote-config`：`RemoteTreeLoader` HTTP 拉取、间隔刷新、ETag/Last-Modified、304 不重建；
 - `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
 - `macros`：`bt!` proc-macro DSL，展开为 builder 调用。
 
-仍未实现：远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
+仍未实现：共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
 
 ## License
 

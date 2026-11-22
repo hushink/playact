@@ -84,6 +84,8 @@ pub mod error;
 pub mod hot_reload;
 pub mod leaf;
 pub mod node;
+#[cfg(feature = "remote-config")]
+pub mod remote_config;
 pub mod status;
 pub mod subtree;
 pub mod time;
@@ -98,6 +100,8 @@ pub use composite::{
     MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
     Threshold,
 };
+#[cfg(feature = "config")]
+pub use config::TreeParser;
 pub use context::Context;
 pub use decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK, Repeat,
@@ -105,9 +109,11 @@ pub use decorator::{
 };
 pub use error::BuildError;
 #[cfg(feature = "hot-reload")]
-pub use hot_reload::{HotReloadError, TreeParser, TreeWatcher};
+pub use hot_reload::{HotReloadError, TreeWatcher};
 pub use leaf::{Action, Condition, Wait};
 pub use node::{BoxedNode, Kind, Node};
+#[cfg(feature = "remote-config")]
+pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
 pub use status::Status;
 pub use subtree::SubtreeFactory;
 pub use time::Time;
@@ -122,6 +128,8 @@ pub use playact_macros::bt;
 
 /// 常用类型与宏的集中导入。
 pub mod prelude {
+    #[cfg(feature = "config")]
+    pub use crate::TreeParser;
     #[cfg(feature = "macros")]
     pub use crate::bt;
     pub use crate::key;
@@ -135,5 +143,7 @@ pub mod prelude {
         Wait,
     };
     #[cfg(feature = "hot-reload")]
-    pub use crate::{HotReloadError, TreeParser, TreeWatcher};
+    pub use crate::{HotReloadError, TreeWatcher};
+    #[cfg(feature = "remote-config")]
+    pub use crate::{RemoteConfigError, RemoteTreeLoader};
 }

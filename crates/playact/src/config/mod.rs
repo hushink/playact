@@ -16,6 +16,9 @@ pub mod registry;
 pub use error::{ConfigBuildError, ConfigBuildErrorKind, ConfigError, RegistryError};
 pub use registry::NodeRegistry;
 
+/// 配置文本解析器。JSON/TOML/YAML/RON 构造器会自动提供。
+pub type TreeParser = fn(&str) -> Result<TreeSpec, ConfigError>;
+
 /// 当前支持的 spec 版本。
 pub const CURRENT_VERSION: u32 = 1;
 
