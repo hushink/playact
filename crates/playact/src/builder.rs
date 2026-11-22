@@ -11,17 +11,18 @@ use core::time::Duration;
 
 #[cfg(feature = "std")]
 use crate::async_action::{AsyncAction, AsyncTask};
+use crate::blackboard::Key;
 use crate::composite::{
     MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
-    Threshold,
+    Threshold, WeightedChild, WeightedRandomSelector,
 };
 use crate::context::Context;
 use crate::decorator::{
-    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Repeat, Retry, Timeout, UntilFailure,
-    UntilSuccess,
+    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Repeat, Retry, Throttle, Timeout,
+    UntilFailure, UntilSuccess,
 };
 use crate::error::BuildError;
-use crate::leaf::{Action, Condition, Wait};
+use crate::leaf::{Action, Condition, SetValue, Wait};
 use crate::node::BoxedNode;
 use crate::status::Status;
 use crate::subtree::SubtreeFactory;
@@ -214,6 +215,19 @@ where
         self.push_node(Box::new(Wait::new(duration)))
     }
 
+    /// 追加一个向黑板写入固定值的叶子；每次 tick 都写入。
+    pub fn set_value<T>(
+        self,
+        name: impl Into<String>,
+        key: &Key<T>,
+        value: T,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        T: Clone + Send + 'static,
+    {
+        self.push_node(Box::new(SetValue::<W, T>::new(name, key, value)))
+    }
+
     /// 追加一个已经构造好的自定义节点/子树。
     pub fn raw(self, node: BoxedNode<W>) -> BehaviorTreeBuilder<W, S::Next> {
         self.push_node(node)
@@ -295,6 +309,18 @@ where
         let (children, error) = branch.into_parts();
         self.push_node(Box::new(RandomSelector::new(children, seed)))
             .set_error(error)
+    }
+
+    /// 追加一个带权重的随机选择节点。
+    ///
+    /// builder 闭包无法表达每个子节点的权重，因此这里直接接收构造好的
+    /// [`WeightedChild`]；需要闭包作用域时可先构造节点再用 `.raw(...)`。
+    pub fn weighted_random_selector(
+        self,
+        children: Vec<WeightedChild<W>>,
+        seed: u64,
+    ) -> BehaviorTreeBuilder<W, S::Next> {
+        self.push_node(Box::new(WeightedRandomSelector::new(children, seed)))
     }
 
     /// 打开一个并行节点（单 tick 汇总）。
@@ -448,6 +474,16 @@ where
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
     ) -> BehaviorTreeBuilder<W, S::Next> {
         self.decorator(f, move |child| Box::new(Limiter::new(max, child)))
+    }
+
+    /// 时间窗口限流。
+    pub fn throttle(
+        self,
+        window: Duration,
+        max: core::num::NonZeroUsize,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+    ) -> BehaviorTreeBuilder<W, S::Next> {
+        self.decorator(f, move |child| Box::new(Throttle::new(window, max, child)))
     }
 }
 

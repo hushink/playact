@@ -150,6 +150,13 @@ pub enum ConfigBuildErrorKind {
         /// 错误消息。
         message: String,
     },
+    /// include 解析失败。
+    Include {
+        /// include 路径。
+        path: String,
+        /// 错误消息。
+        message: String,
+    },
 }
 
 impl fmt::Display for ConfigBuildErrorKind {
@@ -166,6 +173,9 @@ impl fmt::Display for ConfigBuildErrorKind {
             Self::InvalidThreshold(error) => error.fmt(f),
             Self::InvalidTree { message } => f.write_str(message),
             Self::Custom { message } => f.write_str(message),
+            Self::Include { path, message } => {
+                write!(f, "include `{path}` failed: {message}")
+            }
         }
     }
 }

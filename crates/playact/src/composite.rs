@@ -590,6 +590,217 @@ impl<W> Node<W> for RandomSelector<W> {
     }
 }
 
+// ==================== 带权重随机选择 ====================
+
+/// 带权重的随机选择子节点。
+///
+/// `weight = 0` 表示该分支永远不会被选中；权重越大被抽中的概率越高。
+pub struct WeightedChild<W> {
+    weight: u32,
+    child: BoxedNode<W>,
+}
+
+impl<W> WeightedChild<W> {
+    /// 用权重和子节点构造。
+    #[must_use]
+    pub fn new(weight: u32, child: BoxedNode<W>) -> Self {
+        Self { weight, child }
+    }
+
+    /// 该分支的相对权重。
+    #[must_use]
+    pub fn weight(&self) -> u32 {
+        self.weight
+    }
+}
+
+impl<W> core::fmt::Debug for WeightedChild<W> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WeightedChild")
+            .field("weight", &self.weight)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 带权重、确定性 seed 的随机选择节点。
+///
+/// 需要选择新分支时，按权重无放回抽样生成一个确定性的尝试顺序；某个分支
+/// 进入 `Running` 后，后续 tick 继续它，不会重新抽样丢弃进度。分支失败后
+/// 才在同一 tick 尝试顺序中的下一个分支。
+///
+/// 相同 `seed` 与相同 tick 序列产生相同顺序；`reset()` 恢复初始 seed。
+/// 所有分支权重为 0（或没有子节点）时直接 `Failure`。
+pub struct WeightedRandomSelector<W> {
+    name: String,
+    children: Vec<BoxedNode<W>>,
+    weights: Vec<u32>,
+    seed: u64,
+    rng: u64,
+    order: Vec<usize>,
+    position: usize,
+    current: Option<usize>,
+}
+
+impl<W> WeightedRandomSelector<W> {
+    /// 用带权重的子节点和确定性 seed 构造。`seed = 0` 会被替换为固定非零值。
+    #[must_use]
+    pub fn new(children: Vec<WeightedChild<W>>, seed: u64) -> Self {
+        let seed = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
+
+        let mut nodes = Vec::with_capacity(children.len());
+        let mut weights = Vec::with_capacity(children.len());
+        for weighted in children {
+            nodes.push(weighted.child);
+            weights.push(weighted.weight);
+        }
+
+        Self {
+            name: String::from("WeightedRandomSelector"),
+            children: nodes,
+            weights,
+            seed,
+            rng: seed,
+            order: Vec::new(),
+            position: 0,
+            current: None,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut value = self.rng;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.rng = value;
+        value.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn build_order(&mut self) {
+        self.order.clear();
+        self.position = 0;
+
+        let mut remaining: Vec<(usize, u32)> = self
+            .weights
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, weight)| *weight > 0)
+            .collect();
+
+        while !remaining.is_empty() {
+            let total: u64 = remaining.iter().map(|(_, weight)| u64::from(*weight)).sum();
+            let mut draw = self.next_u64() % total;
+            let mut picked = 0;
+            for (position, (_, weight)) in remaining.iter().enumerate() {
+                let weight = u64::from(*weight);
+                if draw < weight {
+                    picked = position;
+                    break;
+                }
+                draw -= weight;
+            }
+            let (index, _) = remaining.swap_remove(picked);
+            self.order.push(index);
+        }
+    }
+
+    fn finish_activation(&mut self) {
+        self.order.clear();
+        self.position = 0;
+        self.current = None;
+    }
+
+    fn abort_index(&mut self, ctx: &mut Context<'_, W>, index: usize) {
+        if index < self.children.len() {
+            ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+        }
+    }
+}
+
+impl<W> Node<W> for WeightedRandomSelector<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.children.is_empty() {
+            return Status::Failure;
+        }
+
+        if let Some(index) = self.current.take() {
+            match ctx.tick_child(index, &mut self.children[index]) {
+                Status::Success => {
+                    self.finish_activation();
+                    return Status::Success;
+                }
+                Status::Failure => {}
+                Status::Running => {
+                    self.current = Some(index);
+                    return Status::Running;
+                }
+            }
+        }
+
+        if self.order.is_empty() {
+            self.build_order();
+        }
+
+        while self.position < self.order.len() {
+            let index = self.order[self.position];
+            self.position += 1;
+
+            match ctx.tick_child(index, &mut self.children[index]) {
+                Status::Failure => {}
+                Status::Running => {
+                    self.current = Some(index);
+                    return Status::Running;
+                }
+                Status::Success => {
+                    self.finish_activation();
+                    return Status::Success;
+                }
+            }
+        }
+
+        self.finish_activation();
+        Status::Failure
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        if let Some(index) = self.current.take() {
+            self.abort_index(ctx, index);
+        }
+        self.finish_activation();
+    }
+
+    fn reset(&mut self) {
+        self.finish_activation();
+        self.rng = self.seed;
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::WeightedRandomSelector
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+}
+
 // ==================== 并行 ====================
 
 fn validate_parallel_thresholds(
@@ -1352,5 +1563,128 @@ mod tests {
         let mut c = Context::new(&mut world, &mut bb, Time::from_millis(150, 150));
         assert_eq!(tree.tick(&mut c), Status::Failure);
         assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn weighted_random_selector_skips_zero_weight() {
+        let zero_calls = Arc::new(AtomicU32::new(0));
+        let zero_in_action = Arc::clone(&zero_calls);
+        let weighted_calls = Arc::new(AtomicU32::new(0));
+        let weighted_in_action = Arc::clone(&weighted_calls);
+
+        let mut tree = WeightedRandomSelector::new(
+            vec![
+                WeightedChild::new(
+                    0,
+                    Box::new(Action::new("zero", move |_| {
+                        zero_in_action.fetch_add(1, Ordering::Relaxed);
+                        Status::Success
+                    })),
+                ),
+                WeightedChild::new(
+                    5,
+                    Box::new(Action::new("weighted", move |_| {
+                        weighted_in_action.fetch_add(1, Ordering::Relaxed);
+                        Status::Success
+                    })),
+                ),
+            ],
+            7,
+        );
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        for _ in 0..20 {
+            assert_eq!(tree.tick(&mut c), Status::Success);
+        }
+
+        assert_eq!(zero_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(weighted_calls.load(Ordering::Relaxed), 20);
+
+        let mut all_zero = WeightedRandomSelector::new(
+            vec![WeightedChild::new(
+                0,
+                Box::new(Action::new("zero", |_| Status::Success)),
+            )],
+            7,
+        );
+        assert_eq!(all_zero.tick(&mut c), Status::Failure);
+    }
+
+    #[test]
+    fn weighted_random_selector_keeps_running_branch() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+
+        let mut tree = WeightedRandomSelector::new(
+            vec![
+                WeightedChild::new(
+                    1,
+                    Box::new(Action::new("hold", move |_| {
+                        calls_in_action.fetch_add(1, Ordering::Relaxed);
+                        Status::Running
+                    })),
+                ),
+                WeightedChild::new(0, Box::new(Action::new("never", |_| Status::Success))),
+            ],
+            7,
+        );
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn weighted_random_selector_is_deterministic_and_resettable() {
+        fn build(seed: u64, log: Arc<Mutex<Vec<&'static str>>>) -> WeightedRandomSelector<()> {
+            let mut children = Vec::new();
+            for (name, weight) in [("a", 1), ("b", 2), ("c", 5)] {
+                let log = Arc::clone(&log);
+                children.push(WeightedChild::new(
+                    weight,
+                    Box::new(Action::new(name, move |_| {
+                        log.lock().expect("log lock").push(name);
+                        Status::Success
+                    })),
+                ));
+            }
+            WeightedRandomSelector::new(children, seed)
+        }
+
+        fn run(seed: u64) -> Vec<&'static str> {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let mut tree = build(seed, Arc::clone(&log));
+
+            let mut world = ();
+            let mut bb = Blackboard::new();
+            let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+            for _ in 0..12 {
+                assert_eq!(tree.tick(&mut c), Status::Success);
+            }
+
+            tree.reset();
+            for _ in 0..12 {
+                assert_eq!(tree.tick(&mut c), Status::Success);
+            }
+
+            log.lock().expect("log lock").clone()
+        }
+
+        let first = run(1234);
+        let second = run(1234);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 24);
+        assert!(first.contains(&"a"));
+        assert!(first.contains(&"b"));
+        assert!(first.contains(&"c"));
+
+        let first_half = &first[..12];
+        let second_half = &first[12..];
+        assert_eq!(first_half, second_half);
     }
 }

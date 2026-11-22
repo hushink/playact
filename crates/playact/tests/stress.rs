@@ -10,7 +10,8 @@ use std::time::Duration;
 use playact::{
     Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BoxedNode, Condition, Cooldown, Inverter, Key,
     Limiter, MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
-    Retry, Selector, Sequence, Status, Threshold, Time, Timeout, UntilFailure, UntilSuccess, Wait,
+    Retry, Selector, Sequence, SetValue, Status, Threshold, Throttle, Time, Timeout, UntilFailure,
+    UntilSuccess, Wait, WeightedChild, WeightedRandomSelector,
 };
 
 static COUNTER: Key<u64> = playact::key!("stress_counter");
@@ -43,7 +44,7 @@ impl Rng {
 }
 
 fn random_leaf(rng: &mut Rng) -> BoxedNode<World> {
-    match rng.below(3) {
+    match rng.below(4) {
         0 => {
             let mut state = rng.next() | 1;
             Box::new(Action::<World>::new("random_action", move |ctx| {
@@ -70,9 +71,14 @@ fn random_leaf(rng: &mut Rng) -> BoxedNode<World> {
                 ctx.blackboard_ref().get(&COUNTER).copied().unwrap_or(0) % 16 == threshold
             }))
         }
-        _ => Box::new(Wait::<World>::new(Duration::from_millis(
+        2 => Box::new(Wait::<World>::new(Duration::from_millis(
             rng.below(32) as u64
         ))),
+        _ => Box::new(SetValue::<World, u64>::new(
+            "set_counter",
+            &COUNTER,
+            rng.next(),
+        )),
     }
 }
 
@@ -102,7 +108,7 @@ fn random_children(rng: &mut Rng, depth: usize, budget: &mut usize) -> Vec<Boxed
 
 fn random_decorator(rng: &mut Rng, depth: usize, budget: &mut usize) -> BoxedNode<World> {
     let child = random_node(rng, depth - 1, budget);
-    match rng.below(10) {
+    match rng.below(11) {
         0 => Box::new(Inverter::new(child)),
         1 => Box::new(AlwaysSucceed::new(child)),
         2 => Box::new(AlwaysFail::new(child)),
@@ -116,6 +122,11 @@ fn random_decorator(rng: &mut Rng, depth: usize, budget: &mut usize) -> BoxedNod
         )),
         8 => Box::new(Timeout::new(
             Duration::from_millis(rng.below(64) as u64),
+            child,
+        )),
+        9 => Box::new(Throttle::new(
+            Duration::from_millis(rng.below(64) as u64),
+            random_nonzero(rng),
             child,
         )),
         _ => Box::new(Limiter::new(random_nonzero(rng), child)),
@@ -156,7 +167,19 @@ fn random_node(rng: &mut Rng, depth: usize, budget: &mut usize) -> BoxedNode<Wor
             let children = random_children(rng, depth, budget);
             Box::new(RandomSelector::new(children, rng.next()))
         }
-        10 => Box::new(BehaviorTree::new(random_node(rng, depth - 1, budget))),
+        10 => {
+            let count = rng.below(5);
+            let mut children = Vec::with_capacity(count);
+            for _ in 0..count {
+                let weight = rng.below(6) as u32;
+                children.push(WeightedChild::new(
+                    weight,
+                    random_node(rng, depth - 1, budget),
+                ));
+            }
+            Box::new(WeightedRandomSelector::new(children, rng.next()))
+        }
+        11 => Box::new(BehaviorTree::new(random_node(rng, depth - 1, budget))),
         _ => random_decorator(rng, depth, budget),
     }
 }
@@ -164,7 +187,14 @@ fn random_node(rng: &mut Rng, depth: usize, budget: &mut usize) -> BoxedNode<Wor
 fn random_tree(seed: u64, depth: usize, budget: usize) -> BehaviorTree<World> {
     let mut rng = Rng::new(seed);
     let mut budget = budget;
-    BehaviorTree::new(random_node(&mut rng, depth, &mut budget))
+    let root = random_node(&mut rng, depth, &mut budget);
+    let mut tree = BehaviorTree::new(root);
+
+    for _ in 0..rng.below(3) {
+        tree.add_service(random_node(&mut rng, 2, &mut budget));
+    }
+
+    tree
 }
 
 #[test]

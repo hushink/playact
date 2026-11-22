@@ -11,9 +11,11 @@ use crate::composite::Threshold;
 
 mod build;
 pub mod error;
+mod include;
 pub mod registry;
 
 pub use error::{ConfigBuildError, ConfigBuildErrorKind, ConfigError, RegistryError};
+pub use include::{FsIncludeResolver, IncludeResolver};
 pub use registry::NodeRegistry;
 
 /// 配置文本解析器。JSON/TOML/YAML/RON 构造器会自动提供。
@@ -21,6 +23,9 @@ pub type TreeParser = fn(&str) -> Result<TreeSpec, ConfigError>;
 
 /// 当前支持的 spec 版本。
 pub const CURRENT_VERSION: u32 = 1;
+
+/// include 的最大嵌套层数，用于兜底防止解析器返回循环配置。
+pub const MAX_INCLUDE_DEPTH: usize = 32;
 
 fn default_version() -> u32 {
     CURRENT_VERSION
@@ -97,6 +102,20 @@ pub enum SpecNode {
         name: Option<String>,
         /// 确定性 seed。
         seed: u64,
+        /// 子节点。
+        #[serde(default)]
+        children: Vec<SpecNode>,
+    },
+    /// 带权重的随机选择。
+    WeightedRandomSelector {
+        /// 显示名。
+        #[serde(default)]
+        name: Option<String>,
+        /// 确定性 seed。
+        seed: u64,
+        /// 与 `children` 一一对应的权重；省略时全部按 1 处理，0 表示永不选择。
+        #[serde(default)]
+        weights: Vec<u32>,
         /// 子节点。
         #[serde(default)]
         children: Vec<SpecNode>,
@@ -221,6 +240,18 @@ pub enum SpecNode {
         /// 子节点。
         child: Box<SpecNode>,
     },
+    /// 时间窗口限流。
+    Throttle {
+        /// 显示名。
+        #[serde(default)]
+        name: Option<String>,
+        /// 窗口长度（毫秒）。
+        window_ms: u64,
+        /// 窗口内最多终态次数。
+        max: core::num::NonZeroUsize,
+        /// 子节点。
+        child: Box<SpecNode>,
+    },
     /// 等待。
     Wait {
         /// 显示名。
@@ -244,6 +275,14 @@ pub enum SpecNode {
         /// 参数。
         #[serde(default)]
         params: Value,
+    },
+    /// 引入另一份配置；需要 [`TreeSpec::build_with_resolver`]。
+    Include {
+        /// 交给 resolver 解释的路径。
+        path: String,
+        /// 显示名，默认使用 `path`。
+        #[serde(default)]
+        name: Option<String>,
     },
     /// 自定义节点。
     Custom {
@@ -397,6 +436,105 @@ mod tests {
         let mut tree = spec.build(&action_registry()).expect("build tree");
         let mut world = ();
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_weighted_random_selector_from_json() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"weighted_random_selector","seed":7,"weights":[0,1],"children":[{"type":"action","name":"ok"},{"type":"action","name":"ok"}]}}"#,
+        )
+        .expect("valid spec");
+
+        let mut tree = spec.build(&action_registry()).expect("build tree");
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn weighted_selector_rejects_weight_length_mismatch() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"weighted_random_selector","seed":7,"weights":[1],"children":[{"type":"action","name":"ok"},{"type":"action","name":"ok"}]}}"#,
+        )
+        .expect("valid spec");
+
+        let error = spec
+            .build(&action_registry())
+            .err()
+            .expect("weight mismatch");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::InvalidTree { .. }
+        ));
+    }
+
+    #[test]
+    fn builds_throttle_from_json() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"throttle","window_ms":100,"max":1,"child":{"type":"action","name":"ok"}}}"#,
+        )
+        .expect("valid spec");
+
+        let mut tree = spec.build(&action_registry()).expect("build tree");
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(
+            tree.tick(&mut world, Time::from_millis(50, 50)),
+            Status::Failure
+        );
+        assert_eq!(
+            tree.tick(&mut world, Time::from_millis(100, 50)),
+            Status::Success
+        );
+    }
+
+    #[test]
+    fn include_without_resolver_errors() {
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"include","path":"sub"}}"#)
+            .expect("valid spec");
+
+        let error = spec
+            .build(&action_registry())
+            .err()
+            .expect("include requires resolver");
+        assert!(matches!(error.kind(), ConfigBuildErrorKind::Include { .. }));
+    }
+
+    #[test]
+    fn include_resolves_nested_spec() {
+        let resolver = |path: &str| -> Result<TreeSpec, ConfigError> {
+            match path {
+                "sub" => TreeSpec::from_json_str(r#"{"root":{"type":"action","name":"ok"}}"#),
+                other => Err(ConfigError::new(format!("unknown include `{other}`"))),
+            }
+        };
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"include","path":"sub","name":"included"}}"#,
+        )
+        .expect("valid spec");
+
+        let mut tree = spec
+            .build_with_resolver(&action_registry(), &resolver)
+            .expect("build tree");
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.describe().name, "included");
+    }
+
+    #[test]
+    fn include_cycle_is_rejected() {
+        let resolver = |_path: &str| -> Result<TreeSpec, ConfigError> {
+            TreeSpec::from_json_str(r#"{"root":{"type":"include","path":"loop"}}"#)
+        };
+
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"include","path":"loop"}}"#)
+            .expect("valid spec");
+
+        let error = spec
+            .build_with_resolver(&action_registry(), &resolver)
+            .err()
+            .expect("cycle error");
+        assert!(error.to_string().contains("cycle"));
     }
 
     #[test]

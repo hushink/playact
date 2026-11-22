@@ -2,8 +2,10 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use core::marker::PhantomData;
 use core::time::Duration;
 
+use crate::blackboard::Key;
 use crate::context::Context;
 use crate::node::{Kind, Node};
 use crate::status::Status;
@@ -193,6 +195,52 @@ impl<W> Node<W> for Wait<W> {
     }
 }
 
+/// 将固定值写入类型安全黑板的叶子节点。
+///
+/// 每次 tick 都写入并返回 `Success`，因此 `Repeat` 等循环中也会持续保持；
+/// `T` 需要 `Clone`。`reset` 不会清除黑板中已经写入的值。
+pub struct SetValue<W, T: Send + 'static> {
+    name: String,
+    key: Key<T>,
+    value: T,
+    _marker: PhantomData<fn() -> W>,
+}
+
+impl<W, T: Send + 'static> SetValue<W, T> {
+    /// 用 key 和固定值构造。
+    #[must_use]
+    pub fn new(name: impl Into<String>, key: &Key<T>, value: T) -> Self {
+        Self {
+            name: name.into(),
+            key: *key,
+            value,
+            _marker: PhantomData,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W, T: Clone + Send + 'static> Node<W> for SetValue<W, T> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        ctx.blackboard().set(&self.key, self.value.clone());
+        Status::Success
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::SetValue
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::blackboard::Blackboard;
@@ -226,6 +274,29 @@ mod tests {
 
         let mut ctx = Context::new(&mut world, &mut bb, Time::from_millis(100, 50));
         assert_eq!(node.tick(&mut ctx), Status::Success);
+    }
+
+    #[test]
+    fn set_value_writes_blackboard_each_tick() {
+        static VALUE: Key<u32> = Key::new("test.set_value");
+
+        let mut node = SetValue::<(), u32>::new("set", &VALUE, 7_u32);
+        let mut world = ();
+        let mut bb = Blackboard::new();
+
+        {
+            let mut ctx = Context::new(&mut world, &mut bb, Time::ZERO);
+            assert_eq!(node.tick(&mut ctx), Status::Success);
+        }
+        assert_eq!(bb.get(&VALUE), Some(&7));
+
+        bb.set(&VALUE, 9);
+        {
+            let mut ctx = Context::new(&mut world, &mut bb, Time::from_millis(16, 16));
+            assert_eq!(node.tick(&mut ctx), Status::Success);
+        }
+        assert_eq!(bb.get(&VALUE), Some(&7));
+        assert_eq!(node.kind(), Kind::SetValue);
     }
 
     #[test]

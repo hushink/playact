@@ -26,6 +26,8 @@ pub enum Kind {
     ReactiveSelector,
     /// 带记忆的随机选择节点。
     RandomSelector,
+    /// 带权重、确定性 seed 的随机选择节点。
+    WeightedRandomSelector,
     /// 并行节点。
     Parallel,
     /// 跨 tick 记住终态的并行节点。
@@ -50,6 +52,8 @@ pub enum Kind {
     Timeout,
     /// 次数限制。
     Limiter,
+    /// 时间窗口配额。
+    Throttle,
     /// 等待时间。
     Wait,
     /// 闭包动作。
@@ -58,6 +62,10 @@ pub enum Kind {
     AsyncAction,
     /// 闭包条件。
     Condition,
+    /// 写入黑板固定值。
+    SetValue,
+    /// 按黑板 key 动态切换的子树槽。
+    SubtreeSlot,
     /// 整棵行为树作为节点。
     Tree,
     /// 自定义节点类型。
@@ -74,6 +82,7 @@ impl Kind {
             Self::Selector => "selector",
             Self::ReactiveSelector => "reactive_selector",
             Self::RandomSelector => "random_selector",
+            Self::WeightedRandomSelector => "weighted_random_selector",
             Self::Parallel => "parallel",
             Self::MemParallel => "mem_parallel",
             Self::Inverter => "inverter",
@@ -86,10 +95,13 @@ impl Kind {
             Self::Cooldown => "cooldown",
             Self::Timeout => "timeout",
             Self::Limiter => "limiter",
+            Self::Throttle => "throttle",
             Self::Wait => "wait",
             Self::Action => "action",
             Self::AsyncAction => "async_action",
             Self::Condition => "condition",
+            Self::SetValue => "set_value",
+            Self::SubtreeSlot => "subtree_slot",
             Self::Tree => "tree",
             Self::Custom(name) => name,
         }

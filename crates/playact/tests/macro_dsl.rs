@@ -2,6 +2,7 @@
 
 //! `bt!` proc-macro DSL 集成测试。
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use playact::prelude::*;
@@ -91,4 +92,21 @@ fn bt_macro_builds_leaf_root_and_raw() {
 
     let mut raw = raw;
     assert_eq!(raw.tick(&mut world, Time::ZERO), Status::Success);
+}
+
+#[test]
+fn bt_macro_builds_throttle_and_set_value() {
+    static VALUE: Key<u32> = playact::key!("macro_value");
+
+    let mut tree = playact::bt!(World, "macro_extras", sequence {
+        set_value("set_value", &VALUE, 7_u32),
+        throttle(Duration::from_millis(100), NonZeroUsize::new(1).expect("non-zero")) {
+            action("ok", |_| Status::Success)
+        },
+    })
+    .expect("macro tree");
+
+    let mut world = World { hp: 1.0 };
+    assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    assert_eq!(tree.blackboard().get(&VALUE), Some(&7));
 }

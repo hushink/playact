@@ -105,6 +105,8 @@ pub mod node;
 pub mod remote_config;
 #[cfg(feature = "std")]
 pub mod shared;
+#[cfg(feature = "std")]
+pub mod stats;
 pub mod status;
 pub mod subtree;
 pub mod time;
@@ -118,28 +120,30 @@ pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
 pub use composite::{
     MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
-    Threshold,
+    Threshold, WeightedChild, WeightedRandomSelector,
 };
 #[cfg(feature = "config")]
 pub use config::TreeParser;
 pub use context::Context;
 pub use decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK, Repeat,
-    Retry, Timeout, UntilFailure, UntilSuccess,
+    Retry, Throttle, Timeout, UntilFailure, UntilSuccess,
 };
 pub use error::BuildError;
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{HotReloadError, TreeWatcher};
-pub use leaf::{Action, Condition, Wait};
+pub use leaf::{Action, Condition, SetValue, Wait};
 pub use node::{BoxedNode, Kind, Node};
 #[cfg(feature = "remote-config")]
 pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
+#[cfg(feature = "std")]
+pub use stats::{NodeStats, StatsTracer};
 pub use status::Status;
-pub use subtree::SubtreeFactory;
+pub use subtree::{SubtreeFactory, SubtreeSlot};
 pub use time::Time;
-pub use trace::{AbortReason, TraceEvent, Tracer};
+pub use trace::{AbortReason, MultiTracer, TraceEvent, Tracer};
 pub use tree::{BehaviorTree, TreeDescription};
 
 #[cfg(feature = "tracing")]
@@ -158,13 +162,17 @@ pub mod prelude {
     pub use crate::{
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
-        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node,
-        Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector,
-        Sequence, Status, SubtreeFactory, Threshold, Time, Timeout, TraceEvent, Tracer,
-        TreeDescription, UntilFailure, UntilSuccess, Wait,
+        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel,
+        MultiTracer, Node, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
+        Retry, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot, Threshold,
+        Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure, UntilSuccess,
+        Wait, WeightedChild, WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
-    pub use crate::{AsyncAction, AsyncTask, CancellationToken, SharedBlackboard, ThreadTask};
+    pub use crate::{
+        AsyncAction, AsyncTask, CancellationToken, NodeStats, SharedBlackboard, StatsTracer,
+        ThreadTask,
+    };
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]

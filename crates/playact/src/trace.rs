@@ -1,5 +1,7 @@
 //! 运行期可观测性：结构化 trace 事件。
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::node::Kind;
@@ -85,6 +87,55 @@ pub trait Tracer: Send {
     fn event(&mut self, event: TraceEvent<'_>);
 }
 
+/// 将事件广播给多个 Tracer。
+///
+/// 常用于同时接日志、统计和可视化；事件是 `Copy`，按注册顺序分发。
+#[derive(Default)]
+pub struct MultiTracer {
+    tracers: Vec<Box<dyn Tracer + Send>>,
+}
+
+impl MultiTracer {
+    /// 创建空的 fan-out。
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 追加一个 Tracer。
+    pub fn push(&mut self, tracer: Box<dyn Tracer + Send>) {
+        self.tracers.push(tracer);
+    }
+
+    /// 已注册的 Tracer 数量。
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tracers.len()
+    }
+
+    /// 是否没有注册任何 Tracer。
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tracers.is_empty()
+    }
+}
+
+impl fmt::Debug for MultiTracer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MultiTracer")
+            .field("len", &self.tracers.len())
+            .finish()
+    }
+}
+
+impl Tracer for MultiTracer {
+    fn event(&mut self, event: TraceEvent<'_>) {
+        for tracer in &mut self.tracers {
+            tracer.event(event);
+        }
+    }
+}
+
 /// 一个把事件转成 `tracing` 日志的简单适配器。
 #[cfg(feature = "tracing")]
 #[derive(Debug, Default, Clone, Copy)]
@@ -138,5 +189,45 @@ impl Tracer for TracingTracer {
                 "abort"
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::node::Kind;
+    use crate::time::Time;
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct Count(Arc<Mutex<usize>>);
+
+    impl Tracer for Count {
+        fn event(&mut self, _event: TraceEvent<'_>) {
+            *self.0.lock().expect("trace lock") += 1;
+        }
+    }
+
+    #[test]
+    fn multi_tracer_fans_out() {
+        let first = Count::default();
+        let second = Count::default();
+        let mut multi = MultiTracer::new();
+        multi.push(Box::new(first.clone()));
+        multi.push(Box::new(second.clone()));
+
+        multi.event(TraceEvent::Enter {
+            name: "node",
+            kind: Kind::Action,
+            path: &[],
+            time: Time::ZERO,
+        });
+
+        assert_eq!(*first.0.lock().expect("trace lock"), 1);
+        assert_eq!(*second.0.lock().expect("trace lock"), 1);
+        assert_eq!(multi.len(), 2);
+        assert!(!multi.is_empty());
     }
 }

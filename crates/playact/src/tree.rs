@@ -22,6 +22,8 @@ pub struct BehaviorTree<W> {
     root: BoxedNode<W>,
     blackboard: Blackboard,
     tracer: Option<Box<dyn Tracer + Send>>,
+    services: Vec<BoxedNode<W>>,
+    service_status: Vec<Option<Status>>,
     last_status: Option<Status>,
 }
 
@@ -34,6 +36,8 @@ impl<W> BehaviorTree<W> {
             root,
             blackboard: Blackboard::new(),
             tracer: None,
+            services: Vec::new(),
+            service_status: Vec::new(),
             last_status: None,
         }
     }
@@ -57,6 +61,38 @@ impl<W> BehaviorTree<W> {
         self
     }
 
+    /// 追加一个服务节点。
+    ///
+    /// 服务在每个 tick 的根节点之前运行，与主树共享 world / time / 黑板；
+    /// 返回值被忽略，适合感知、缓存或维护外部状态。服务子树不产生 Tracer
+    /// 事件，也不影响 [`BehaviorTree::last_status`]。
+    ///
+    /// 服务的 `abort` / `reset` 随整棵树一起传播；服务需要自己管理终态，
+    /// 引擎只记录状态用于判断是否在 tree abort 时清理。
+    #[must_use]
+    pub fn with_service(mut self, service: BoxedNode<W>) -> Self {
+        self.add_service(service);
+        self
+    }
+
+    /// 追加一个服务节点。
+    pub fn add_service(&mut self, service: BoxedNode<W>) {
+        self.services.push(service);
+        self.service_status.push(None);
+    }
+
+    /// 服务节点列表。
+    #[must_use]
+    pub fn services(&self) -> &[BoxedNode<W>] {
+        &self.services
+    }
+
+    /// 服务节点数量。
+    #[must_use]
+    pub fn service_count(&self) -> usize {
+        self.services.len()
+    }
+
     /// 驱动一次逻辑帧。
     pub fn tick(&mut self, world: &mut W, time: Time) -> Status {
         let status = {
@@ -64,6 +100,8 @@ impl<W> BehaviorTree<W> {
                 root,
                 blackboard,
                 tracer,
+                services,
+                service_status,
                 ..
             } = self;
             let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
@@ -71,6 +109,12 @@ impl<W> BehaviorTree<W> {
                 None => None,
             };
             let mut ctx = Context::with_tracer(world, blackboard, time, tracer_ref);
+
+            for (service, status) in services.iter_mut().zip(service_status.iter_mut()) {
+                let mut service_ctx = ctx.service_context();
+                *status = Some(service.tick(&mut service_ctx));
+            }
+
             ctx.tick_root(root)
         };
 
@@ -90,12 +134,24 @@ impl<W> BehaviorTree<W> {
         blackboard: &mut Blackboard,
     ) -> Status {
         let status = {
-            let Self { root, tracer, .. } = self;
+            let Self {
+                root,
+                tracer,
+                services,
+                service_status,
+                ..
+            } = self;
             let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
                 Some(tracer) => Some(&mut **tracer),
                 None => None,
             };
             let mut ctx = Context::with_tracer(world, blackboard, time, tracer_ref);
+
+            for (service, status) in services.iter_mut().zip(service_status.iter_mut()) {
+                let mut service_ctx = ctx.service_context();
+                *status = Some(service.tick(&mut service_ctx));
+            }
+
             ctx.tick_root(root)
         };
 
@@ -107,23 +163,26 @@ impl<W> BehaviorTree<W> {
     /// 战斗重开。若当前是 Running 且需要外部清理，应先调用 [`BehaviorTree::abort`]。
     pub fn reset(&mut self) {
         self.root.reset();
+        for service in &mut self.services {
+            service.reset();
+        }
+        self.service_status.fill(None);
         self.last_status = None;
     }
 
-    /// 放弃整棵树：仅当上一次 tick 返回 `Running` 时，调用根节点 `abort`
-    /// 做外部清理，再 `reset`。终态树没有需要清理的 Running 子树，本方法
-    /// 只清除记录的状态。
+    /// 放弃整棵树：根节点仅在最后一次 tick 返回 `Running` 时执行 `abort`，
+    /// 随后 `reset`；服务节点中上次返回 `Running` 的也会 `abort`，所有服务
+    /// 都会 `reset`。终态树没有需要清理的 Running 子树。
     pub fn abort(&mut self, world: &mut W, time: Time) {
-        if self.last_status != Some(Status::Running) {
-            self.last_status = None;
-            return;
-        }
+        let root_running = self.last_status == Some(Status::Running);
 
         {
             let Self {
                 root,
                 blackboard,
                 tracer,
+                services,
+                service_status,
                 ..
             } = self;
             let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
@@ -131,9 +190,21 @@ impl<W> BehaviorTree<W> {
                 None => None,
             };
             let mut ctx = Context::with_tracer(world, blackboard, time, tracer_ref);
-            ctx.abort_root(root, AbortReason::TreeAbort);
+
+            if root_running {
+                ctx.abort_root(root, AbortReason::TreeAbort);
+            }
+
+            for (service, status) in services.iter_mut().zip(service_status.iter()) {
+                let mut service_ctx = ctx.service_context();
+                if *status == Some(Status::Running) {
+                    service.abort(&mut service_ctx);
+                }
+                service.reset();
+            }
         }
 
+        self.service_status.fill(None);
         self.last_status = None;
     }
 
@@ -144,21 +215,36 @@ impl<W> BehaviorTree<W> {
         time: Time,
         blackboard: &mut Blackboard,
     ) {
-        if self.last_status != Some(Status::Running) {
-            self.last_status = None;
-            return;
-        }
+        let root_running = self.last_status == Some(Status::Running);
 
         {
-            let Self { root, tracer, .. } = self;
+            let Self {
+                root,
+                tracer,
+                services,
+                service_status,
+                ..
+            } = self;
             let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
                 Some(tracer) => Some(&mut **tracer),
                 None => None,
             };
             let mut ctx = Context::with_tracer(world, blackboard, time, tracer_ref);
-            ctx.abort_root(root, AbortReason::TreeAbort);
+
+            if root_running {
+                ctx.abort_root(root, AbortReason::TreeAbort);
+            }
+
+            for (service, status) in services.iter_mut().zip(service_status.iter()) {
+                let mut service_ctx = ctx.service_context();
+                if *status == Some(Status::Running) {
+                    service.abort(&mut service_ctx);
+                }
+                service.reset();
+            }
         }
 
+        self.service_status.fill(None);
         self.last_status = None;
     }
 
@@ -166,6 +252,15 @@ impl<W> BehaviorTree<W> {
     #[must_use]
     pub fn describe(&self) -> TreeDescription {
         TreeDescription::from_node(self.root.as_ref())
+    }
+
+    /// 服务节点的结构描述，保持注册顺序。
+    #[must_use]
+    pub fn describe_services(&self) -> Vec<TreeDescription> {
+        self.services
+            .iter()
+            .map(|service| TreeDescription::from_node(service.as_ref()))
+            .collect()
     }
 
     /// 只读黑板。
@@ -185,11 +280,25 @@ impl<W> BehaviorTree<W> {
         &self.name
     }
 
+    /// 上一次 tick 的顶层状态。
+    ///
+    /// 尚未 tick 或刚执行过 `reset` / `abort` 时返回 `None`。
+    #[must_use]
+    pub fn last_status(&self) -> Option<Status> {
+        self.last_status
+    }
+
+    /// 上一次 tick 是否返回 `Running`。
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        self.last_status == Some(Status::Running)
+    }
+
     /// 拆出根节点，用于把整棵树作为子树复用。
     ///
-    /// 注意：会丢弃黑板与 Tracer，但保留 root 的内部状态。若 root 是
-    /// Running 且依赖黑板数据（例如目标索引），挂到新树前需要重新准备
-    /// 黑板；需要保留黑板/状态的子树复用请用工厂函数或 v0.2 的 Subtree。
+    /// 注意：会丢弃黑板、Tracer 与服务节点，但保留 root 的内部状态。若 root
+    /// 是 Running 且依赖黑板数据（例如目标索引），挂到新树前需要重新准备
+    /// 黑板；需要保留黑板/状态的子树复用请用工厂函数或 `SubtreeFactory`。
     #[must_use]
     pub fn into_root(self) -> BoxedNode<W> {
         self.root
@@ -209,6 +318,11 @@ impl<W> BehaviorTree<W> {
 /// [`crate::SubtreeFactory`]。
 impl<W> Node<W> for BehaviorTree<W> {
     fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        for (service, status) in self.services.iter_mut().zip(self.service_status.iter_mut()) {
+            let mut service_ctx = ctx.service_context();
+            *status = Some(service.tick(&mut service_ctx));
+        }
+
         let status = ctx.tick_child(0, &mut self.root);
         self.last_status = Some(status);
         status
@@ -216,11 +330,25 @@ impl<W> Node<W> for BehaviorTree<W> {
 
     fn abort(&mut self, ctx: &mut Context<'_, W>) {
         ctx.abort_child(0, &mut self.root, AbortReason::Preempted);
+
+        for index in 0..self.services.len() {
+            let running = self.service_status.get(index) == Some(&Some(Status::Running));
+            let mut service_ctx = ctx.service_context();
+            if running {
+                self.services[index].abort(&mut service_ctx);
+            }
+            self.services[index].reset();
+        }
+        self.service_status.fill(None);
         self.last_status = None;
     }
 
     fn reset(&mut self) {
         self.root.reset();
+        for service in &mut self.services {
+            service.reset();
+        }
+        self.service_status.fill(None);
         self.last_status = None;
     }
 
@@ -400,7 +528,7 @@ mod tests {
 
     use crate::blackboard::Key;
     use crate::builder::BehaviorTreeBuilder;
-    use crate::leaf::Action;
+    use crate::leaf::{Action, Condition};
     use crate::trace::TraceEvent;
 
     use super::*;
@@ -475,6 +603,23 @@ mod tests {
     }
 
     #[test]
+    fn last_status_tracks_tick_and_reset() {
+        let mut tree = BehaviorTree::new(Box::new(Action::<()>::new("hold", |_| Status::Running)));
+        let mut world = ();
+
+        assert_eq!(tree.last_status(), None);
+        assert!(!tree.is_running());
+
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Running);
+        assert_eq!(tree.last_status(), Some(Status::Running));
+        assert!(tree.is_running());
+
+        tree.reset();
+        assert_eq!(tree.last_status(), None);
+        assert!(!tree.is_running());
+    }
+
+    #[test]
     fn tree_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<BehaviorTree<()>>();
@@ -523,6 +668,80 @@ mod tests {
         // 第二次 abort 是幂等的；上一次状态已清空。
         running.abort(&mut world, Time::ZERO);
         assert_eq!(running_aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn service_runs_before_root_and_shares_blackboard() {
+        static SEEN: Key<bool> = crate::key!("service_seen");
+
+        let service = Action::<()>::new("sense", |ctx| {
+            ctx.blackboard().set(&SEEN, true);
+            Status::Success
+        });
+        let root = Condition::<()>::new("check", |ctx| {
+            ctx.blackboard_ref().get(&SEEN) == Some(&true)
+        });
+
+        let mut tree = BehaviorTree::new(Box::new(root)).with_service(Box::new(service));
+        assert_eq!(tree.service_count(), 1);
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.describe_services()[0].name, "sense");
+    }
+
+    #[test]
+    fn tree_abort_and_reset_reach_services() {
+        let service_aborts = Arc::new(AtomicU32::new(0));
+        let service_aborts_cb = Arc::clone(&service_aborts);
+        let service_resets = Arc::new(AtomicU32::new(0));
+        let service_resets_cb = Arc::clone(&service_resets);
+
+        let service = Action::<()>::new("monitor", |_| Status::Running)
+            .with_abort(move |_| {
+                service_aborts_cb.fetch_add(1, Ordering::Relaxed);
+            })
+            .with_reset(move || {
+                service_resets_cb.fetch_add(1, Ordering::Relaxed);
+            });
+
+        let mut tree = BehaviorTree::new(Box::new(Action::<()>::new("root", |_| Status::Success)))
+            .with_service(Box::new(service));
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.last_status(), Some(Status::Success));
+
+        // 根节点已终止，但 Running 服务仍需清理。
+        tree.abort(&mut world, Time::from_millis(16, 16));
+        assert_eq!(service_aborts.load(Ordering::Relaxed), 1);
+
+        let resets_after_abort = service_resets.load(Ordering::Relaxed);
+        assert!(resets_after_abort >= 1);
+        tree.reset();
+        assert!(service_resets.load(Ordering::Relaxed) > resets_after_abort);
+    }
+
+    #[test]
+    fn nested_tree_runs_its_services() {
+        static SEEN: Key<u32> = crate::key!("nested_service_seen");
+
+        let service = Action::<()>::new("nested_sense", |ctx| {
+            ctx.blackboard().set(&SEEN, 3);
+            Status::Success
+        });
+        let root = Condition::<()>::new("nested_check", |ctx| {
+            ctx.blackboard_ref().get(&SEEN) == Some(&3)
+        });
+        let inner = BehaviorTree::new(Box::new(root)).with_service(Box::new(service));
+
+        let mut outer = BehaviorTreeBuilder::<()>::new("outer")
+            .sequence(|b| b.raw(Box::new(inner)))
+            .build()
+            .expect("outer tree");
+
+        let mut world = ();
+        assert_eq!(outer.tick(&mut world, Time::ZERO), Status::Success);
     }
 
     #[test]

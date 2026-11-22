@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use playact::{
     Action, BehaviorTree, Blackboard, BoxedNode, Condition, Context, Key, MemParallel, Parallel,
-    ReactiveSelector, Selector, Sequence, Status, Threshold, Time,
+    ReactiveSelector, Selector, Sequence, Status, Threshold, Time, WeightedChild,
+    WeightedRandomSelector,
 };
 
 const BATCH: u64 = 64;
@@ -109,11 +110,31 @@ fn main() {
         black_box(mem_parallel.tick(&mut mem_world, Time::ZERO));
     });
 
+    let mut weighted = BehaviorTree::new(Box::new(WeightedRandomSelector::new(
+        (0..16)
+            .map(|index| WeightedChild::new(index + 1, success_action("noop")))
+            .collect(),
+        7,
+    )));
+    let mut weighted_world = 0_u64;
+    bench("tick/weighted_selector_16", || {
+        black_box(weighted.tick(&mut weighted_world, Time::ZERO));
+    });
+
     let inner = flat_sequence(8);
     let mut nested = BehaviorTree::new(Box::new(inner));
     let mut nested_world = 0_u64;
     bench("tick/nested_tree_8", || {
         black_box(nested.tick(&mut nested_world, Time::ZERO));
+    });
+
+    let mut serviced = flat_sequence(16);
+    for _ in 0..4 {
+        serviced.add_service(success_action("service"));
+    }
+    let mut serviced_world = 0_u64;
+    bench("tick/services_4", || {
+        black_box(serviced.tick(&mut serviced_world, Time::ZERO));
     });
 
     static BENCH_KEY: Key<u64> = playact::key!("bench_key");

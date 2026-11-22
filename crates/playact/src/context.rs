@@ -184,6 +184,19 @@ impl<'a, W> Context<'a, W> {
         status
     }
 
+    /// 为服务节点创建一个不产生 Tracer 事件的子上下文。
+    ///
+    /// 服务与主树共享 world / blackboard / time，但服务子树不会进入主树的
+    /// 事件路径；调用方应在一次服务 tick 结束后立即丢弃返回的上下文。
+    pub(crate) fn service_context(&mut self) -> Context<'_, W> {
+        Context {
+            world: &mut *self.world,
+            blackboard: &mut *self.blackboard,
+            time: self.time,
+            trace: TraceState::new(None),
+        }
+    }
+
     pub(crate) fn abort_root(&mut self, root: &mut BoxedNode<W>, reason: AbortReason) {
         let kind = root.kind();
         let time = self.time;

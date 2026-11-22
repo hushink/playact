@@ -17,7 +17,9 @@ use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{IF_MODIFIED_SINCE, IF_NONE_MATCH};
 
-use crate::config::{ConfigBuildError, ConfigError, NodeRegistry, TreeParser, TreeSpec};
+use crate::config::{
+    ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
+};
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -84,6 +86,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     client: Client,
     registry: NodeRegistry<W>,
     parser: TreeParser,
+    resolver: Option<Box<dyn IncludeResolver>>,
     tree: BehaviorTree<W>,
     refresh_interval: Duration,
     last_refresh: Instant,
@@ -98,8 +101,30 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_impl(url, registry, parser, None)
+    }
+
+    /// 用自定义解析器和 include 解析器构造。
+    ///
+    /// resolver 在初次加载与每次刷新时重新执行；304 响应不会重建树，因此
+    /// include 内容变化需要 ETag/Last-Modified 变化或手动重新加载。
+    pub fn with_parser_and_resolver(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_impl(url, registry, parser, Some(Box::new(resolver)))
+    }
+
+    fn with_parser_impl(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        resolver: Option<Box<dyn IncludeResolver>>,
+    ) -> Result<Self, RemoteConfigError> {
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
-        Self::with_client(client, url, registry, parser)
+        Self::with_client_impl(client, url, registry, parser, resolver)
     }
 
     /// 用自定义 Client 构造；便于配置代理、超时和 TLS。
@@ -109,9 +134,37 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, RemoteConfigError> {
+        Self::with_client_impl(client, url, registry, parser, None)
+    }
+
+    /// 用自定义 Client 和 include 解析器构造。
+    pub fn with_client_and_resolver(
+        client: Client,
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_client_impl(client, url, registry, parser, Some(Box::new(resolver)))
+    }
+
+    fn with_client_impl(
+        client: Client,
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        resolver: Option<Box<dyn IncludeResolver>>,
+    ) -> Result<Self, RemoteConfigError> {
         let url = url.into();
-        let Some((tree, etag, last_modified)) =
-            fetch(&client, &url, parser, &registry, None, None)?
+        let Some((tree, etag, last_modified)) = fetch(
+            &client,
+            &url,
+            parser,
+            &registry,
+            resolver.as_deref(),
+            None,
+            None,
+        )?
         else {
             return Err(RemoteConfigError::NotModified);
         };
@@ -121,6 +174,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             client,
             registry,
             parser,
+            resolver,
             tree,
             refresh_interval: Duration::from_secs(30),
             last_refresh: Instant::now(),
@@ -135,6 +189,15 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
     ) -> Result<Self, RemoteConfigError> {
         Self::with_parser(url, registry, TreeSpec::from_json_str)
+    }
+
+    /// 用 JSON 远程配置和 include 解析器构造。
+    pub fn json_with_resolver(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_and_resolver(url, registry, TreeSpec::from_json_str, resolver)
     }
 
     /// 用 TOML 远程配置构造。
@@ -220,6 +283,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             &self.url,
             self.parser,
             &self.registry,
+            self.resolver.as_deref(),
             etag.as_deref(),
             last_modified.as_deref(),
         )?
@@ -251,6 +315,7 @@ fn fetch<W: 'static>(
     url: &str,
     parser: TreeParser,
     registry: &NodeRegistry<W>,
+    resolver: Option<&dyn IncludeResolver>,
     etag: Option<&str>,
     last_modified: Option<&str>,
 ) -> Result<Fetched<W>, RemoteConfigError> {
@@ -272,7 +337,10 @@ fn fetch<W: 'static>(
     let last_modified = header_string(&response, "last-modified");
     let text = response.text()?;
     let spec = parser(&text)?;
-    let tree = spec.build(registry)?;
+    let tree = match resolver {
+        Some(resolver) => spec.build_with_resolver(registry, resolver)?,
+        None => spec.build(registry)?,
+    };
 
     Ok(Some((tree, etag, last_modified)))
 }
@@ -385,6 +453,28 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut loader), vec!["new"]);
+    }
+
+    #[test]
+    fn loads_config_with_includes() {
+        let url = serve_sequence(vec![
+            r#"{"root":{"type":"include","path":"sub"}}"#.to_string(),
+        ]);
+        let resolver = |path: &str| -> Result<TreeSpec, ConfigError> {
+            match path {
+                "sub" => TreeSpec::from_json_str(&body("old")),
+                other => Err(ConfigError::new(format!("unknown include `{other}`"))),
+            }
+        };
+
+        let mut loader = RemoteTreeLoader::<()>::json_with_resolver(url, registry(), resolver)
+            .expect("remote loader");
+        let mut world = ();
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["old"]);
     }
 
     #[test]

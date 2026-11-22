@@ -721,6 +721,93 @@ impl<W> Node<W> for Limiter<W> {
     }
 }
 
+/// 时间窗口配额装饰节点。
+///
+/// 在一个 `window` 内最多允许子节点产生 `max` 个终态结果；`Running` 不消耗
+/// 配额。配额耗尽时直接返回 `Failure`，不 tick 子节点。窗口按
+/// [`Context::time`] 的 `now` 滑动，`window = 0` 等价于不限流。
+///
+/// 与 [`Limiter`] 的区别：`Limiter` 是“每次激活”的固定次数；`Throttle` 按
+/// 时间窗口恢复配额，适合限制按键、技能或网络请求频率。
+pub struct Throttle<W> {
+    name: String,
+    child: BoxedNode<W>,
+    window: Duration,
+    max: NonZeroUsize,
+    window_start: Option<Duration>,
+    used: usize,
+}
+
+impl<W> Throttle<W> {
+    /// 构造。
+    #[must_use]
+    pub fn new(window: Duration, max: NonZeroUsize, child: BoxedNode<W>) -> Self {
+        Self {
+            name: String::from("Throttle"),
+            child,
+            window,
+            max,
+            window_start: None,
+            used: 0,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W> Node<W> for Throttle<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        let now = ctx.time().now;
+        let expired = self
+            .window_start
+            .is_none_or(|start| now.saturating_sub(start) >= self.window);
+
+        if expired {
+            self.window_start = Some(now);
+            self.used = 0;
+        }
+
+        if self.used >= self.max.get() {
+            return Status::Failure;
+        }
+
+        let status = ctx.tick_child(0, &mut self.child);
+        if status.is_terminal() {
+            self.used += 1;
+        }
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        ctx.abort_child(0, &mut self.child, AbortReason::Preempted);
+        self.window_start = None;
+        self.used = 0;
+    }
+
+    fn reset(&mut self) {
+        self.window_start = None;
+        self.used = 0;
+        self.child.reset();
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Throttle
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        single_child(&self.child)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -895,5 +982,66 @@ mod tests {
 
         let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(50, 50));
         assert_eq!(node.tick(&mut ctx), Status::Failure);
+    }
+
+    #[test]
+    fn throttle_limits_terminal_results_per_window() {
+        let mut node = Throttle::new(
+            Duration::from_millis(100),
+            NonZeroUsize::new(2).expect("non-zero"),
+            Box::new(Action::<()>::new("ok", |_| Status::Success)),
+        );
+
+        let mut world = ();
+        let mut board = Blackboard::new();
+
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(0, 50));
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(50, 50));
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(99, 49));
+        assert_eq!(node.tick(&mut ctx), Status::Failure);
+
+        // 窗口从首次 tick 的 now=0 开始，now=100 时恢复配额。
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(100, 1));
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+    }
+
+    #[test]
+    fn throttle_does_not_count_running_ticks() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+
+        let child = Action::<()>::new("eventually", move |_| {
+            if calls_in_action.fetch_add(1, Ordering::Relaxed) < 2 {
+                Status::Running
+            } else {
+                Status::Success
+            }
+        });
+        let mut node = Throttle::new(
+            Duration::from_secs(1),
+            NonZeroUsize::new(1).expect("non-zero"),
+            Box::new(child),
+        );
+
+        let mut world = ();
+        let mut board = Blackboard::new();
+
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(0, 10));
+        assert_eq!(node.tick(&mut ctx), Status::Running);
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(10, 10));
+        assert_eq!(node.tick(&mut ctx), Status::Running);
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(20, 10));
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(30, 10));
+        assert_eq!(node.tick(&mut ctx), Status::Failure);
+
+        node.reset();
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(40, 10));
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
     }
 }

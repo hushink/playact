@@ -6,7 +6,9 @@
 //! 重载语义：
 //! - 新配置解析/构建成功：新树替换旧树，**黑板数据保留**；节点内部状态重置；
 //! - 解析/构建失败：旧树保持不变，错误返回给调用方；
-//! - Tracer 不会被保留；重载后可通过 [`TreeWatcher::tree_mut`] 重新安装。
+//! - Tracer 不会被保留；重载后可通过 [`TreeWatcher::tree_mut`] 重新安装；
+//! - `include` 文件在每次重载时重新解析；监听器仍然只关注根文件，include
+//!   文件单独变化时可调用 [`TreeWatcher::reload_now`] 或触碰根文件。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +17,9 @@ use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::config::{ConfigBuildError, ConfigError, NodeRegistry, TreeParser, TreeSpec};
+use crate::config::{
+    ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
+};
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -89,6 +93,7 @@ pub struct TreeWatcher<W: 'static> {
     registry: NodeRegistry<W>,
     parser: TreeParser,
     tree: BehaviorTree<W>,
+    resolver: Option<Box<dyn IncludeResolver>>,
     _watcher: RecommendedWatcher,
     events: Receiver<notify::Result<Event>>,
     debounce: Duration,
@@ -102,10 +107,45 @@ impl<W: 'static> TreeWatcher<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, HotReloadError> {
+        Self::with_parser_impl(path, registry, parser, None)
+    }
+
+    /// 用自定义解析器和 include 解析器构造。
+    ///
+    /// resolver 在初次构建与每次重载时都会重新执行。注意监听器仍然只关注
+    /// 根配置文件：被 include 的文件单独变化不会触发事件，可调用
+    /// [`TreeWatcher::reload_now`] 或触碰根文件。
+    pub fn with_parser_and_resolver(
+        path: impl Into<PathBuf>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, HotReloadError> {
+        Self::with_parser_impl(path, registry, parser, Some(Box::new(resolver)))
+    }
+
+    /// 用 JSON 配置和 include 解析器构造。
+    pub fn json_with_resolver(
+        path: impl Into<PathBuf>,
+        registry: NodeRegistry<W>,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, HotReloadError> {
+        Self::with_parser_and_resolver(path, registry, TreeSpec::from_json_str, resolver)
+    }
+
+    fn with_parser_impl(
+        path: impl Into<PathBuf>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        resolver: Option<Box<dyn IncludeResolver>>,
+    ) -> Result<Self, HotReloadError> {
         let path = path.into();
         let text = fs::read_to_string(&path)?;
         let spec = parser(&text)?;
-        let tree = spec.build(&registry)?;
+        let tree = match resolver.as_deref() {
+            Some(resolver) => spec.build_with_resolver(&registry, resolver)?,
+            None => spec.build(&registry)?,
+        };
 
         let (sender, events) = mpsc::channel();
         let mut watcher = notify::recommended_watcher(move |event| {
@@ -123,6 +163,7 @@ impl<W: 'static> TreeWatcher<W> {
             registry,
             parser,
             tree,
+            resolver,
             _watcher: watcher,
             events,
             debounce: Duration::from_millis(200),
@@ -248,7 +289,10 @@ impl<W: 'static> TreeWatcher<W> {
     fn reload(&mut self) -> Result<(), HotReloadError> {
         let text = fs::read_to_string(&self.path)?;
         let spec = (self.parser)(&text)?;
-        let mut new_tree = spec.build(&self.registry)?;
+        let mut new_tree = match self.resolver.as_deref() {
+            Some(resolver) => spec.build_with_resolver(&self.registry, resolver)?,
+            None => spec.build(&self.registry)?,
+        };
 
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
@@ -375,5 +419,43 @@ mod tests {
 
         drop(watcher);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_resolves_includes() {
+        use crate::config::FsIncludeResolver;
+
+        let dir = std::env::temp_dir().join(format!(
+            "playact_hot_reload_include_{}_{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).expect("create dir");
+        let root = dir.join("root.json");
+        let sub = dir.join("sub.json");
+        fs::write(&root, r#"{"root":{"type":"include","path":"sub.json"}}"#).expect("write root");
+        fs::write(&sub, r#"{"root":{"type":"action","name":"old"}}"#).expect("write sub");
+
+        let resolver = FsIncludeResolver::json(&dir).expect("resolver");
+        let mut watcher =
+            TreeWatcher::<()>::json_with_resolver(&root, registry(), resolver).expect("watcher");
+
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+
+        fs::write(&sub, r#"{"root":{"type":"action","name":"new"}}"#).expect("write sub new");
+        watcher.reload_now().expect("reload include");
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+
+        drop(watcher);
+        let _ = fs::remove_dir_all(dir);
     }
 }

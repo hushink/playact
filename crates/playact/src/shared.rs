@@ -7,7 +7,7 @@
 //!   直接用 `ctx.blackboard()` / `ctx.blackboard_ref()`；
 //! - 多线程 tick 会被黑板锁串行化。
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 use crate::blackboard::Blackboard;
 use crate::status::Status;
@@ -62,6 +62,17 @@ impl SharedBlackboard {
         self.board
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// 尝试锁定黑板；锁已被占用时返回 `None`。
+    ///
+    /// 与 [`SharedBlackboard::lock`] 一样，锁中毒会取回内部数据继续使用。
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, Blackboard>> {
+        match self.board.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(TryLockError::Poisoned(poison)) => Some(poison.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
+        }
     }
 
     /// 在锁内只读执行闭包。
@@ -169,6 +180,15 @@ mod tests {
             shared.with(|board| board.get(&SHARED_VALUE).copied()),
             Some(7)
         );
+    }
+
+    #[test]
+    fn try_lock_reports_contention() {
+        let shared = SharedBlackboard::new();
+        let guard = shared.lock();
+        assert!(shared.try_lock().is_none());
+        drop(guard);
+        assert!(shared.try_lock().is_some());
     }
 
     #[test]
