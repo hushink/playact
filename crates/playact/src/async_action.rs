@@ -114,6 +114,87 @@ impl Drop for ThreadTask {
     }
 }
 
+/// 在 Tokio 运行时中执行 async 工作的任务句柄。
+///
+/// 任务在 Tokio 中运行，tick 侧只 `try_recv`；`cancel` / drop 调用
+/// `JoinHandle::abort`。future 需要自行把业务错误映射为 `Status`。
+///
+/// 在 Tokio runtime 之外调用 [`TokioTask::spawn`] 不会 panic，而是返回一个
+/// 立即 `Failure` 的任务；也可以显式用 [`TokioTask::spawn_on`] 指定 handle。
+#[cfg(feature = "tokio")]
+pub struct TokioTask {
+    result: tokio::sync::oneshot::Receiver<Status>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[cfg(feature = "tokio")]
+impl TokioTask {
+    /// 在当前 Tokio runtime 上 spawn。
+    #[must_use]
+    pub fn spawn<F>(future: F) -> Self
+    where
+        F: core::future::Future<Output = Status> + Send + 'static,
+    {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => Self::spawn_on(&handle, future),
+            Err(_) => Self::failed(),
+        }
+    }
+
+    /// 在指定 runtime handle 上 spawn；runtime 必须仍然存活。
+    #[must_use]
+    pub fn spawn_on<F>(handle: &tokio::runtime::Handle, future: F) -> Self
+    where
+        F: core::future::Future<Output = Status> + Send + 'static,
+    {
+        let (sender, result) = tokio::sync::oneshot::channel();
+        let join = handle.spawn(async move {
+            let status = future.await;
+            let _ = sender.send(status);
+        });
+
+        Self {
+            result,
+            handle: Some(join),
+        }
+    }
+
+    fn failed() -> Self {
+        let (sender, result) = tokio::sync::oneshot::channel::<Status>();
+        drop(sender);
+        Self {
+            result,
+            handle: None,
+        }
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl AsyncTask for TokioTask {
+    fn poll(&mut self) -> Status {
+        match self.result.try_recv() {
+            Ok(status) => status,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => Status::Running,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => Status::Failure,
+        }
+    }
+
+    fn cancel(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl Drop for TokioTask {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            handle.abort();
+        }
+    }
+}
+
 type StartFn<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send>;
 
 /// 异步/远程动作叶子。
@@ -261,5 +342,56 @@ mod tests {
         }
 
         assert_eq!(status, Status::Success);
+    }
+
+    #[cfg(feature = "tokio")]
+    #[test]
+    fn tokio_task_completes_on_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+
+        runtime.block_on(async {
+            let mut task = TokioTask::spawn(async { Status::Success });
+            let mut status = task.poll();
+            for _ in 0..64 {
+                if status.is_terminal() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+                status = task.poll();
+            }
+            assert_eq!(status, Status::Success);
+        });
+    }
+
+    #[cfg(feature = "tokio")]
+    #[test]
+    fn tokio_task_cancels() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+
+        runtime.block_on(async {
+            let mut task = TokioTask::spawn(std::future::pending::<Status>());
+            task.cancel();
+
+            let mut status = task.poll();
+            for _ in 0..64 {
+                if status.is_terminal() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+                status = task.poll();
+            }
+            assert_eq!(status, Status::Failure);
+        });
+    }
+
+    #[cfg(feature = "tokio")]
+    #[test]
+    fn tokio_task_outside_runtime_fails() {
+        let mut task = TokioTask::spawn(async { Status::Success });
+        assert_eq!(task.poll(), Status::Failure);
     }
 }

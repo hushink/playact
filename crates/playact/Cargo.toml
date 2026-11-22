@@ -21,6 +21,7 @@ ron = ["config", "dep:ron"]
 tracing = ["std", "dep:tracing"]
 hot-reload = ["config", "dep:notify"]
 remote-config = ["config", "dep:reqwest"]
+tokio = ["std", "dep:tokio"]
 macros = ["dep:playact-macros"]
 full = [
     "std",
@@ -31,6 +32,7 @@ full = [
     "tracing",
     "hot-reload",
     "remote-config",
+    "tokio",
     "macros",
 ]
 
@@ -44,6 +46,7 @@ ron = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 playact-macros = { version = "0.1.1", path = "../playact-macros", optional = true }
 
 [dev-dependencies]

@@ -122,6 +122,24 @@ pub trait Node<W>: Send {
 
 `AsyncAction` 用运行时无关的 `AsyncTask` 句柄表达异步/远程工作：tick 内只 `poll`，被抢占时 `cancel`。内置 `ThreadTask` 用标准库线程跑阻塞/远程调用，`CancellationToken` 做协作取消。
 
+启用 `tokio` feature 后提供 `TokioTask`：
+
+```rust
+use playact::prelude::*;
+
+let action = AsyncAction::<World>::new("fetch", |_ctx| {
+    Box::new(TokioTask::spawn(async move {
+        // let result = client.call().await;
+        Status::Success
+    })) as Box<dyn AsyncTask>
+});
+```
+
+- `TokioTask::spawn` 使用当前 Tokio runtime；不在 runtime 内时返回一个立即 `Failure` 的任务，不会 panic；
+- `TokioTask::spawn_on(&handle, future)` 可显式指定 runtime handle；
+- `cancel` / drop 调用 `JoinHandle::abort`，在 await 点取消 future；
+- future 返回 `Status`，业务错误由 future 自己映射。
+
 需要被抢占时清理按键/技能时：
 
 ```rust
@@ -429,6 +447,7 @@ loop {
 | `tracing` | `TracingTracer`（依赖 `std`） |
 | `hot-reload` | `TreeWatcher` + `notify` 文件监听（依赖 `config`） |
 | `remote-config` | `RemoteTreeLoader` + `reqwest::blocking` HTTP 配置（依赖 `config`） |
+| `tokio` | `TokioTask`：在 Tokio runtime 上运行 async 任务（依赖 `std`） |
 | `macros` | `playact-macros` 的 `bt!` proc-macro DSL（no_std 可用） |
 | `full` | 以上全部（含 `std`） |
 
@@ -445,7 +464,7 @@ playact = { version = "0.1.1", default-features = false }
 
 可用：`Node`、`BehaviorTree`（含 services）、builder、`Blackboard`（内部使用 `BTreeMap`）、组合/装饰/叶子节点、`CommandBuffer`、`SubtreeFactory`、`SubtreeSlot`、`MultiTracer`、`Tracer` 与 `describe`。
 
-需要 `std`：`SharedBlackboard`、`AsyncAction`/`ThreadTask`、`StatsTracer`、配置层、热重载、远程配置、`TracingTracer`。
+需要 `std`：`SharedBlackboard`、`AsyncAction`/`ThreadTask`/`TokioTask`、`StatsTracer`、配置层、热重载、远程配置、`TracingTracer`。
 
 - `SubtreeFactory` 使用 `alloc::sync::Arc`，目标需支持原子指针；已在 `thumbv7em-none-eabihf` 上验证；
 - `macros` 不依赖 `std`，生成的代码只引用 playact；
@@ -566,6 +585,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - `hot-reload`：`TreeWatcher` 文件监听、去抖重载、黑板保留、失败回退旧树；
 - `remote-config`：`RemoteTreeLoader` HTTP 拉取、间隔刷新、ETag/Last-Modified、304 不重建；
 - `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
+- `tokio`：`TokioTask` 在 Tokio runtime 上运行 async 任务，取消映射到 `JoinHandle::abort`；
 - `macros`：`bt!` proc-macro DSL，展开为 builder 调用；
 - `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板；
 - `BehaviorTree: Node`：整棵树可直接嵌套，共享外层上下文并传播 abort/reset；
@@ -574,6 +594,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - `WeightedRandomSelector`、`Throttle`、`SetValue`：加权随机、时间窗限流与黑板赋值；
 - `Race`、`UtilitySelector`：首个终态获胜、动态效用评分与 hysteresis 切换；
 - `Guard`、`IfThenElse`：条件守卫与双分支切换；
+- `tokio`：`TokioTask` async 任务适配器；
 - `SubtreeSlot` 与 Services：运行时子树切换、根节点前的前置服务；
 - 配置 include：安全文件解析器、循环/深度保护，并接入热重载与远程加载；
 - `no_std`：关闭默认 `std` feature 后核心以 `alloc` 编译，std 集成按 feature 门控。

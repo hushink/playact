@@ -113,6 +113,8 @@ pub mod time;
 pub mod trace;
 pub mod tree;
 
+#[cfg(feature = "tokio")]
+pub use async_action::TokioTask;
 #[cfg(feature = "std")]
 pub use async_action::{AsyncAction, AsyncTask, CancellationToken, ThreadTask};
 pub use blackboard::{Blackboard, Key};
@@ -155,6 +157,8 @@ pub use playact_macros::bt;
 
 /// 常用类型与宏的集中导入。
 pub mod prelude {
+    #[cfg(feature = "tokio")]
+    pub use crate::TokioTask;
     #[cfg(feature = "config")]
     pub use crate::TreeParser;
     #[cfg(feature = "macros")]

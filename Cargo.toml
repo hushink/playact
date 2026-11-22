@@ -16,6 +16,7 @@ quote = "1"
 syn = { version = "3", features = ["full"] }
 proc-macro-crate = "3"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip", "brotli", "deflate", "zstd"] }
+tokio = { version = "1", features = ["rt", "sync"] }
 
 
 [workspace.package]
