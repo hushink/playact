@@ -102,7 +102,9 @@ pub trait Node<W>: Send {
 
 ### 叶子
 
-`Action`、`Condition`、`Wait`。动作是 `FnMut(&mut Context<W>) -> Status`；条件只读 `&Context<W>`。
+`Action`、`Condition`、`Wait`、`AsyncAction`。动作是 `FnMut(&mut Context<W>) -> Status`；条件只读 `&Context<W>`。
+
+`AsyncAction` 用运行时无关的 `AsyncTask` 句柄表达异步/远程工作：tick 内只 `poll`，被抢占时 `cancel`。内置 `ThreadTask` 用标准库线程跑阻塞/远程调用，`CancellationToken` 做协作取消。
 
 需要被抢占时清理按键/技能时：
 
@@ -171,6 +173,33 @@ let _time: Time = ctx.time();
 
 `now` 必须单调递增；如果驱动方重置时钟（战斗重开/重连），先调用 `reset()` 或 `abort()`，避免 Cooldown 等绝对时间节点看到时间回退。
 
+## 异步 / 远程动作
+
+不绑定 async runtime，tick 内绝不阻塞：
+
+```rust
+use playact::{AsyncAction, AsyncTask, Status, ThreadTask};
+
+let action = AsyncAction::<World>::new("fetch", |ctx| {
+    let target = /* 从 ctx.world_ref()/黑板克隆所需数据 */;
+
+    Box::new(ThreadTask::spawn(move |cancel| {
+        if cancel.is_cancelled() {
+            return Status::Failure;
+        }
+        // 阻塞调用 / 远程请求
+        Status::Success
+    })) as Box<dyn AsyncTask>
+});
+```
+
+- `AsyncTask::{poll, cancel}` 是运行时无关契约；Tokio/futures/RPC 客户端可实现它；
+- `ThreadTask` 在线程中执行 `work`，tick 只用 channel `try_recv`；
+- `AsyncAction` 在被抢占/复位时调用 `cancel` 并 drop 任务；
+- 取消是协作式的：线程/远端任务应检查 `CancellationToken`；引擎不会强杀线程；
+- 任务只返回 `Status`，远端结果由业务写入共享状态/黑板/命令通道；
+- 配置层可通过 `custom` 工厂返回 `AsyncAction`，不新增配置节点类型。
+
 ## Tracer 与 describe
 
 ```rust
@@ -215,6 +244,35 @@ let mut tree = spec.build(&registry)?;
 
 示例 JSON 见 [`examples/battle_ai.json`](examples/battle_ai.json)。
 
+## 配置热重载
+
+启用 `hot-reload` feature（依赖 `notify`，但仍无 async runtime）：
+
+```rust
+use playact::hot_reload::TreeWatcher;
+
+let mut watcher = TreeWatcher::<World>::json("ai.json", registry)?;
+
+loop {
+    // 处理文件事件；成功后新树替换旧树
+    if watcher.poll()? {
+        println!("reloaded: {}", watcher.tree().describe());
+    }
+
+    // 旧树在重载失败时仍然有效
+    watcher.tree_mut().tick(&mut world, time);
+}
+```
+
+语义：
+
+- 解析/构建成功：黑板数据保留，节点内部状态重置；Tracer 不保留，可重载后通过 `tree_mut()` 重新安装。
+- 解析/构建失败：旧树保持不变，返回 `HotReloadError`；修复文件后再触发一次事件即可重试。
+- 默认 200ms 去抖，可 `with_debounce(Duration)` 调整。
+- 监听目录并通过文件名过滤目标文件，兼容编辑器“写临时文件再 rename”的保存方式。
+- `TreeWatcher::toml` / `yaml` / `ron` 随对应 feature 提供；也可用 `with_parser` 接入自定义格式。
+- `TreeWatcher::tick` 在重载失败时不 tick；需要继续旧树时直接使用 `tree_mut().tick`。
+
 ## Feature 矩阵
 
 | feature | 内容 |
@@ -225,6 +283,7 @@ let mut tree = spec.build(&registry)?;
 | `yaml` | `from_yaml_str`（serde_yaml_ng） |
 | `ron` | `from_ron_str` |
 | `tracing` | `TracingTracer` |
+| `hot-reload` | `TreeWatcher` + `notify` 文件监听（依赖 `config`） |
 | `full` | 以上全部 |
 
 ## 线程模型
@@ -232,6 +291,8 @@ let mut tree = spec.build(&registry)?;
 - `Node<W>: Send`，`BehaviorTree<W>: Send`；
 - 不要求 `Sync`；
 - `W` 不必 `Send`/`Sync`，因为树只在一帧内借用 `&mut W`，不存储它；
+- `hot-reload` 的 `notify` 回调只在后台线程发送事件；重建与 tick 仍在调用 `poll`/`tick` 的线程同步执行；
+- `AsyncAction` 在 tick 线程 poll；`ThreadTask` 的工作线程只用 channel 回报，取消是协作式的；
 - 黑板值要求 `Send + 'static`；
 - 每个 AI 持有自己的树和黑板，多 AI 用工厂函数分别构建；共享世界由驱动方顺序 tick 或自行同步。
 - `BehaviorTree::into_root()` 会丢弃黑板与 Tracer，但保留 root 的内部状态；如果 Running 子树依赖黑板数据，挂到新树前要重新准备。
@@ -276,9 +337,11 @@ cargo doc --workspace --all-features --no-deps
 
 - `RandomSelector`：带记忆、确定性 seed 的随机选择；
 - `SubtreeFactory`：可克隆、可重复实例化的子树工厂；
-- `MemParallel`：跨 tick 累计终态的并行节点。
+- `MemParallel`：跨 tick 累计终态的并行节点；
+- `hot-reload`：`TreeWatcher` 文件监听、去抖重载、黑板保留、失败回退旧树；
+- `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消。
 
-仍未实现：async action/远程动作、proc-macro DSL、热重载/远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
+仍未实现：proc-macro DSL、远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
 
 ## License
 

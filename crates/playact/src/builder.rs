@@ -6,6 +6,7 @@
 use core::marker::PhantomData;
 use core::time::Duration;
 
+use crate::async_action::{AsyncAction, AsyncTask};
 use crate::composite::{
     MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
     Threshold,
@@ -181,6 +182,18 @@ where
         F: for<'a> FnMut(&mut Context<'a, W>) -> Status + Send + 'static,
     {
         self.push_node(Box::new(Action::new(name, f)))
+    }
+
+    /// 追加一个异步/远程动作。
+    pub fn async_action<F>(
+        self,
+        name: impl Into<String>,
+        start: F,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        F: for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send + 'static,
+    {
+        self.push_node(Box::new(AsyncAction::new(name, start)))
     }
 
     /// 追加一个只读条件。
@@ -469,11 +482,22 @@ mod tests {
     use core::num::NonZeroUsize;
     use core::time::Duration;
 
+    use crate::async_action::AsyncTask;
     use crate::leaf::Action;
     use crate::subtree::SubtreeFactory;
     use crate::time::Time;
 
     use super::*;
+
+    struct ImmediateTask;
+
+    impl AsyncTask for ImmediateTask {
+        fn poll(&mut self) -> Status {
+            Status::Success
+        }
+
+        fn cancel(&mut self) {}
+    }
 
     #[test]
     fn builds_nested_tree() {
@@ -541,6 +565,17 @@ mod tests {
             })
             .build()
             .expect("mem parallel tree");
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn async_action_builds() {
+        let mut tree = BehaviorTreeBuilder::<()>::new("async")
+            .async_action("now", |_| Box::new(ImmediateTask) as Box<dyn AsyncTask>)
+            .build()
+            .expect("async action tree");
 
         let mut world = ();
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);

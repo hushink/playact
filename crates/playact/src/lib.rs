@@ -70,6 +70,7 @@
 #![deny(missing_docs)]
 #![warn(rust_2018_idioms)]
 
+pub mod async_action;
 pub mod blackboard;
 pub mod builder;
 pub mod command;
@@ -79,6 +80,8 @@ pub mod config;
 pub mod context;
 pub mod decorator;
 pub mod error;
+#[cfg(feature = "hot-reload")]
+pub mod hot_reload;
 pub mod leaf;
 pub mod node;
 pub mod status;
@@ -87,6 +90,7 @@ pub mod time;
 pub mod trace;
 pub mod tree;
 
+pub use async_action::{AsyncAction, AsyncTask, CancellationToken, ThreadTask};
 pub use blackboard::{Blackboard, Key};
 pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
@@ -100,6 +104,8 @@ pub use decorator::{
     Retry, Timeout, UntilFailure, UntilSuccess,
 };
 pub use error::BuildError;
+#[cfg(feature = "hot-reload")]
+pub use hot_reload::{HotReloadError, TreeParser, TreeWatcher};
 pub use leaf::{Action, Condition, Wait};
 pub use node::{BoxedNode, Kind, Node};
 pub use status::Status;
@@ -115,11 +121,14 @@ pub use trace::TracingTracer;
 pub mod prelude {
     pub use crate::key;
     pub use crate::{
-        AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
-        Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
-        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node,
-        Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector,
-        Sequence, Status, SubtreeFactory, Threshold, Time, Timeout, TraceEvent, Tracer,
-        TreeDescription, UntilFailure, UntilSuccess, Wait,
+        AbortReason, Action, AlwaysFail, AlwaysSucceed, AsyncAction, AsyncTask, BehaviorTree,
+        BehaviorTreeBuilder, Blackboard, BoxedNode, BranchBuilder, BuildError, CancellationToken,
+        CommandBuffer, Condition, Context, Cooldown, Inverter, Key, Kind, Limiter,
+        MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node, Parallel, RandomSelector, ReactiveSelector,
+        ReactiveSequence, Repeat, Retry, Selector, Sequence, Status, SubtreeFactory, ThreadTask,
+        Threshold, Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure, UntilSuccess,
+        Wait,
     };
+    #[cfg(feature = "hot-reload")]
+    pub use crate::{HotReloadError, TreeParser, TreeWatcher};
 }

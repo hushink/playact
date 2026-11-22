@@ -53,6 +53,8 @@ pub enum Kind {
     Wait,
     /// 闭包动作。
     Action,
+    /// 异步/远程动作。
+    AsyncAction,
     /// 闭包条件。
     Condition,
     /// 自定义节点类型。
@@ -83,6 +85,7 @@ impl Kind {
             Self::Limiter => "limiter",
             Self::Wait => "wait",
             Self::Action => "action",
+            Self::AsyncAction => "async_action",
             Self::Condition => "condition",
             Self::Custom(name) => name,
         }
