@@ -1,0 +1,41 @@
+[package]
+name = "playact"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A type-safe, extensible behavior tree engine for game automation"
+keywords = ["behavior-tree", "game-ai", "automation", "bt"]
+categories = ["game-development", "algorithms"]
+readme = "README.md"
+
+[features]
+default = []
+config = ["dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
+toml = ["config", "dep:toml"]
+yaml = ["config", "dep:serde_yaml_ng"]
+ron = ["config", "dep:ron"]
+tracing = ["dep:tracing"]
+full = ["config", "toml", "yaml", "ron", "tracing"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde_path_to_error = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+serde_yaml_ng = { workspace = true, optional = true }
+ron = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[example]]
+name = "battle_ai"
+
+[[example]]
+name = "battle_ai_config"
+required-features = ["config"]

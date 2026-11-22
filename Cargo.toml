@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+serde_path_to_error = "0.1"
+serde_yaml_ng = "0.10"
+ron = "0.12"
+toml = { version = "1.2", features = ["preserve_order"] }
+tracing = "0.1"
+
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.92"
+authors = ["weilanzhuan@gmail.com"]
+license = "Apache-2.0"
+repository = "https://github.com/hushink/playact"

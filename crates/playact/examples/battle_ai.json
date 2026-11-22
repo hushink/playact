@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "name": "duelist",
+  "root": {
+    "type": "reactive_selector",
+    "name": "duel_root",
+    "children": [
+      {
+        "type": "cooldown",
+        "name": "heal_cooldown",
+        "duration_ms": 5000,
+        "child": {
+          "type": "sequence",
+          "name": "heal_when_low",
+          "children": [
+            {
+              "type": "condition",
+              "name": "hp_below",
+              "params": { "ratio": 0.55 }
+            },
+            {
+              "type": "action",
+              "name": "heal",
+              "params": { "amount": 20.0 }
+            }
+          ]
+        }
+      },
+      {
+        "type": "sequence",
+        "name": "combo_attack",
+        "children": [
+          { "type": "condition", "name": "enemy_alive" },
+          {
+            "type": "custom",
+            "kind": "multi_strike",
+            "name": "combo",
+            "params": { "damage": 6.0, "hits": 2 }
+          }
+        ]
+      },
+      { "type": "action", "name": "wait" }
+    ]
+  }
+}
