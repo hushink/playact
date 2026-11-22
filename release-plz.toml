@@ -16,7 +16,21 @@ pr_labels = ["area: ci"]
 publish_timeout = "30m"
 release = true
 release_always = true
+# Only real changes trigger a version bump. In particular, release-plz's own
+# "chore: release ..." commit must not start another release PR.
+release_commits = '^(feat|fix|perf|refactor|docs?|deps|build|revert|security|changed|deprecated)(\([^)]*\))?!?:'
 semver_check = true
+
+[changelog]
+commit_parsers = [
+  { message = '^(chore|ci|test|style)(\([^)]*\))?:', skip = true },
+  { message = '^feat', group = 'added' },
+  { message = '^changed', group = 'changed' },
+  { message = '^deprecated', group = 'deprecated' },
+  { message = '^fix', group = 'fixed' },
+  { message = '^security', group = 'security' },
+  { message = '^.*', group = 'other' },
+]
 
 [[package]]
 name = "playact"
