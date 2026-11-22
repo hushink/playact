@@ -57,6 +57,8 @@ pub enum Kind {
     AsyncAction,
     /// 闭包条件。
     Condition,
+    /// 整棵行为树作为节点。
+    Tree,
     /// 自定义节点类型。
     Custom(&'static str),
 }
@@ -87,6 +89,7 @@ impl Kind {
             Self::Action => "action",
             Self::AsyncAction => "async_action",
             Self::Condition => "condition",
+            Self::Tree => "tree",
             Self::Custom(name) => name,
         }
     }

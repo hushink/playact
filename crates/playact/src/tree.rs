@@ -193,6 +193,47 @@ impl<W> BehaviorTree<W> {
     }
 }
 
+/// 整棵行为树可以直接作为节点嵌套进另一棵树。
+///
+/// 嵌套树共享外层 tick 的 world、time、黑板与 Tracer：
+/// - 它自带的黑板不参与嵌套 tick；跨树共享数据请用外层黑板或
+///   [`crate::SharedBlackboard`]；
+/// - 它自带的 Tracer 不生效，外层 Tracer 会看到嵌套树根及其子树；
+/// - 被外层抢占时按 `abort → reset` 传播到嵌套树根；
+/// - 在 `describe()` 中显示为 `tree "<名字>"`，其唯一子节点是原根节点。
+///
+/// 通过 builder 的 `.raw(Box::new(tree))` 挂载；需要可重复实例化时用
+/// [`crate::SubtreeFactory`]。
+impl<W> Node<W> for BehaviorTree<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        let status = ctx.tick_child(0, &mut self.root);
+        self.last_status = Some(status);
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        ctx.abort_child(0, &mut self.root, AbortReason::Preempted);
+        self.last_status = None;
+    }
+
+    fn reset(&mut self) {
+        self.root.reset();
+        self.last_status = None;
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Tree
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        core::slice::from_ref(&self.root)
+    }
+}
+
 /// 节点结构描述。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeDescription {
@@ -354,6 +395,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use crate::blackboard::Key;
     use crate::builder::BehaviorTreeBuilder;
     use crate::leaf::Action;
     use crate::trace::TraceEvent;
@@ -478,5 +520,81 @@ mod tests {
         // 第二次 abort 是幂等的；上一次状态已清空。
         running.abort(&mut world, Time::ZERO);
         assert_eq!(running_aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn behavior_tree_can_be_nested_as_node() {
+        static MARK: Key<u32> = crate::key!("nested_mark");
+
+        let inner = BehaviorTreeBuilder::<u32>::new("inner")
+            .sequence(|b| {
+                b.action("mark", |ctx| {
+                    ctx.blackboard().set(&MARK, 5);
+                    Status::Success
+                })
+                .action("inc", |ctx| {
+                    *ctx.world() += 1;
+                    Status::Success
+                })
+            })
+            .build()
+            .expect("inner tree");
+
+        let mut outer = BehaviorTreeBuilder::<u32>::new("outer")
+            .sequence(|b| {
+                b.raw(Box::new(inner)).action("read_mark", |ctx| {
+                    assert_eq!(ctx.blackboard_ref().get(&MARK), Some(&5));
+                    *ctx.world() += 1;
+                    Status::Success
+                })
+            })
+            .build()
+            .expect("outer tree");
+
+        let description = outer.describe();
+        assert_eq!(description.kind, Kind::Sequence);
+        assert_eq!(description.children[0].kind, Kind::Tree);
+        assert_eq!(description.children[0].kind.as_str(), "tree");
+        assert_eq!(description.children[0].name, "inner");
+        assert_eq!(description.children[0].children.len(), 1);
+
+        let mut world = 0;
+        assert_eq!(outer.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(world, 2);
+        assert_eq!(outer.blackboard().get(&MARK), Some(&5));
+    }
+
+    #[test]
+    fn nested_tree_propagates_abort_to_running_root() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let abort_cb = Arc::clone(&aborts);
+
+        let inner = BehaviorTree::new(Box::new(
+            Action::<bool>::new("hold", |_| Status::Running).with_abort(
+                move |_: &mut Context<'_, bool>| {
+                    abort_cb.fetch_add(1, Ordering::Relaxed);
+                },
+            ),
+        ))
+        .with_name("inner");
+
+        let mut outer = BehaviorTreeBuilder::<bool>::new("outer")
+            .reactive_selector(|b| {
+                b.condition("preempt", |ctx: &Context<'_, bool>| *ctx.world_ref())
+                    .raw(Box::new(inner))
+            })
+            .build()
+            .expect("outer tree");
+
+        let mut world = false;
+        assert_eq!(outer.tick(&mut world, Time::ZERO), Status::Running);
+        assert_eq!(aborts.load(Ordering::Relaxed), 0);
+
+        world = true;
+        assert_eq!(
+            outer.tick(&mut world, Time::from_millis(100, 100)),
+            Status::Success
+        );
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
     }
 }

@@ -398,6 +398,19 @@ let tree = BehaviorTreeBuilder::<World>::new("pair")
 
 需要保留 Running 子树依赖的黑板数据时，用工厂重新构建，而不是只 `into_root()`。
 
+整棵 `BehaviorTree` 也实现了 `Node<W>`，可以直接作为节点嵌套：
+
+```rust
+let mut tree = BehaviorTreeBuilder::<World>::new("outer")
+    .sequence(|b| b.raw(Box::new(inner_tree)))
+    .build()?;
+```
+
+- 嵌套树共享外层的 world / time / 黑板 / Tracer；它自带的黑板与 Tracer 不参与；
+- `describe()` 中显示为 `tree "名字"`，其唯一子节点是原根节点；
+- 被抢占时 `abort → reset` 会传播到嵌套树根；
+- 需要可重复实例化时仍用 `SubtreeFactory`；`into_root()` 只取根节点，丢弃树外壳与黑板。
+
 ## 示例
 
 ```text
@@ -430,9 +443,10 @@ cargo doc --workspace --all-features --no-deps
 - `remote-config`：`RemoteTreeLoader` HTTP 拉取、间隔刷新、ETag/Last-Modified、304 不重建；
 - `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
 - `macros`：`bt!` proc-macro DSL，展开为 builder 调用；
-- `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板。
+- `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板；
+- `BehaviorTree: Node`：整棵树可直接嵌套，共享外层上下文并传播 abort/reset。
 
-仍未实现：`BehaviorTree: Node`、bench/fuzz、`no_std`。
+仍未实现：bench/fuzz、`no_std`。
 
 ## License
 
