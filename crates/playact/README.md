@@ -84,6 +84,7 @@ pub trait Node<W>: Send {
 | `MemParallel` | 跨 tick 记住终态；已 Success/Failure 的子节点不再 tick，阈值累计 |
 | `Race` | 所有子节点并行推进；第一个终态获胜，abort 其余 Running；空 Race 为 Failure |
 | `UtilitySelector` | 每 tick 按动态评分选最高分；Running 分支带 hysteresis 粘性，可被高分分支打断 |
+| `IfThenElse` | 条件为真执行 then，否则执行 else；切换分支时 abort 旧的 Running 分支 |
 
 `Parallel` 的阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：不同 tick 分别成功的子节点不会让 `All` 自动满足；`Any` 每次成功都会 abort 其余仍在 Running 的兄弟。需要累积语义请用 `MemParallel`。
 
@@ -101,7 +102,9 @@ pub trait Node<W>: Send {
 
 ### 装饰节点
 
-`Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`。
+`Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard`。
+
+`Guard` 每 tick 检查条件，条件为假直接 `Failure`；若子节点上次仍在 Running，会先 `abort → reset`。它等价于常用的 `ReactiveSequence(condition, child)` 形态，但语义更直接。
 
 - `Cooldown` 只在子节点成功后开始计时；
 - `Timeout` 只对 Running 计时，超时 abort 子节点；`duration = 0` 时首次 tick 直接 Failure，不 tick 子节点；
@@ -311,6 +314,7 @@ let mut tree = spec.build(&registry)?;
 - 省略 `params` 等价于 `null`：无参 action/condition 用 `P = ()` 并省略 `params`；带字段的 struct 参数请显式写 `"params": {}`；
 - 未知 action/condition、参数错误、版本不支持、阈值非法都返回带 `root.children[i]...` 路径的 `ConfigBuildError`；
 - 需要 `abort`/`reset` 清理的配置动作，用 `custom` 工厂返回带回调的 `Action` 或自定义节点；
+- `Guard` / `IfThenElse` / `UtilitySelector` 的条件与评分属于业务逻辑，不在配置 schema 中，用代码或 `custom` 工厂构建；
 - 配置不定义业务世界、命令或黑板 key。
 
 示例 JSON 见 [`examples/battle_ai.json`](examples/battle_ai.json)。
@@ -383,7 +387,7 @@ let tree = playact::bt!(World, "player", reactive_selector {
 ```
 
 - 组合：`sequence`、`reactive_sequence`、`selector`、`reactive_selector`、`random_selector(seed)`、`parallel(success, failure)`、`mem_parallel(success, failure)`、`race`；
-- 装饰：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、`retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、`timeout(duration)`、`limiter(n)`、`throttle(window, max)`，块内必须恰好一个子节点；
+- 装饰：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、`retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、`timeout(duration)`、`limiter(n)`、`throttle(window, max)`、`guard(condition)`，块内必须恰好一个子节点；
 - 叶子：`action(name, closure)`、`condition(name, closure)`、`wait(duration)`、`set_value(name, key, value)`、`raw(expression)`；
 - 未知节点、叶子带 body、装饰器子节点数量不对都会在宏展开期报错；最后仍走 builder 的 typestate 检查；
 - `bt!` 返回 `Result<BehaviorTree<W>, BuildError>`。
@@ -569,6 +573,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - `StatsTracer` / `MultiTracer`、`last_status()`、`SharedBlackboard::try_lock`：运行统计与多路观测；
 - `WeightedRandomSelector`、`Throttle`、`SetValue`：加权随机、时间窗限流与黑板赋值；
 - `Race`、`UtilitySelector`：首个终态获胜、动态效用评分与 hysteresis 切换；
+- `Guard`、`IfThenElse`：条件守卫与双分支切换；
 - `SubtreeSlot` 与 Services：运行时子树切换、根节点前的前置服务；
 - 配置 include：安全文件解析器、循环/深度保护，并接入热重载与远程加载；
 - `no_std`：关闭默认 `std` feature 后核心以 `alloc` 编译，std 集成按 feature 门控。

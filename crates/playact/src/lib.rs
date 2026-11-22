@@ -119,15 +119,16 @@ pub use blackboard::{Blackboard, Key};
 pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
 pub use composite::{
-    MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Selector,
-    Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild, WeightedRandomSelector,
+    IfThenElse, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
+    Selector, Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild,
+    WeightedRandomSelector,
 };
 #[cfg(feature = "config")]
 pub use config::TreeParser;
 pub use context::Context;
 pub use decorator::{
-    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK, Repeat,
-    Retry, Throttle, Timeout, UntilFailure, UntilSuccess,
+    AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK,
+    Repeat, Retry, Throttle, Timeout, UntilFailure, UntilSuccess,
 };
 pub use error::BuildError;
 #[cfg(feature = "hot-reload")]
@@ -162,11 +163,12 @@ pub mod prelude {
     pub use crate::{
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
-        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel,
-        MultiTracer, Node, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
-        Repeat, Retry, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot,
-        Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure,
-        UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild, WeightedRandomSelector,
+        Cooldown, Guard, IfThenElse, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK,
+        MemParallel, MultiTracer, Node, Parallel, Race, RandomSelector, ReactiveSelector,
+        ReactiveSequence, Repeat, Retry, Selector, Sequence, SetValue, Status, SubtreeFactory,
+        SubtreeSlot, Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription,
+        UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild,
+        WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
     pub use crate::{

@@ -1,5 +1,6 @@
 //! 装饰节点：包装一个子节点，改变其状态语义。
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use core::num::NonZeroUsize;
 use core::time::Duration;
@@ -721,6 +722,85 @@ impl<W> Node<W> for Limiter<W> {
     }
 }
 
+type GuardFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send>;
+
+/// 条件守卫：条件为真时 tick 子节点，否则直接 `Failure`。
+///
+/// 条件每 tick 重新评估；条件由真变假且子节点上次为 `Running` 时，先
+/// `abort → reset` 子节点。适合“目标仍有效才继续追击/施法”这类反应式守卫。
+///
+/// 这等价于 `ReactiveSequence(condition, child)` 的常用形态，但省去了显式
+/// 条件叶子，并且 `describe()`/Tracer 中语义更直接。
+pub struct Guard<W> {
+    name: String,
+    condition: GuardFn<W>,
+    child: BoxedNode<W>,
+    running: bool,
+}
+
+impl<W> Guard<W> {
+    /// 用条件闭包和子节点构造。
+    #[must_use]
+    pub fn new<F>(condition: F, child: BoxedNode<W>) -> Self
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        Self {
+            name: String::from("Guard"),
+            condition: Box::new(condition),
+            child,
+            running: false,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W> Node<W> for Guard<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if !(self.condition)(ctx) {
+            if self.running {
+                ctx.abort_child(0, &mut self.child, AbortReason::Preempted);
+                self.running = false;
+            }
+            return Status::Failure;
+        }
+
+        let status = ctx.tick_child(0, &mut self.child);
+        self.running = status.is_running();
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        if self.running {
+            ctx.abort_child(0, &mut self.child, AbortReason::Preempted);
+            self.running = false;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.running = false;
+        self.child.reset();
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Guard
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        single_child(&self.child)
+    }
+}
+
 /// 时间窗口配额装饰节点。
 ///
 /// 在一个 `window` 内最多允许子节点产生 `max` 个终态结果；`Running` 不消耗
@@ -982,6 +1062,52 @@ mod tests {
 
         let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(50, 50));
         assert_eq!(node.tick(&mut ctx), Status::Failure);
+    }
+
+    #[test]
+    fn guard_blocks_child_when_condition_is_false() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+
+        let child = Action::<bool>::new("work", move |_| {
+            calls_in_action.fetch_add(1, Ordering::Relaxed);
+            Status::Success
+        });
+        let mut guard = Guard::new(|ctx: &Context<'_, bool>| *ctx.world_ref(), Box::new(child));
+
+        let mut world = false;
+        let mut board = Blackboard::new();
+        let mut ctx = Context::new(&mut world, &mut board, Time::ZERO);
+        assert_eq!(guard.tick(&mut ctx), Status::Failure);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        world = true;
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(16, 16));
+        assert_eq!(guard.tick(&mut ctx), Status::Success);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn guard_aborts_child_when_condition_turns_false() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_cb = Arc::clone(&aborts);
+
+        let child = Action::<bool>::new("hold", |_| Status::Running).with_abort(
+            move |_: &mut Context<'_, bool>| {
+                aborts_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+        let mut guard = Guard::new(|ctx: &Context<'_, bool>| *ctx.world_ref(), Box::new(child));
+
+        let mut world = true;
+        let mut board = Blackboard::new();
+        let mut ctx = Context::new(&mut world, &mut board, Time::ZERO);
+        assert_eq!(guard.tick(&mut ctx), Status::Running);
+
+        world = false;
+        let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(16, 16));
+        assert_eq!(guard.tick(&mut ctx), Status::Failure);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
     }
 
     #[test]

@@ -13,13 +13,14 @@ use core::time::Duration;
 use crate::async_action::{AsyncAction, AsyncTask};
 use crate::blackboard::Key;
 use crate::composite::{
-    MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Selector,
-    Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild, WeightedRandomSelector,
+    IfThenElse, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
+    Selector, Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild,
+    WeightedRandomSelector,
 };
 use crate::context::Context;
 use crate::decorator::{
-    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Repeat, Retry, Throttle, Timeout,
-    UntilFailure, UntilSuccess,
+    AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, Repeat, Retry, Throttle,
+    Timeout, UntilFailure, UntilSuccess,
 };
 use crate::error::BuildError;
 use crate::leaf::{Action, Condition, SetValue, Wait};
@@ -372,6 +373,37 @@ where
         self.push_node(Box::new(node)).set_error(error)
     }
 
+    /// 打开一个条件分支节点；两个分支都必须恰好一个子节点。
+    pub fn if_then_else<F, T, E>(
+        self,
+        condition: F,
+        then_branch: T,
+        else_branch: E,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+        T: FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+        E: FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+    {
+        let then_branch = then_branch(BehaviorTreeBuilder::branch());
+        let (then_child, mut error) = then_branch.into_single();
+        let else_branch = else_branch(BehaviorTreeBuilder::branch());
+        let (else_child, else_error) = else_branch.into_single();
+        if error.is_none() {
+            error = else_error;
+        }
+
+        let then_child = then_child.unwrap_or_else(|| {
+            Box::new(Action::<W>::new("__invalid_then__", |_| Status::Failure)) as BoxedNode<W>
+        });
+        let else_child = else_child.unwrap_or_else(|| {
+            Box::new(Action::<W>::new("__invalid_else__", |_| Status::Failure)) as BoxedNode<W>
+        });
+
+        self.push_node(Box::new(IfThenElse::new(condition, then_child, else_child)))
+            .set_error(error)
+    }
+
     /// 打开一个竞速节点：第一个返回终态的子节点获胜。
     pub fn race<S2>(
         self,
@@ -472,6 +504,18 @@ where
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
     ) -> BehaviorTreeBuilder<W, S::Next> {
         self.decorator(f, |child| Box::new(UntilFailure::new(child)))
+    }
+
+    /// 条件守卫；条件为真才 tick 子节点。
+    pub fn guard<F>(
+        self,
+        condition: F,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        self.decorator(f, move |child| Box::new(Guard::new(condition, child)))
     }
 
     /// 成功后冷却。
@@ -600,6 +644,45 @@ mod tests {
         );
         assert_eq!(
             tree.tick(&mut world, Time::from_millis(150, 50)),
+            Status::Success
+        );
+    }
+
+    #[test]
+    fn guard_builds() {
+        let mut tree = BehaviorTreeBuilder::<bool>::new("guard")
+            .guard(
+                |ctx: &Context<'_, bool>| *ctx.world_ref(),
+                |b| b.action("work", |_| Status::Success),
+            )
+            .build()
+            .expect("tree");
+
+        let mut world = false;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+        world = true;
+        assert_eq!(
+            tree.tick(&mut world, Time::from_millis(16, 16)),
+            Status::Success
+        );
+    }
+
+    #[test]
+    fn if_then_else_builds_both_branches() {
+        let mut tree = BehaviorTreeBuilder::<bool>::new("branch")
+            .if_then_else(
+                |ctx: &Context<'_, bool>| *ctx.world_ref(),
+                |b| b.action("then", |_| Status::Success),
+                |b| b.action("else", |_| Status::Success),
+            )
+            .build()
+            .expect("tree");
+
+        let mut world = true;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        world = false;
+        assert_eq!(
+            tree.tick(&mut world, Time::from_millis(16, 16)),
             Status::Success
         );
     }

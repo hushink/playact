@@ -103,6 +103,24 @@ fn bt_macro_builds_leaf_root_and_raw() {
 }
 
 #[test]
+fn bt_macro_builds_guard() {
+    let mut tree =
+        playact::bt!(World, "guard", guard(|ctx: &Context<'_, World>| ctx.world_ref().hp > 0.0) {
+            action("ok", |_| Status::Success)
+        })
+        .expect("guard tree");
+
+    let mut world = World { hp: 1.0 };
+    assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+
+    world.hp = 0.0;
+    assert_eq!(
+        tree.tick(&mut world, Time::from_millis(16, 16)),
+        Status::Failure
+    );
+}
+
+#[test]
 fn bt_macro_builds_throttle_and_set_value() {
     static VALUE: Key<u32> = playact::key!("macro_value");
 

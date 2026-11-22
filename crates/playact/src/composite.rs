@@ -975,6 +975,100 @@ impl<W> Node<W> for UtilitySelector<W> {
     }
 }
 
+// ==================== 条件分支 ====================
+
+type PredicateFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send>;
+
+/// 条件分支节点：条件为真执行 `then`，否则执行 `else`。
+///
+/// 条件每 tick 重新评估；若选择发生变化且旧分支上次为 `Running`，会先
+/// `abort → reset` 旧分支，再 tick 新分支。
+pub struct IfThenElse<W> {
+    name: String,
+    condition: PredicateFn<W>,
+    children: [BoxedNode<W>; 2],
+    selected: Option<bool>,
+    running: bool,
+}
+
+impl<W> IfThenElse<W> {
+    /// 用条件、`then` 子节点和 `else` 子节点构造。
+    #[must_use]
+    pub fn new<F>(condition: F, then_branch: BoxedNode<W>, else_branch: BoxedNode<W>) -> Self
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        Self {
+            name: String::from("IfThenElse"),
+            condition: Box::new(condition),
+            children: [then_branch, else_branch],
+            selected: None,
+            running: false,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn abort_selected(&mut self, ctx: &mut Context<'_, W>) {
+        if self.running
+            && let Some(selected) = self.selected
+        {
+            let index = if selected { 0 } else { 1 };
+            ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+        }
+        self.running = false;
+    }
+}
+
+impl<W> Node<W> for IfThenElse<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        let choose_then = (self.condition)(ctx);
+
+        if let Some(previous) = self.selected
+            && previous != choose_then
+            && self.running
+        {
+            let index = if previous { 0 } else { 1 };
+            ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+        }
+
+        self.selected = Some(choose_then);
+        let index = if choose_then { 0 } else { 1 };
+        let status = ctx.tick_child(index, &mut self.children[index]);
+        self.running = status.is_running();
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        self.abort_selected(ctx);
+    }
+
+    fn reset(&mut self) {
+        self.selected = None;
+        self.running = false;
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::IfThenElse
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+}
+
 // ==================== 并行 ====================
 
 fn validate_parallel_thresholds(
@@ -1826,6 +1920,92 @@ mod tests {
         let mut c = Context::new(&mut world, &mut bb, Time::from_millis(150, 150));
         assert_eq!(tree.tick(&mut c), Status::Failure);
         assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn if_then_else_selects_branch() {
+        let then_calls = Arc::new(AtomicU32::new(0));
+        let then_in_action = Arc::clone(&then_calls);
+        let else_calls = Arc::new(AtomicU32::new(0));
+        let else_in_action = Arc::clone(&else_calls);
+
+        let mut tree = IfThenElse::new(
+            |ctx: &Context<'_, bool>| *ctx.world_ref(),
+            Box::new(Action::new("then", move |_| {
+                then_in_action.fetch_add(1, Ordering::Relaxed);
+                Status::Success
+            })),
+            Box::new(Action::new("else", move |_| {
+                else_in_action.fetch_add(1, Ordering::Relaxed);
+                Status::Success
+            })),
+        );
+
+        let mut world = true;
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(then_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(else_calls.load(Ordering::Relaxed), 0);
+
+        drop(c);
+        world = false;
+        let mut c = Context::new(&mut world, &mut bb, Time::from_millis(16, 16));
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(then_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(else_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn if_then_else_aborts_switched_running_branch() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_cb = Arc::clone(&aborts);
+
+        let then_branch = Action::<bool>::new("hold", |_| Status::Running).with_abort(
+            move |_: &mut Context<'_, bool>| {
+                aborts_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+        let else_branch = Action::<bool>::new("fallback", |_| Status::Success);
+
+        let mut tree = IfThenElse::new(
+            |ctx: &Context<'_, bool>| *ctx.world_ref(),
+            Box::new(then_branch),
+            Box::new(else_branch),
+        );
+
+        let mut world = true;
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+
+        drop(c);
+        world = false;
+        let mut c = Context::new(&mut world, &mut bb, Time::from_millis(16, 16));
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn if_then_else_keeps_same_running_branch() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+
+        let mut tree = IfThenElse::new(
+            |_: &Context<'_, ()>| true,
+            Box::new(Action::new("hold", move |_| {
+                calls_in_action.fetch_add(1, Ordering::Relaxed);
+                Status::Running
+            })),
+            Box::new(Action::new("else", |_| Status::Success)),
+        );
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = ctx(&mut world, &mut bb);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
     }
 
     #[test]

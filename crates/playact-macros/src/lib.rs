@@ -97,8 +97,8 @@ impl Parse for Node {
 ///
 /// 装饰节点：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、
 /// `retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、
-/// `timeout(duration)`、`limiter(n)`、`throttle(window, max)`；装饰块必须
-/// 恰好一个子节点。
+/// `timeout(duration)`、`limiter(n)`、`throttle(window, max)`、
+/// `guard(condition)`；装饰块必须恰好一个子节点。
 ///
 /// 叶子：`action(name, closure)`、`condition(name, closure)`、`wait(duration)`、
 /// `set_value(name, key, value)`、`raw(expression)`。
@@ -156,7 +156,7 @@ fn expand_node(node: &Node, path: &TokenStream2) -> syn::Result<TokenStream2> {
             let child_call = expand_node(child, path)?;
             Ok(quote!(.#node_kind(|__b| __b #child_call)))
         }
-        "repeat" | "retry" | "cooldown" | "timeout" | "limiter" | "throttle" => {
+        "repeat" | "retry" | "cooldown" | "timeout" | "limiter" | "throttle" | "guard" => {
             let args = require_args(node)?;
             let child = require_single_child(node)?;
             let child_call = expand_node(child, path)?;

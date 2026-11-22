@@ -30,6 +30,10 @@ pub enum Kind {
     WeightedRandomSelector,
     /// 按动态评分选择子节点的效用选择节点。
     UtilitySelector,
+    /// 条件成立才执行子节点。
+    Guard,
+    /// 按条件选择 then/else 分支。
+    IfThenElse,
     /// 并行节点。
     Parallel,
     /// 跨 tick 记住终态的并行节点。
@@ -88,6 +92,8 @@ impl Kind {
             Self::RandomSelector => "random_selector",
             Self::WeightedRandomSelector => "weighted_random_selector",
             Self::UtilitySelector => "utility_selector",
+            Self::Guard => "guard",
+            Self::IfThenElse => "if_then_else",
             Self::Parallel => "parallel",
             Self::MemParallel => "mem_parallel",
             Self::Race => "race",
