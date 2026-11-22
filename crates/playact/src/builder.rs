@@ -7,7 +7,8 @@ use core::marker::PhantomData;
 use core::time::Duration;
 
 use crate::composite::{
-    Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
+    MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
+    Threshold,
 };
 use crate::context::Context;
 use crate::decorator::{
@@ -278,7 +279,7 @@ where
             .set_error(error)
     }
 
-    /// 打开一个并行节点。
+    /// 打开一个并行节点（单 tick 汇总）。
     pub fn parallel<S2>(
         self,
         success: Threshold,
@@ -291,6 +292,25 @@ where
         let branch = f(BehaviorTreeBuilder::branch());
         let (children, mut error) = branch.into_parts();
         let node = Parallel::new(children, success, failure);
+        if error.is_none() {
+            error = node.validate().err();
+        }
+        self.push_node(Box::new(node)).set_error(error)
+    }
+
+    /// 打开一个跨 tick 累计终态的并行节点。
+    pub fn mem_parallel<S2>(
+        self,
+        success: Threshold,
+        failure: Threshold,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        S2: BuilderState,
+    {
+        let branch = f(BehaviorTreeBuilder::branch());
+        let (children, mut error) = branch.into_parts();
+        let node = MemParallel::new(children, success, failure);
         if error.is_none() {
             error = node.validate().err();
         }
@@ -511,6 +531,19 @@ mod tests {
             }
             _ => panic!("expected invalid success threshold"),
         }
+    }
+
+    #[test]
+    fn mem_parallel_builds() {
+        let mut tree = BehaviorTreeBuilder::<()>::new("mem_parallel")
+            .mem_parallel(Threshold::All, Threshold::Any, |b| {
+                b.action("only", |_| Status::Success)
+            })
+            .build()
+            .expect("mem parallel tree");
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
     }
 
     #[test]

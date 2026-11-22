@@ -27,6 +27,8 @@ pub enum Kind {
     RandomSelector,
     /// 并行节点。
     Parallel,
+    /// 跨 tick 记住终态的并行节点。
+    MemParallel,
     /// 结果反转。
     Inverter,
     /// 始终成功。
@@ -68,6 +70,7 @@ impl Kind {
             Self::ReactiveSelector => "reactive_selector",
             Self::RandomSelector => "random_selector",
             Self::Parallel => "parallel",
+            Self::MemParallel => "mem_parallel",
             Self::Inverter => "inverter",
             Self::AlwaysSucceed => "always_succeed",
             Self::AlwaysFail => "always_fail",

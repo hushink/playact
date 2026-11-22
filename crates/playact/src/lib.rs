@@ -91,7 +91,8 @@ pub use blackboard::{Blackboard, Key};
 pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
 pub use composite::{
-    Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
+    MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
+    Threshold,
 };
 pub use context::Context;
 pub use decorator::{
@@ -116,9 +117,9 @@ pub mod prelude {
     pub use crate::{
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
-        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, Node, Parallel,
-        RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector, Sequence,
-        Status, SubtreeFactory, Threshold, Time, Timeout, TraceEvent, Tracer, TreeDescription,
-        UntilFailure, UntilSuccess, Wait,
+        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node,
+        Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector,
+        Sequence, Status, SubtreeFactory, Threshold, Time, Timeout, TraceEvent, Tracer,
+        TreeDescription, UntilFailure, UntilSuccess, Wait,
     };
 }

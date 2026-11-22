@@ -79,8 +79,11 @@ pub trait Node<W>: Send {
 | `ReactiveSelector` | 每 tick 从头评估；高优先级 Success/Running 抢占并 abort 低优先级分支 |
 | `RandomSelector` | 带记忆；需要新分支时用确定性 seed 打乱顺序，Running 分支续跑 |
 | `Parallel` | 全部子节点 tick 后按成功/失败阈值汇总；失败优先；结论确定后 abort 剩余 Running |
+| `MemParallel` | 跨 tick 记住终态；已 Success/Failure 的子节点不再 tick，阈值累计 |
 
-`Parallel` 的阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：不同 tick 分别成功的子节点不会让 `All` 自动满足；`Any` 每次成功都会 abort 其余仍在 Running 的兄弟。需要累积语义请用自定义节点（v0.2 计划中的累积式 Parallel）。
+`Parallel` 的阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：不同 tick 分别成功的子节点不会让 `All` 自动满足；`Any` 每次成功都会 abort 其余仍在 Running 的兄弟。需要累积语义请用 `MemParallel`。
+
+`MemParallel` 在一次激活内记住每个子节点的终态，直到成功/失败阈值满足；结论确定后 abort 剩余 Running，并复位到下一次激活。
 
 `RandomSelector` 的 `seed` 决定随机顺序；相同 seed + 相同 tick 序列可复现，`reset()` 恢复初始 RNG。
 
@@ -202,7 +205,7 @@ let mut tree = spec.build(&registry)?;
 ```
 
 - 配置只描述树结构、节点名和叶子参数；
-- 支持 `random_selector`（`seed` 必填，确定性）与 `custom` 子节点；
+- 支持 `random_selector`（`seed` 必填，确定性）、`mem_parallel` 与 `custom` 子节点；
 - 叶子参数在构建期解析为具体 `P`，tick 期没有动态值；
 - 配置结构拒绝未知字段（`deny_unknown_fields`），拼错的键不会被静默忽略；
 - 省略 `params` 等价于 `null`：无参 action/condition 用 `P = ()` 并省略 `params`；带字段的 struct 参数请显式写 `"params": {}`；
@@ -272,9 +275,10 @@ cargo doc --workspace --all-features --no-deps
 当前 crate 版本号仍为 **0.1.1**，但已包含 0.2 计划中的：
 
 - `RandomSelector`：带记忆、确定性 seed 的随机选择；
-- `SubtreeFactory`：可克隆、可重复实例化的子树工厂。
+- `SubtreeFactory`：可克隆、可重复实例化的子树工厂；
+- `MemParallel`：跨 tick 累计终态的并行节点。
 
-仍未实现：累积式 Parallel、async action/远程动作、proc-macro DSL、热重载/远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
+仍未实现：async action/远程动作、proc-macro DSL、热重载/远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
 
 ## License
 

@@ -590,6 +590,24 @@ impl<W> Node<W> for RandomSelector<W> {
 
 // ==================== 并行 ====================
 
+fn validate_parallel_thresholds(
+    success: Threshold,
+    failure: Threshold,
+    children: usize,
+) -> Result<(), BuildError> {
+    if let Threshold::AtLeast(at_least) = success
+        && at_least.get() > children
+    {
+        return Err(BuildError::InvalidSuccessThreshold { at_least, children });
+    }
+    if let Threshold::AtLeast(at_least) = failure
+        && at_least.get() > children
+    {
+        return Err(BuildError::InvalidFailureThreshold { at_least, children });
+    }
+    Ok(())
+}
+
 /// 并行节点。
 ///
 /// 同一 tick 先 tick 全部子节点，再按阈值汇总。失败优先：只要失败阈值
@@ -599,8 +617,8 @@ impl<W> Node<W> for RandomSelector<W> {
 /// 阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：两个子节点如果
 /// 分别在不同 tick 返回 Success，`Threshold::All` 不会因为它们都成功过
 /// 而成功；`Threshold::Any` 每次成功都会 abort 其余仍在 Running 的兄弟。
-/// 需要“各并行任务分别完成一次后整体成功”的累积语义，请写自定义节点，
-/// 或等 v0.2 的累积式 Parallel。
+/// 需要“各并行任务分别完成一次后整体成功”的累积语义，请用
+/// [`MemParallel`]。
 ///
 /// 通过 [`Parallel::new`] 构造时允许“不可能满足”的阈值；需要构建期校验
 /// 时使用 [`Parallel::try_new`]。
@@ -646,18 +664,7 @@ impl<W> Parallel<W> {
 
     /// 校验阈值。
     pub fn validate(&self) -> Result<(), BuildError> {
-        let children = self.children.len();
-        if let Threshold::AtLeast(at_least) = self.success
-            && at_least.get() > children
-        {
-            return Err(BuildError::InvalidSuccessThreshold { at_least, children });
-        }
-        if let Threshold::AtLeast(at_least) = self.failure
-            && at_least.get() > children
-        {
-            return Err(BuildError::InvalidFailureThreshold { at_least, children });
-        }
-        Ok(())
+        validate_parallel_thresholds(self.success, self.failure, self.children.len())
     }
 
     fn abort_running(&mut self, ctx: &mut Context<'_, W>, reason: AbortReason) {
@@ -723,6 +730,164 @@ impl<W> Node<W> for Parallel<W> {
 
     fn kind(&self) -> Kind {
         Kind::Parallel
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+}
+
+/// 跨 tick 记住终态的并行节点。
+///
+/// 一次激活内，某个子节点返回 Success/Failure 后不再被 tick；终态计数会
+/// 持续累计，直到成功或失败阈值满足。结论确定后 abort 剩余 Running 子节点，
+/// 并把内部状态复位，下一次激活从头开始。
+///
+/// 与 [`Parallel`] 的区别：`Parallel` 只看单个 tick 的汇总；`MemParallel`
+/// 记住“本激活内已经完成/失败”的子节点。空 `MemParallel` 直接 Success。
+pub struct MemParallel<W> {
+    name: String,
+    children: Vec<BoxedNode<W>>,
+    success: Threshold,
+    failure: Threshold,
+    states: Vec<MemChildState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemChildState {
+    Pending,
+    Running,
+    Success,
+    Failure,
+}
+
+impl<W> MemParallel<W> {
+    /// 构造并行节点，不做阈值校验。
+    #[must_use]
+    pub fn new(children: Vec<BoxedNode<W>>, success: Threshold, failure: Threshold) -> Self {
+        let states = vec![MemChildState::Pending; children.len()];
+        Self {
+            name: String::from("MemParallel"),
+            children,
+            success,
+            failure,
+            states,
+        }
+    }
+
+    /// 构造并校验 `AtLeast(n)` 阈值不超过子节点数量。
+    pub fn try_new(
+        children: Vec<BoxedNode<W>>,
+        success: Threshold,
+        failure: Threshold,
+    ) -> Result<Self, BuildError> {
+        let node = Self::new(children, success, failure);
+        node.validate()?;
+        Ok(node)
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    /// 校验阈值。
+    pub fn validate(&self) -> Result<(), BuildError> {
+        validate_parallel_thresholds(self.success, self.failure, self.children.len())
+    }
+
+    fn abort_running(&mut self, ctx: &mut Context<'_, W>, reason: AbortReason) {
+        for index in 0..self.children.len() {
+            if self.states[index] == MemChildState::Running {
+                ctx.abort_child(index, &mut self.children[index], reason);
+            }
+        }
+    }
+
+    fn reset_states(&mut self) {
+        self.states.fill(MemChildState::Pending);
+    }
+}
+
+impl<W> Node<W> for MemParallel<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.children.is_empty() {
+            return Status::Success;
+        }
+
+        let mut successes = 0usize;
+        let mut failures = 0usize;
+        let mut running = false;
+
+        for index in 0..self.children.len() {
+            match self.states[index] {
+                MemChildState::Success => {
+                    successes += 1;
+                    continue;
+                }
+                MemChildState::Failure => {
+                    failures += 1;
+                    continue;
+                }
+                MemChildState::Pending | MemChildState::Running => {}
+            }
+
+            match ctx.tick_child(index, &mut self.children[index]) {
+                Status::Success => {
+                    self.states[index] = MemChildState::Success;
+                    successes += 1;
+                }
+                Status::Failure => {
+                    self.states[index] = MemChildState::Failure;
+                    failures += 1;
+                }
+                Status::Running => {
+                    self.states[index] = MemChildState::Running;
+                    running = true;
+                }
+            }
+        }
+
+        let total = self.children.len();
+
+        if self.failure.is_satisfied(failures, total) {
+            self.abort_running(ctx, AbortReason::ParallelDone);
+            self.reset_states();
+            return Status::Failure;
+        }
+        if self.success.is_satisfied(successes, total) {
+            self.abort_running(ctx, AbortReason::ParallelDone);
+            self.reset_states();
+            return Status::Success;
+        }
+        if !running {
+            self.reset_states();
+            return Status::Failure;
+        }
+
+        Status::Running
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        self.abort_running(ctx, AbortReason::Preempted);
+        self.reset_states();
+    }
+
+    fn reset(&mut self) {
+        self.reset_states();
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::MemParallel
     }
 
     fn children(&self) -> &[BoxedNode<W>] {
@@ -912,6 +1077,89 @@ mod tests {
         *c.world() = true;
         assert_eq!(tree.tick(&mut c), Status::Success);
         assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn mem_parallel_accumulates_successes_across_ticks() {
+        let a_calls = Arc::new(AtomicU32::new(0));
+        let a_calls_in_action = Arc::clone(&a_calls);
+        let b_calls = Arc::new(AtomicU32::new(0));
+        let b_calls_in_action = Arc::clone(&b_calls);
+
+        let a = Action::<()>::new("a", move |_| {
+            a_calls_in_action.fetch_add(1, Ordering::Relaxed);
+            Status::Success
+        });
+        let b = Action::<()>::new("b", move |_| {
+            let attempt = b_calls_in_action.fetch_add(1, Ordering::Relaxed);
+            if attempt == 0 {
+                Status::Running
+            } else {
+                Status::Success
+            }
+        });
+
+        let mut tree = MemParallel::new(
+            vec![Box::new(a) as BoxedNode<()>, Box::new(b) as BoxedNode<()>],
+            Threshold::All,
+            Threshold::Any,
+        );
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(a_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(b_calls.load(Ordering::Relaxed), 1);
+
+        // A 已成功，不应被重复 tick；B 成功累计到 2/2。
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(a_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(b_calls.load(Ordering::Relaxed), 2);
+
+        // 下一次激活重新开始。
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(a_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(b_calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn mem_parallel_keeps_failure_and_aborts_running() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_cb = Arc::clone(&aborts);
+
+        let failing = Action::<()>::new("fail", |_| Status::Failure);
+        let running = Action::<()>::new("running", |_| Status::Running).with_abort(
+            move |_: &mut Context<'_, ()>| {
+                aborts_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+
+        let mut tree = MemParallel::new(
+            vec![
+                Box::new(failing) as BoxedNode<()>,
+                Box::new(running) as BoxedNode<()>,
+            ],
+            Threshold::All,
+            Threshold::Any,
+        );
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+
+        assert_eq!(tree.tick(&mut c), Status::Failure);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn empty_mem_parallel_succeeds() {
+        let mut tree = MemParallel::<()>::new(Vec::new(), Threshold::All, Threshold::Any);
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Success);
     }
 
     #[test]
