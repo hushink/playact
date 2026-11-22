@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use playact::{
     Action, BehaviorTree, Blackboard, BoxedNode, Condition, Context, Key, MemParallel, Parallel,
-    ReactiveSelector, Selector, Sequence, Status, Threshold, Time, WeightedChild,
-    WeightedRandomSelector,
+    Race, ReactiveSelector, Selector, Sequence, Status, Threshold, Time, UtilityChild,
+    UtilitySelector, WeightedChild, WeightedRandomSelector,
 };
 
 const BATCH: u64 = 64;
@@ -135,6 +135,30 @@ fn main() {
     let mut serviced_world = 0_u64;
     bench("tick/services_4", || {
         black_box(serviced.tick(&mut serviced_world, Time::ZERO));
+    });
+
+    let mut race_children: Vec<BoxedNode<u64>> = (0..7)
+        .map(|_| Box::new(Action::new("run", |_| Status::Running)) as BoxedNode<u64>)
+        .collect();
+    race_children.push(success_action("win"));
+    let mut race = BehaviorTree::new(Box::new(Race::new(race_children)));
+    let mut race_world = 0_u64;
+    bench("tick/race_8", || {
+        black_box(race.tick(&mut race_world, Time::ZERO));
+    });
+
+    let mut utility_children = Vec::new();
+    for index in 0..16_u32 {
+        let score = index as f32;
+        utility_children.push(UtilityChild::new(
+            move |_: &Context<'_, u64>| score,
+            success_action("noop"),
+        ));
+    }
+    let mut utility = BehaviorTree::new(Box::new(UtilitySelector::new(utility_children)));
+    let mut utility_world = 0_u64;
+    bench("tick/utility_16", || {
+        black_box(utility.tick(&mut utility_world, Time::ZERO));
     });
 
     static BENCH_KEY: Key<u64> = playact::key!("bench_key");

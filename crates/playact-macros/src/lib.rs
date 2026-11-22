@@ -93,7 +93,7 @@ impl Parse for Node {
 ///
 /// 组合节点：`sequence`、`reactive_sequence`、`selector`、
 /// `reactive_selector`、`random_selector(seed)`、`parallel(success, failure)`、
-/// `mem_parallel(success, failure)`。
+/// `mem_parallel(success, failure)`、`race`。
 ///
 /// 装饰节点：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、
 /// `retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、
@@ -135,7 +135,7 @@ fn expand_node(node: &Node, path: &TokenStream2) -> syn::Result<TokenStream2> {
             reject_children(node)?;
             Ok(quote!(.#node_kind(#args)))
         }
-        "sequence" | "reactive_sequence" | "selector" | "reactive_selector" => {
+        "sequence" | "reactive_sequence" | "selector" | "reactive_selector" | "race" => {
             reject_args(node)?;
             let body = expand_children(require_children(node)?, path)?;
             Ok(quote!(.#node_kind(|__b| #body)))

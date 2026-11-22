@@ -1,5 +1,6 @@
 //! 组合节点：只编排 `Status` 流转，不碰业务。
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
@@ -801,6 +802,179 @@ impl<W> Node<W> for WeightedRandomSelector<W> {
     }
 }
 
+// ==================== 效用选择 ====================
+
+type ScoreFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> f32 + Send>;
+
+/// 带动态评分的效用子节点。
+///
+/// 评分闭包只读 [`Context`]，每 tick 重新计算；`NaN` 按最低分处理。
+pub struct UtilityChild<W> {
+    score: ScoreFn<W>,
+    child: BoxedNode<W>,
+}
+
+impl<W> UtilityChild<W> {
+    /// 用评分闭包和子节点构造。
+    #[must_use]
+    pub fn new<F>(score: F, child: BoxedNode<W>) -> Self
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> f32 + Send + 'static,
+    {
+        Self {
+            score: Box::new(score),
+            child,
+        }
+    }
+}
+
+impl<W> core::fmt::Debug for UtilityChild<W> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("UtilityChild").finish_non_exhaustive()
+    }
+}
+
+/// 效用选择节点：选择当前评分最高的子节点。
+///
+/// - 没有 Running 分支时，选择最高分（同分取靠前的子节点）；
+/// - 当前分支仍在 Running 时继续它，除非其他分支的分数超过
+///   `current + hysteresis`，此时旧分支 `abort → reset` 后切换；
+/// - 当前分支返回终态后，下一次 tick 重新评分。
+///
+/// 所有评分每 tick 都会重新计算；评分闭包不得修改 world/黑板。
+pub struct UtilitySelector<W> {
+    name: String,
+    children: Vec<BoxedNode<W>>,
+    scores: Vec<ScoreFn<W>>,
+    current: Option<usize>,
+    hysteresis: f32,
+}
+
+impl<W> UtilitySelector<W> {
+    /// 用效用子节点构造，默认 `hysteresis = 0`。
+    #[must_use]
+    pub fn new(children: Vec<UtilityChild<W>>) -> Self {
+        let mut nodes = Vec::with_capacity(children.len());
+        let mut scores = Vec::with_capacity(children.len());
+        for child in children {
+            nodes.push(child.child);
+            scores.push(child.score);
+        }
+        Self {
+            name: String::from("UtilitySelector"),
+            children: nodes,
+            scores,
+            current: None,
+            hysteresis: 0.0,
+        }
+    }
+
+    /// 设置切换所需的分数优势；负值按 0 处理。
+    #[must_use]
+    pub fn with_hysteresis(mut self, hysteresis: f32) -> Self {
+        self.hysteresis = hysteresis.max(0.0);
+        self
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn best_score(&self, ctx: &Context<'_, W>, exclude: Option<usize>) -> Option<(usize, f32)> {
+        let mut best: Option<(usize, f32)> = None;
+
+        for index in 0..self.children.len() {
+            if Some(index) == exclude {
+                continue;
+            }
+
+            let score = (self.scores[index])(ctx);
+            let score = if score.is_nan() {
+                f32::NEG_INFINITY
+            } else {
+                score
+            };
+
+            match best {
+                Some((_, best_score)) if best_score >= score => {}
+                _ => best = Some((index, score)),
+            }
+        }
+
+        best
+    }
+
+    fn abort_current(&mut self, ctx: &mut Context<'_, W>) {
+        if let Some(index) = self.current.take() {
+            ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+        }
+    }
+}
+
+impl<W> Node<W> for UtilitySelector<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.children.is_empty() {
+            return Status::Failure;
+        }
+
+        let chosen = if let Some(current) = self.current {
+            let current_score = (self.scores[current])(ctx);
+            let current_score = if current_score.is_nan() {
+                f32::NEG_INFINITY
+            } else {
+                current_score
+            };
+
+            match self.best_score(ctx, Some(current)) {
+                Some((index, score)) if score > current_score + self.hysteresis => {
+                    self.abort_current(ctx);
+                    index
+                }
+                _ => current,
+            }
+        } else {
+            match self.best_score(ctx, None) {
+                Some((index, _)) => index,
+                None => return Status::Failure,
+            }
+        };
+
+        let status = ctx.tick_child(chosen, &mut self.children[chosen]);
+        self.current = if status.is_running() {
+            Some(chosen)
+        } else {
+            None
+        };
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        self.abort_current(ctx);
+    }
+
+    fn reset(&mut self) {
+        self.current = None;
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::UtilitySelector
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+}
+
 // ==================== 并行 ====================
 
 fn validate_parallel_thresholds(
@@ -1101,6 +1275,95 @@ impl<W> Node<W> for MemParallel<W> {
 
     fn kind(&self) -> Kind {
         Kind::MemParallel
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+}
+
+// ==================== 竞速 ====================
+
+/// 竞速节点：所有子节点并行推进，第一个返回终态的子节点获胜。
+///
+/// 同一 tick 内多个子节点返回终态时，按子节点顺序取第一个；获胜后 abort
+/// 其余仍在 `Running` 的子节点。空 `Race` 返回 `Failure`。
+pub struct Race<W> {
+    name: String,
+    children: Vec<BoxedNode<W>>,
+    running: Vec<bool>,
+}
+
+impl<W> Race<W> {
+    /// 用子节点构造。
+    #[must_use]
+    pub fn new(children: Vec<BoxedNode<W>>) -> Self {
+        let running = alloc::vec![false; children.len()];
+        Self {
+            name: String::from("Race"),
+            children,
+            running,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn abort_running(
+        &mut self,
+        ctx: &mut Context<'_, W>,
+        winner: Option<usize>,
+        reason: AbortReason,
+    ) {
+        for index in 0..self.children.len() {
+            if winner != Some(index) && self.running[index] {
+                ctx.abort_child(index, &mut self.children[index], reason);
+            }
+            self.running[index] = false;
+        }
+    }
+}
+
+impl<W> Node<W> for Race<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.children.is_empty() {
+            return Status::Failure;
+        }
+
+        for index in 0..self.children.len() {
+            let status = ctx.tick_child(index, &mut self.children[index]);
+            self.running[index] = status.is_running();
+
+            if status.is_terminal() {
+                self.abort_running(ctx, Some(index), AbortReason::RaceDone);
+                return status;
+            }
+        }
+
+        Status::Running
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        self.abort_running(ctx, None, AbortReason::Preempted);
+    }
+
+    fn reset(&mut self) {
+        self.running.fill(false);
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Race
     }
 
     fn children(&self) -> &[BoxedNode<W>] {
@@ -1563,6 +1826,190 @@ mod tests {
         let mut c = Context::new(&mut world, &mut bb, Time::from_millis(150, 150));
         assert_eq!(tree.tick(&mut c), Status::Failure);
         assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn race_first_terminal_wins_and_aborts_others() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_cb = Arc::clone(&aborts);
+
+        let running = Action::<()>::new("running", |_| Status::Running).with_abort(
+            move |_: &mut Context<'_, ()>| {
+                aborts_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+
+        let mut tree = Race::new(vec![
+            Box::new(running) as BoxedNode<()>,
+            Box::new(Action::new("winner", |_| Status::Success)),
+        ]);
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = ctx(&mut world, &mut bb);
+
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn race_failure_also_wins() {
+        let mut tree = Race::new(vec![
+            Box::new(Action::<()>::new("running", |_| Status::Running)) as BoxedNode<()>,
+            Box::new(Action::new("fail", |_| Status::Failure)),
+        ]);
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = ctx(&mut world, &mut bb);
+
+        assert_eq!(tree.tick(&mut c), Status::Failure);
+    }
+
+    #[test]
+    fn race_keeps_running_until_a_winner_appears() {
+        let mut tree = Race::new(vec![
+            Box::new(Action::<bool>::new("hold", |_| Status::Running)) as BoxedNode<bool>,
+            Box::new(Action::new("finish", |ctx: &mut Context<'_, bool>| {
+                if *ctx.world_ref() {
+                    Status::Success
+                } else {
+                    Status::Running
+                }
+            })),
+        ]);
+
+        let mut world = false;
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+
+        world = true;
+        let mut c = Context::new(&mut world, &mut bb, Time::from_millis(16, 16));
+        assert_eq!(tree.tick(&mut c), Status::Success);
+    }
+
+    #[test]
+    fn empty_race_fails() {
+        let mut tree = Race::<()>::new(Vec::new());
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = ctx(&mut world, &mut bb);
+        assert_eq!(tree.tick(&mut c), Status::Failure);
+    }
+
+    #[test]
+    fn utility_selector_picks_highest_score_and_breaks_ties_by_order() {
+        let low_calls = Arc::new(AtomicU32::new(0));
+        let low_in_action = Arc::clone(&low_calls);
+        let high_calls = Arc::new(AtomicU32::new(0));
+        let high_in_action = Arc::clone(&high_calls);
+        let first_calls = Arc::new(AtomicU32::new(0));
+        let first_in_action = Arc::clone(&first_calls);
+
+        let mut tree = UtilitySelector::new(vec![
+            UtilityChild::new(
+                |_ctx: &Context<'_, ()>| 1.0,
+                Box::new(Action::new("low", move |_| {
+                    low_in_action.fetch_add(1, Ordering::Relaxed);
+                    Status::Success
+                })),
+            ),
+            UtilityChild::new(
+                |_ctx: &Context<'_, ()>| 5.0,
+                Box::new(Action::new("high", move |_| {
+                    high_in_action.fetch_add(1, Ordering::Relaxed);
+                    Status::Success
+                })),
+            ),
+            UtilityChild::new(
+                |_ctx: &Context<'_, ()>| 5.0,
+                Box::new(Action::new("first_of_ties", move |_| {
+                    first_in_action.fetch_add(1, Ordering::Relaxed);
+                    Status::Success
+                })),
+            ),
+        ]);
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = ctx(&mut world, &mut bb);
+
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(low_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(high_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(first_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn utility_selector_uses_hysteresis_before_switching() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_cb = Arc::clone(&aborts);
+
+        let hold = Action::<f32>::new("hold", |_| Status::Running).with_abort(
+            move |_: &mut Context<'_, f32>| {
+                aborts_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+
+        let mut tree = UtilitySelector::new(vec![
+            UtilityChild::new(|ctx: &Context<'_, f32>| *ctx.world_ref(), Box::new(hold)),
+            UtilityChild::new(
+                |_ctx: &Context<'_, f32>| 4.5,
+                Box::new(Action::new("next", |_| Status::Success)),
+            ),
+        ])
+        .with_hysteresis(1.0);
+
+        let mut world = 5.0_f32;
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Running);
+
+        world = 4.0;
+        let mut c = Context::new(&mut world, &mut bb, Time::from_millis(16, 16));
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(aborts.load(Ordering::Relaxed), 0);
+
+        world = 3.0;
+        let mut c = Context::new(&mut world, &mut bb, Time::from_millis(32, 16));
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn utility_selector_treats_nan_as_lowest_and_empty_as_failure() {
+        let nan_calls = Arc::new(AtomicU32::new(0));
+        let nan_in_action = Arc::clone(&nan_calls);
+        let zero_calls = Arc::new(AtomicU32::new(0));
+        let zero_in_action = Arc::clone(&zero_calls);
+
+        let mut tree = UtilitySelector::new(vec![
+            UtilityChild::new(
+                |_ctx: &Context<'_, ()>| f32::NAN,
+                Box::new(Action::new("nan", move |_| {
+                    nan_in_action.fetch_add(1, Ordering::Relaxed);
+                    Status::Success
+                })),
+            ),
+            UtilityChild::new(
+                |_ctx: &Context<'_, ()>| 0.0,
+                Box::new(Action::new("zero", move |_| {
+                    zero_in_action.fetch_add(1, Ordering::Relaxed);
+                    Status::Success
+                })),
+            ),
+        ]);
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = ctx(&mut world, &mut bb);
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(nan_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(zero_calls.load(Ordering::Relaxed), 1);
+
+        let mut empty = UtilitySelector::<()>::new(Vec::new());
+        assert_eq!(empty.tick(&mut c), Status::Failure);
     }
 
     #[test]

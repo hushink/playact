@@ -3,8 +3,8 @@
 use core::time::Duration;
 
 use crate::composite::{
-    MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
-    Threshold, WeightedChild, WeightedRandomSelector,
+    MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Selector,
+    Sequence, Threshold, WeightedChild, WeightedRandomSelector,
 };
 use crate::decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Repeat, Retry, Throttle, Timeout,
@@ -149,6 +149,10 @@ fn build_node<W: 'static>(
             let node = Parallel::try_new(children, success, failure).map_err(|error| {
                 ConfigBuildError::new(ConfigBuildErrorKind::InvalidThreshold(error)).at(path)
             })?;
+            Ok(Box::new(with_name(node, name)))
+        }
+        SpecNode::Race { name, children } => {
+            let node = Race::new(build_children(children, ctx, path)?);
             Ok(Box::new(with_name(node, name)))
         }
         SpecNode::MemParallel {
@@ -379,6 +383,7 @@ impl_named_node!(
     RandomSelector,
     WeightedRandomSelector,
     Parallel,
+    Race,
     MemParallel,
     Inverter,
     AlwaysSucceed,

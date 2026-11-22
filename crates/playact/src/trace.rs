@@ -17,6 +17,8 @@ pub enum AbortReason {
     Timeout,
     /// Parallel 已得出结论，停止剩余子节点。
     ParallelDone,
+    /// Race 已产生胜者，停止其余仍在 Running 的子节点。
+    RaceDone,
     /// 整棵树被外部 abort。
     TreeAbort,
 }
@@ -27,6 +29,7 @@ impl fmt::Display for AbortReason {
             Self::Preempted => "preempted",
             Self::Timeout => "timeout",
             Self::ParallelDone => "parallel_done",
+            Self::RaceDone => "race_done",
             Self::TreeAbort => "tree_abort",
         })
     }

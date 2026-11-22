@@ -28,10 +28,14 @@ pub enum Kind {
     RandomSelector,
     /// 带权重、确定性 seed 的随机选择节点。
     WeightedRandomSelector,
+    /// 按动态评分选择子节点的效用选择节点。
+    UtilitySelector,
     /// 并行节点。
     Parallel,
     /// 跨 tick 记住终态的并行节点。
     MemParallel,
+    /// 第一个终态获胜的并行节点。
+    Race,
     /// 结果反转。
     Inverter,
     /// 始终成功。
@@ -83,8 +87,10 @@ impl Kind {
             Self::ReactiveSelector => "reactive_selector",
             Self::RandomSelector => "random_selector",
             Self::WeightedRandomSelector => "weighted_random_selector",
+            Self::UtilitySelector => "utility_selector",
             Self::Parallel => "parallel",
             Self::MemParallel => "mem_parallel",
+            Self::Race => "race",
             Self::Inverter => "inverter",
             Self::AlwaysSucceed => "always_succeed",
             Self::AlwaysFail => "always_fail",

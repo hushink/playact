@@ -72,6 +72,14 @@ fn bt_macro_builds_parallel_and_random_selector() {
     .expect("random tree");
 
     assert_eq!(random.tick(&mut world, Time::ZERO), Status::Success);
+
+    let mut race = playact::bt!(World, "race", race {
+        action("a", |_| Status::Success),
+        action("b", |_| Status::Running),
+    })
+    .expect("race tree");
+
+    assert_eq!(race.tick(&mut world, Time::ZERO), Status::Success);
 }
 
 #[test]

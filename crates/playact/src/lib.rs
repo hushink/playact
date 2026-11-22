@@ -119,8 +119,8 @@ pub use blackboard::{Blackboard, Key};
 pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
 pub use composite::{
-    MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
-    Threshold, WeightedChild, WeightedRandomSelector,
+    MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Selector,
+    Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild, WeightedRandomSelector,
 };
 #[cfg(feature = "config")]
 pub use config::TreeParser;
@@ -163,10 +163,10 @@ pub mod prelude {
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
         Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel,
-        MultiTracer, Node, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
-        Retry, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot, Threshold,
-        Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure, UntilSuccess,
-        Wait, WeightedChild, WeightedRandomSelector,
+        MultiTracer, Node, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
+        Repeat, Retry, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot,
+        Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure,
+        UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild, WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
     pub use crate::{

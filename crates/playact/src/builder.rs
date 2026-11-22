@@ -13,8 +13,8 @@ use core::time::Duration;
 use crate::async_action::{AsyncAction, AsyncTask};
 use crate::blackboard::Key;
 use crate::composite::{
-    MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
-    Threshold, WeightedChild, WeightedRandomSelector,
+    MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Selector,
+    Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild, WeightedRandomSelector,
 };
 use crate::context::Context;
 use crate::decorator::{
@@ -323,6 +323,17 @@ where
         self.push_node(Box::new(WeightedRandomSelector::new(children, seed)))
     }
 
+    /// 追加一个效用选择节点。
+    ///
+    /// 评分闭包无法用 builder 闭包表达，因此直接接收构造好的
+    /// [`UtilityChild`]；需要 hysteresis 时可先构造节点再 `.raw(...)`。
+    pub fn utility_selector(
+        self,
+        children: Vec<UtilityChild<W>>,
+    ) -> BehaviorTreeBuilder<W, S::Next> {
+        self.push_node(Box::new(UtilitySelector::new(children)))
+    }
+
     /// 打开一个并行节点（单 tick 汇总）。
     pub fn parallel<S2>(
         self,
@@ -359,6 +370,20 @@ where
             error = node.validate().err();
         }
         self.push_node(Box::new(node)).set_error(error)
+    }
+
+    /// 打开一个竞速节点：第一个返回终态的子节点获胜。
+    pub fn race<S2>(
+        self,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        S2: BuilderState,
+    {
+        let branch = f(BehaviorTreeBuilder::branch());
+        let (children, error) = branch.into_parts();
+        self.push_node(Box::new(Race::new(children)))
+            .set_error(error)
     }
 
     // ---------- 装饰 ----------

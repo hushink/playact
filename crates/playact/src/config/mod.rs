@@ -135,6 +135,15 @@ pub enum SpecNode {
         #[serde(default)]
         children: Vec<SpecNode>,
     },
+    /// 第一个终态获胜的竞速节点。
+    Race {
+        /// 显示名。
+        #[serde(default)]
+        name: Option<String>,
+        /// 子节点。
+        #[serde(default)]
+        children: Vec<SpecNode>,
+    },
     /// 跨 tick 累计终态的并行。
     MemParallel {
         /// 显示名。
@@ -411,6 +420,18 @@ mod tests {
 
         let mut world = ();
         assert_eq!(tree.name(), "demo");
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_race_from_json() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"race","children":[{"type":"action","name":"ok"},{"type":"action","name":"ok"}]}}"#,
+        )
+        .expect("valid spec");
+
+        let mut tree = spec.build(&action_registry()).expect("build tree");
+        let mut world = ();
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
     }
 

@@ -8,10 +8,11 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use playact::{
-    Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BoxedNode, Condition, Cooldown, Inverter, Key,
-    Limiter, MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
-    Retry, Selector, Sequence, SetValue, Status, Threshold, Throttle, Time, Timeout, UntilFailure,
-    UntilSuccess, Wait, WeightedChild, WeightedRandomSelector,
+    Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BoxedNode, Condition, Context, Cooldown,
+    Inverter, Key, Limiter, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector,
+    ReactiveSequence, Repeat, Retry, Selector, Sequence, SetValue, Status, Threshold, Throttle,
+    Time, Timeout, UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild,
+    WeightedRandomSelector,
 };
 
 static COUNTER: Key<u64> = playact::key!("stress_counter");
@@ -139,7 +140,7 @@ fn random_node(rng: &mut Rng, depth: usize, budget: &mut usize) -> BoxedNode<Wor
         return random_leaf(rng);
     }
 
-    match rng.below(13) {
+    match rng.below(15) {
         0..=2 => random_leaf(rng),
         3 => Box::new(Sequence::new(random_children(rng, depth, budget))),
         4 => Box::new(Selector::new(random_children(rng, depth, budget))),
@@ -179,7 +180,20 @@ fn random_node(rng: &mut Rng, depth: usize, budget: &mut usize) -> BoxedNode<Wor
             }
             Box::new(WeightedRandomSelector::new(children, rng.next()))
         }
-        11 => Box::new(BehaviorTree::new(random_node(rng, depth - 1, budget))),
+        11 => Box::new(Race::new(random_children(rng, depth, budget))),
+        12 => {
+            let count = rng.below(5);
+            let mut children = Vec::with_capacity(count);
+            for _ in 0..count {
+                let offset = (rng.below(17) as f32) - 8.0;
+                children.push(UtilityChild::new(
+                    move |ctx: &Context<'_, World>| ctx.world_ref().hp as f32 + offset,
+                    random_node(rng, depth - 1, budget),
+                ));
+            }
+            Box::new(UtilitySelector::new(children))
+        }
+        13 => Box::new(BehaviorTree::new(random_node(rng, depth - 1, budget))),
         _ => random_decorator(rng, depth, budget),
     }
 }

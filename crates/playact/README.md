@@ -82,6 +82,8 @@ pub trait Node<W>: Send {
 | `WeightedRandomSelector` | 带记忆 + 权重；按权重无放回抽样，0 权重永不选择，Running 分支续跑 |
 | `Parallel` | 全部子节点 tick 后按成功/失败阈值汇总；失败优先；结论确定后 abort 剩余 Running |
 | `MemParallel` | 跨 tick 记住终态；已 Success/Failure 的子节点不再 tick，阈值累计 |
+| `Race` | 所有子节点并行推进；第一个终态获胜，abort 其余 Running；空 Race 为 Failure |
+| `UtilitySelector` | 每 tick 按动态评分选最高分；Running 分支带 hysteresis 粘性，可被高分分支打断 |
 
 `Parallel` 的阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：不同 tick 分别成功的子节点不会让 `All` 自动满足；`Any` 每次成功都会 abort 其余仍在 Running 的兄弟。需要累积语义请用 `MemParallel`。
 
@@ -90,6 +92,10 @@ pub trait Node<W>: Send {
 `RandomSelector` 的 `seed` 决定随机顺序；相同 seed + 相同 tick 序列可复现，`reset()` 恢复初始 RNG。
 
 `WeightedRandomSelector` 用 `WeightedChild::new(weight, child)` 构造，也可用 builder `.weighted_random_selector(children, seed)`；配置层对应 `weights` 数组（省略时全部按 1 处理）。所有分支权重为 0 时直接 `Failure`。
+
+`Race` 在同一 tick 内多个子节点返回终态时按子节点顺序取第一个；空 `Race` 为 `Failure`。
+
+`UtilitySelector` 用 `UtilityChild::new(score, child)` 构造，评分闭包只读 `Context`、每 tick 重新计算，`NaN` 视为最低分；`with_hysteresis` 设置切换所需的分数优势，负值按 0 处理。评分是业务逻辑，因此不进入配置文件。
 
 `Parallel` 阈值支持 `All`、`Any`、`AtLeast(n)`；`AtLeast(n)` 在构建期校验不超过子节点数量。
 
@@ -277,7 +283,7 @@ tree.last_status(); // Option<Status>
 - `MultiTracer` 按注册顺序 fan-out，事件本身是 `Copy`；
 - `last_status()` / `is_running()` 供驱动方读取上一次顶层结果，`reset` / `abort` 后为 `None`。
 
-`AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`TreeAbort`，只出现在 Tracer 事件中，不进入 `Node::abort` 签名。
+`AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、`TreeAbort`，只出现在 Tracer 事件中，不进入 `Node::abort` 签名。
 
 ## 配置驱动
 
@@ -299,7 +305,7 @@ let mut tree = spec.build(&registry)?;
 ```
 
 - 配置只描述树结构、节点名和叶子参数；
-- 支持 `random_selector` / `weighted_random_selector`（`seed` 必填，`weights` 与 `children` 对应，省略时全为 1）、`throttle`、`mem_parallel` 与 `custom` 子节点；
+- 支持 `random_selector` / `weighted_random_selector`（`seed` 必填，`weights` 与 `children` 对应，省略时全为 1）、`race`、`throttle`、`mem_parallel` 与 `custom` 子节点；
 - 叶子参数在构建期解析为具体 `P`，tick 期没有动态值；
 - 配置结构拒绝未知字段（`deny_unknown_fields`），拼错的键不会被静默忽略；
 - 省略 `params` 等价于 `null`：无参 action/condition 用 `P = ()` 并省略 `params`；带字段的 struct 参数请显式写 `"params": {}`；
@@ -376,7 +382,7 @@ let tree = playact::bt!(World, "player", reactive_selector {
 })?;
 ```
 
-- 组合：`sequence`、`reactive_sequence`、`selector`、`reactive_selector`、`random_selector(seed)`、`parallel(success, failure)`、`mem_parallel(success, failure)`；
+- 组合：`sequence`、`reactive_sequence`、`selector`、`reactive_selector`、`random_selector(seed)`、`parallel(success, failure)`、`mem_parallel(success, failure)`、`race`；
 - 装饰：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、`retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、`timeout(duration)`、`limiter(n)`、`throttle(window, max)`，块内必须恰好一个子节点；
 - 叶子：`action(name, closure)`、`condition(name, closure)`、`wait(duration)`、`set_value(name, key, value)`、`raw(expression)`；
 - 未知节点、叶子带 body、装饰器子节点数量不对都会在宏展开期报错；最后仍走 builder 的 typestate 检查；
@@ -544,7 +550,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 包含模块单测、公共 API 集成测试、doctest 和 `compile_fail` doctest（验证根/装饰器子节点数量、黑板 key 类型错误）。CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows，并检查嵌入式 no_std 目标。
 
 - `benches/engine.rs` 是零第三方依赖的微基准，覆盖 sequence / selector / reactive 抢占 / parallel / mem_parallel / weighted selector / 嵌套树 / services tick、黑板读写、构建与 describe；输出延迟与吞吐，适合观察回归。
-- `tests/stress.rs` 用固定 seed 随机生成组合、装饰、叶子、加权选择、时间限流、SetValue、嵌套树与前置服务，验证 tick / abort / reset / describe / Send，并检查同 seed 的行为可复现；无需 nightly 或 cargo-fuzz（它不是覆盖率引导的 fuzzer）。
+- `tests/stress.rs` 用固定 seed 随机生成组合、装饰、叶子、加权/效用选择、竞速、时间限流、SetValue、嵌套树与前置服务，验证 tick / abort / reset / describe / Send，并检查同 seed 的行为可复现；无需 nightly 或 cargo-fuzz（它不是覆盖率引导的 fuzzer）。
 
 ## 0.2 开发线
 
@@ -562,6 +568,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - bench/fuzz：零依赖微基准与确定性随机压力测试（非覆盖率引导的 fuzzing）；
 - `StatsTracer` / `MultiTracer`、`last_status()`、`SharedBlackboard::try_lock`：运行统计与多路观测；
 - `WeightedRandomSelector`、`Throttle`、`SetValue`：加权随机、时间窗限流与黑板赋值；
+- `Race`、`UtilitySelector`：首个终态获胜、动态效用评分与 hysteresis 切换；
 - `SubtreeSlot` 与 Services：运行时子树切换、根节点前的前置服务；
 - 配置 include：安全文件解析器、循环/深度保护，并接入热重载与远程加载；
 - `no_std`：关闭默认 `std` feature 后核心以 `alloc` 编译，std 集成按 feature 门控。
