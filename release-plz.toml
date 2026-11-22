@@ -1,0 +1,27 @@
+# release-plz configuration.
+#
+# `release-pr` prepares version bumps and changelogs in a pull request.
+# `release` publishes versions already present in Cargo.toml when they are not
+# yet on crates.io. The initial publish is handled by the CI workflow so a
+# local `cargo publish` is never required. See .github/workflows/release.yml.
+
+[workspace]
+allow_dirty = false
+changelog_update = true
+dependencies_update = false
+git_release_enable = true
+git_tag_enable = true
+pr_branch_prefix = "release-plz-"
+pr_labels = ["area: ci"]
+publish_timeout = "30m"
+release = true
+release_always = true
+semver_check = true
+
+[[package]]
+name = "playact"
+
+# cargo-semver-checks does not support proc-macro crates.
+[[package]]
+name = "playact-macros"
+semver_check = false
