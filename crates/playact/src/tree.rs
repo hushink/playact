@@ -1,5 +1,8 @@
 //! 行为树驱动外壳与结构描述。
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::{self, Write};
 
 use crate::blackboard::Blackboard;
@@ -75,7 +78,7 @@ impl<W> BehaviorTree<W> {
         status
     }
 
-    /// 用外部黑板 tick；用于 [`crate::SharedBlackboard`] 或自定义共享状态。
+    /// 用外部黑板 tick；用于 `SharedBlackboard` 或自定义共享状态。
     ///
     /// 本次 tick 不使用树自带的黑板；树自带的黑板保持不变。Tracer 仍然生效。
     /// 不要在 Running 中途切换黑板来源：节点可能已缓存黑板数据；需要切换时
@@ -197,7 +200,7 @@ impl<W> BehaviorTree<W> {
 ///
 /// 嵌套树共享外层 tick 的 world、time、黑板与 Tracer：
 /// - 它自带的黑板不参与嵌套 tick；跨树共享数据请用外层黑板或
-///   [`crate::SharedBlackboard`]；
+///   `SharedBlackboard`；
 /// - 它自带的 Tracer 不生效，外层 Tracer 会看到嵌套树根及其子树；
 /// - 被外层抢占时按 `abort → reset` 传播到嵌套树根；
 /// - 在 `describe()` 中显示为 `tree "<名字>"`，其唯一子节点是原根节点。
@@ -315,7 +318,7 @@ impl fmt::Display for TreeDescription {
             let next_prefix = if root {
                 String::new()
             } else {
-                format!("{prefix}{}", if last { "    " } else { "│   " })
+                alloc::format!("{prefix}{}", if last { "    " } else { "│   " })
             };
 
             for (index, child) in node.children.iter().enumerate() {

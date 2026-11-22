@@ -3,9 +3,13 @@
 //! 根节点必须恰好一个子节点；装饰节点闭包必须恰好产生一个子节点。
 //! 这些约束都由类型系统保证，不需要 `.end()`，也不会在运行时 panic。
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::time::Duration;
 
+#[cfg(feature = "std")]
 use crate::async_action::{AsyncAction, AsyncTask};
 use crate::composite::{
     MemParallel, Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence,
@@ -185,6 +189,7 @@ where
     }
 
     /// 追加一个异步/远程动作。
+    #[cfg(feature = "std")]
     pub fn async_action<F>(
         self,
         name: impl Into<String>,

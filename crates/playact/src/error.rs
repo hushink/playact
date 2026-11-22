@@ -46,4 +46,4 @@ impl fmt::Display for BuildError {
     }
 }
 
-impl std::error::Error for BuildError {}
+impl core::error::Error for BuildError {}

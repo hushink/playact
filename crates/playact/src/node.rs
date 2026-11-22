@@ -1,5 +1,6 @@
 //! 节点契约与节点类型标签。
 
+use alloc::boxed::Box;
 use core::fmt;
 
 use crate::context::Context;

@@ -1,5 +1,6 @@
 //! 装饰节点：包装一个子节点，改变其状态语义。
 
+use alloc::string::String;
 use core::num::NonZeroUsize;
 use core::time::Duration;
 

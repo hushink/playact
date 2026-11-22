@@ -4,6 +4,8 @@
 //! 推荐把 `CommandBuffer<C>` 放进世界或黑板的 typed slot，动作节点只
 //! `push`，驱动方在 tick 外 `drain` 后交给真正的执行器。
 
+use alloc::vec::Vec;
+
 /// 一个简单的命令缓冲区。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandBuffer<C> {
@@ -41,7 +43,7 @@ impl<C> CommandBuffer<C> {
     }
 
     /// 取走所有命令，保留缓冲区容量。
-    pub fn drain(&mut self) -> std::vec::Drain<'_, C> {
+    pub fn drain(&mut self) -> alloc::vec::Drain<'_, C> {
         self.commands.drain(..)
     }
 
@@ -90,7 +92,7 @@ impl<C> FromIterator<C> for CommandBuffer<C> {
 
 impl<C> IntoIterator for CommandBuffer<C> {
     type Item = C;
-    type IntoIter = std::vec::IntoIter<C>;
+    type IntoIter = alloc::vec::IntoIter<C>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.commands.into_iter()

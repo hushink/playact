@@ -1,6 +1,6 @@
 //! 可重复实例化的子树工厂。
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use crate::node::BoxedNode;
 

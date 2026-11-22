@@ -1,5 +1,7 @@
 //! tick 上下文。
 
+use alloc::vec::Vec;
+
 use crate::blackboard::Blackboard;
 use crate::node::BoxedNode;
 use crate::status::Status;

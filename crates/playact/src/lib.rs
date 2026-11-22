@@ -29,7 +29,20 @@
 //! `W`、命令类型 `C`、配置参数 `P` 都由使用方提供；示例中的战斗类型只
 //! 存在于示例里。
 //!
-//! 核心 crate 默认零依赖；配置层、文件格式与 `tracing` 集成都是可选 feature。
+//! 核心 crate 默认通过 `std` feature 使用标准库并保持零第三方依赖；关闭后
+//! 以 `alloc` 编译。配置层、文件格式与 `tracing` 集成都是可选 feature。
+//!
+//! # no_std
+//!
+//! 关闭默认 `std` feature 后，核心引擎改用 `alloc` 编译：
+//!
+//! ```toml
+//! playact = { version = "0.1.1", default-features = false }
+//! ```
+//!
+//! 树、构建器、黑板、组合/装饰/叶子、命令缓冲与 `SubtreeFactory` 均可用。
+//! `SharedBlackboard`、`AsyncAction`、配置/热重载/远程配置与 tracing 集成
+//! 需要 `std`。`SubtreeFactory` 使用 `alloc::sync::Arc`，目标需支持原子指针。
 //!
 //! # 编译期保证
 //!
@@ -66,10 +79,14 @@
 //! let _: Option<&u64> = board.get(&A);
 //! ```
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 #![warn(rust_2018_idioms)]
 
+extern crate alloc;
+
+#[cfg(feature = "std")]
 pub mod async_action;
 pub mod blackboard;
 pub mod builder;
@@ -86,6 +103,7 @@ pub mod leaf;
 pub mod node;
 #[cfg(feature = "remote-config")]
 pub mod remote_config;
+#[cfg(feature = "std")]
 pub mod shared;
 pub mod status;
 pub mod subtree;
@@ -93,6 +111,7 @@ pub mod time;
 pub mod trace;
 pub mod tree;
 
+#[cfg(feature = "std")]
 pub use async_action::{AsyncAction, AsyncTask, CancellationToken, ThreadTask};
 pub use blackboard::{Blackboard, Key};
 pub use builder::{BehaviorTreeBuilder, BranchBuilder};
@@ -115,6 +134,7 @@ pub use leaf::{Action, Condition, Wait};
 pub use node::{BoxedNode, Kind, Node};
 #[cfg(feature = "remote-config")]
 pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
+#[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
 pub use status::Status;
 pub use subtree::SubtreeFactory;
@@ -136,14 +156,15 @@ pub mod prelude {
     pub use crate::bt;
     pub use crate::key;
     pub use crate::{
-        AbortReason, Action, AlwaysFail, AlwaysSucceed, AsyncAction, AsyncTask, BehaviorTree,
-        BehaviorTreeBuilder, Blackboard, BoxedNode, BranchBuilder, BuildError, CancellationToken,
-        CommandBuffer, Condition, Context, Cooldown, Inverter, Key, Kind, Limiter,
-        MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node, Parallel, RandomSelector, ReactiveSelector,
-        ReactiveSequence, Repeat, Retry, Selector, Sequence, SharedBlackboard, Status,
-        SubtreeFactory, ThreadTask, Threshold, Time, Timeout, TraceEvent, Tracer, TreeDescription,
-        UntilFailure, UntilSuccess, Wait,
+        AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
+        Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
+        Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node,
+        Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector,
+        Sequence, Status, SubtreeFactory, Threshold, Time, Timeout, TraceEvent, Tracer,
+        TreeDescription, UntilFailure, UntilSuccess, Wait,
     };
+    #[cfg(feature = "std")]
+    pub use crate::{AsyncAction, AsyncTask, CancellationToken, SharedBlackboard, ThreadTask};
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]

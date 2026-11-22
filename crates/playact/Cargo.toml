@@ -12,16 +12,18 @@ categories = ["game-development", "algorithms"]
 readme = "README.md"
 
 [features]
-default = []
-config = ["dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
+default = ["std"]
+std = []
+config = ["std", "dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
 toml = ["config", "dep:toml"]
 yaml = ["config", "dep:serde_yaml_ng"]
 ron = ["config", "dep:ron"]
-tracing = ["dep:tracing"]
+tracing = ["std", "dep:tracing"]
 hot-reload = ["config", "dep:notify"]
 remote-config = ["config", "dep:reqwest"]
 macros = ["dep:playact-macros"]
 full = [
+    "std",
     "config",
     "toml",
     "yaml",

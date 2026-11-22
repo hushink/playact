@@ -11,6 +11,7 @@
 - **构建期尽量失败**：根节点多个子节点、装饰器子节点数量不对会直接编译失败；配置错误返回带路径的 `ConfigBuildError`。
 - **同步、可预测**：tick 内不 sleep、不引入 async runtime、不 `catch_unwind`；长动作返回 `Running`，由下一帧继续。
 - **可中断**：Running 子树被抢占时先 `abort` 做外部清理，再 `reset` 清内部状态。
+- **可裁剪**：关闭默认 `std` feature 后核心引擎以 `alloc` 编译；std 专有集成按 feature 门控。
 
 ## 快速开始
 
@@ -160,7 +161,7 @@ let commands: Vec<_> = tree
 
 ## 共享黑板
 
-默认每棵树持有自己的 `Blackboard`；需要多个 AI / 多棵树共享 typed 数据时用 `SharedBlackboard`（`Arc<Mutex<Blackboard>>`，核心功能，无需 feature）：
+默认每棵树持有自己的 `Blackboard`；需要多个 AI / 多棵树共享 typed 数据时用 `SharedBlackboard`（`Arc<Mutex<Blackboard>>`，`std` 功能，默认开启）：
 
 ```rust
 use playact::prelude::*;
@@ -212,7 +213,7 @@ let _time: Time = ctx.time();
 
 ## 异步 / 远程动作
 
-不绑定 async runtime，tick 内绝不阻塞：
+`AsyncAction` 依赖 `std`（默认开启），no_std 核心不包含线程任务；不绑定 async runtime，tick 内绝不阻塞：
 
 ```rust
 use playact::{AsyncAction, AsyncTask, Status, ThreadTask};
@@ -359,18 +360,40 @@ loop {
 
 | feature | 内容 |
 |---|---|
-| 默认 | 纯标准库，零依赖 |
-| `config` | `TreeSpec`、`NodeRegistry`、JSON 解析（serde/serde_json/serde_path_to_error） |
+| 默认 | `std`，纯标准库，零第三方依赖 |
+| `std` | 标准库集成：`SharedBlackboard`、`AsyncAction`、配置/热重载/远程配置、`TracingTracer`；关闭后核心以 `no_std + alloc` 编译 |
+| `config` | `TreeSpec`、`NodeRegistry`、JSON 解析（serde/serde_json/serde_path_to_error，依赖 `std`） |
 | `toml` | `from_toml_str` |
 | `yaml` | `from_yaml_str`（serde_yaml_ng） |
 | `ron` | `from_ron_str` |
-| `tracing` | `TracingTracer` |
+| `tracing` | `TracingTracer`（依赖 `std`） |
 | `hot-reload` | `TreeWatcher` + `notify` 文件监听（依赖 `config`） |
 | `remote-config` | `RemoteTreeLoader` + `reqwest::blocking` HTTP 配置（依赖 `config`） |
-| `macros` | `playact-macros` 的 `bt!` proc-macro DSL |
-| `full` | 以上全部 |
+| `macros` | `playact-macros` 的 `bt!` proc-macro DSL（no_std 可用） |
+| `full` | 以上全部（含 `std`） |
 
 > 发布顺序：`playact` 的 `macros` feature 依赖同版本 `playact-macros`。需要先发布 `playact-macros`，再打包/发布 `playact`；否则 `cargo package -p playact` 会因 registry 中找不到该依赖而失败。
+
+## no_std
+
+关闭默认 `std` feature 后，核心引擎使用 `alloc` 编译：
+
+```toml
+[dependencies]
+playact = { version = "0.1.1", default-features = false }
+```
+
+可用：`Node`、`BehaviorTree`、builder、`Blackboard`（内部使用 `BTreeMap`）、组合/装饰/叶子节点、`CommandBuffer`、`SubtreeFactory`、`Tracer` 与 `describe`。
+
+需要 `std`：`SharedBlackboard`、`AsyncAction`/`ThreadTask`、配置层、热重载、远程配置、`TracingTracer`。
+
+- `SubtreeFactory` 使用 `alloc::sync::Arc`，目标需支持原子指针；已在 `thumbv7em-none-eabihf` 上验证；
+- `macros` 不依赖 `std`，生成的代码只引用 playact；
+- 验证命令：
+
+```text
+cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib
+```
 
 ## 线程模型
 
@@ -429,9 +452,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo bench -p playact
 cargo doc --workspace --all-features --no-deps
+cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib
 ```
 
-包含模块单测、公共 API 集成测试、doctest 和 `compile_fail` doctest（验证根/装饰器子节点数量、黑板 key 类型错误）。CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows。
+包含模块单测、公共 API 集成测试、doctest 和 `compile_fail` doctest（验证根/装饰器子节点数量、黑板 key 类型错误）。CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows，并检查嵌入式 no_std 目标。
 
 - `benches/engine.rs` 是零第三方依赖的微基准，覆盖 sequence / selector / reactive 抢占 / parallel / mem_parallel / 嵌套树 tick、黑板读写、构建与 describe；输出延迟与吞吐，适合观察回归。
 - `tests/stress.rs` 用固定 seed 随机生成组合、装饰、叶子与嵌套树，验证 tick / abort / reset / describe / Send，并检查同 seed 的行为可复现；无需 nightly 或 cargo-fuzz（它不是覆盖率引导的 fuzzer）。
@@ -449,9 +473,8 @@ cargo doc --workspace --all-features --no-deps
 - `macros`：`bt!` proc-macro DSL，展开为 builder 调用；
 - `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板；
 - `BehaviorTree: Node`：整棵树可直接嵌套，共享外层上下文并传播 abort/reset；
-- bench/fuzz：零依赖微基准与确定性随机压力测试（非覆盖率引导的 fuzzing）。
-
-仍未实现：`no_std`。
+- bench/fuzz：零依赖微基准与确定性随机压力测试（非覆盖率引导的 fuzzing）；
+- `no_std`：关闭默认 `std` feature 后核心以 `alloc` 编译，std 集成按 feature 门控。
 
 ## License
 

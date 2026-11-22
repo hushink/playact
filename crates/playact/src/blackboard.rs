@@ -4,11 +4,12 @@
 //! 同名但不同类型的 key 是不同槽位，`set`/`get` 的类型不匹配在编译期
 //! 就被 `Key<T>` 拦住。
 
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use core::any::{Any, TypeId};
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
 
 /// 类型安全的黑板键。
 ///
@@ -48,7 +49,7 @@ impl<T: Send + 'static> fmt::Debug for Key<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Key")
             .field("name", &self.name)
-            .field("type", &std::any::type_name::<T>())
+            .field("type", &core::any::type_name::<T>())
             .finish()
     }
 }
@@ -90,7 +91,7 @@ type SlotKey = (&'static str, TypeId);
 /// 黑板可以在不同节点之间传递目标、缓存、命令等。
 #[derive(Default)]
 pub struct Blackboard {
-    slots: HashMap<SlotKey, Box<dyn Any + Send>>,
+    slots: BTreeMap<SlotKey, Box<dyn Any + Send>>,
 }
 
 impl Blackboard {
@@ -101,11 +102,12 @@ impl Blackboard {
     }
 
     /// 预分配槽位容量。
+    ///
+    /// 核心实现使用 `BTreeMap`，容量参数仅保留 API 兼容并被忽略；
+    /// 黑板通常只有少量槽位，不做预分配。
     #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            slots: HashMap::with_capacity(capacity),
-        }
+    pub fn with_capacity(_capacity: usize) -> Self {
+        Self::new()
     }
 
     /// 写入一个值，返回旧值（如果有）。

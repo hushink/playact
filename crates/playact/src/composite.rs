@@ -1,5 +1,7 @@
 //! 组合节点：只编排 `Status` 流转，不碰业务。
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
 use crate::context::Context;
@@ -634,7 +636,7 @@ impl<W> Parallel<W> {
     /// 构造并行节点，不做阈值校验。
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>, success: Threshold, failure: Threshold) -> Self {
-        let running = vec![false; children.len()];
+        let running = alloc::vec![false; children.len()];
         Self {
             name: String::from("Parallel"),
             children,
@@ -765,7 +767,7 @@ impl<W> MemParallel<W> {
     /// 构造并行节点，不做阈值校验。
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>, success: Threshold, failure: Threshold) -> Self {
-        let states = vec![MemChildState::Pending; children.len()];
+        let states = alloc::vec![MemChildState::Pending; children.len()];
         Self {
             name: String::from("MemParallel"),
             children,
