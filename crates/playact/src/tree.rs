@@ -438,11 +438,7 @@ impl<W> Node<W> for BehaviorTree<W> {
         {
             return false;
         }
-        if !load_children(&mut self.services, &services) {
-            return false;
-        }
-
-        true
+        load_children(&mut self.services, &services)
     }
 }
 

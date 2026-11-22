@@ -1074,12 +1074,12 @@ impl<W> UtilitySelector<W> {
     fn best_score(&self, ctx: &Context<'_, W>, exclude: Option<usize>) -> Option<(usize, f32)> {
         let mut best: Option<(usize, f32)> = None;
 
-        for index in 0..self.children.len() {
+        for (index, score_fn) in self.scores.iter().enumerate() {
             if Some(index) == exclude {
                 continue;
             }
 
-            let score = (self.scores[index])(ctx);
+            let score = score_fn(ctx);
             let score = if score.is_nan() {
                 f32::NEG_INFINITY
             } else {
