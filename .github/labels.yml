@@ -1,0 +1,111 @@
+# Repository label taxonomy.
+# Default GitHub labels are renamed through from_name; keep this file as the source of truth.
+
+# Type: what kind of work is this?
+- name: "type: bug"
+  color: "#d73a4a"
+  description: "Something is broken or behaves incorrectly"
+  from_name: "bug"
+
+- name: "type: feature"
+  color: "#a2eeef"
+  description: "New user-facing capability or behavior"
+  from_name: "enhancement"
+
+- name: "type: docs"
+  color: "#0075ca"
+  description: "Documentation, examples, guides, or API docs"
+  from_name: "documentation"
+
+- name: "type: performance"
+  color: "#0e8a16"
+  description: "Performance, benchmarks, allocation, or latency work"
+
+- name: "type: chore"
+  color: "#ededed"
+  description: "Maintenance, refactoring, tests, or tooling changes"
+
+# Status: where is it in the triage workflow?
+- name: "status: needs triage"
+  color: "#fbca04"
+  description: "Awaiting initial maintainer review and categorization"
+
+- name: "status: confirmed"
+  color: "#0e8a16"
+  description: "Reproduced and accepted for future work"
+
+- name: "status: blocked"
+  color: "#b60205"
+  description: "Cannot progress until a dependency or decision is resolved"
+
+- name: "status: waiting for author"
+  color: "#e99695"
+  description: "Waiting for more information or changes from the reporter"
+  from_name: "question"
+
+- name: "status: duplicate"
+  color: "#cfd3d7"
+  description: "Already reported or implemented elsewhere"
+  from_name: "duplicate"
+
+- name: "status: invalid"
+  color: "#e4e669"
+  description: "Not a valid issue or outside the project's scope"
+  from_name: "invalid"
+
+- name: "status: wontfix"
+  color: "#ffffff"
+  description: "Will not be fixed or implemented"
+  from_name: "wontfix"
+
+# Priority: how urgent is it?
+- name: "priority: high"
+  color: "#b60205"
+  description: "Should be addressed in the current cycle"
+
+- name: "priority: medium"
+  color: "#d93f0b"
+  description: "Important, but not urgent"
+
+- name: "priority: low"
+  color: "#c2e0c6"
+  description: "Nice to have; can wait"
+
+# Area: which part of the project?
+- name: "area: core"
+  color: "#5319e7"
+  description: "Engine core: nodes, builder, context, blackboard, tree"
+
+- name: "area: config"
+  color: "#6f42c1"
+  description: "TreeSpec, registry, includes, hot reload, remote config"
+
+- name: "area: async"
+  color: "#8250df"
+  description: "AsyncAction, ThreadTask, TokioTask, cancellation"
+
+- name: "area: macros"
+  color: "#a475f9"
+  description: "bt! proc-macro DSL and playact-macros"
+
+- name: "area: examples"
+  color: "#c297ff"
+  description: "Battle AI examples and example configuration"
+
+- name: "area: ci"
+  color: "#bfd4f2"
+  description: "CI, releases, Dependabot, and repository automation"
+
+# Contributor: entry points for new contributors.
+- name: "good first issue"
+  color: "#7057ff"
+  description: "Good for first-time contributors"
+
+- name: "help wanted"
+  color: "#008672"
+  description: "Extra attention or contributions are welcome"
+
+# Automation-owned labels.
+- name: "dependencies"
+  color: "#0366d6"
+  description: "Dependency updates proposed by Dependabot"
