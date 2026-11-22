@@ -7,7 +7,7 @@ use core::marker::PhantomData;
 use core::time::Duration;
 
 use crate::composite::{
-    Parallel, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
+    Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
 };
 use crate::context::Context;
 use crate::decorator::{
@@ -18,6 +18,7 @@ use crate::error::BuildError;
 use crate::leaf::{Action, Condition, Wait};
 use crate::node::BoxedNode;
 use crate::status::Status;
+use crate::subtree::SubtreeFactory;
 use crate::tree::BehaviorTree;
 
 mod sealed {
@@ -199,6 +200,11 @@ where
         self.push_node(node)
     }
 
+    /// 通过子树工厂追加一份全新实例化的子树。
+    pub fn subtree(self, factory: &SubtreeFactory<W>) -> BehaviorTreeBuilder<W, S::Next> {
+        self.push_node(factory.instantiate())
+    }
+
     // ---------- 组合 ----------
 
     /// 打开一个记忆式顺序节点。
@@ -254,6 +260,21 @@ where
         let branch = f(BehaviorTreeBuilder::branch());
         let (children, error) = branch.into_parts();
         self.push_node(Box::new(ReactiveSelector::new(children)))
+            .set_error(error)
+    }
+
+    /// 打开一个带记忆的随机选择节点。
+    pub fn random_selector<S2>(
+        self,
+        seed: u64,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        S2: BuilderState,
+    {
+        let branch = f(BehaviorTreeBuilder::branch());
+        let (children, error) = branch.into_parts();
+        self.push_node(Box::new(RandomSelector::new(children, seed)))
             .set_error(error)
     }
 
@@ -428,6 +449,8 @@ mod tests {
     use core::num::NonZeroUsize;
     use core::time::Duration;
 
+    use crate::leaf::Action;
+    use crate::subtree::SubtreeFactory;
     use crate::time::Time;
 
     use super::*;
@@ -488,6 +511,32 @@ mod tests {
             }
             _ => panic!("expected invalid success threshold"),
         }
+    }
+
+    #[test]
+    fn subtree_factory_builds_fresh_instances() {
+        let factory = SubtreeFactory::<()>::new(|| {
+            Box::new(Action::<()>::new("leaf", |_| Status::Success)) as BoxedNode<()>
+        });
+
+        let mut tree = BehaviorTreeBuilder::<()>::new("subtree")
+            .sequence(|b| b.subtree(&factory).subtree(&factory))
+            .build()
+            .expect("subtree tree");
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn random_selector_builds() {
+        let mut tree = BehaviorTreeBuilder::<()>::new("random")
+            .random_selector(7, |b| b.action("only", |_| Status::Success))
+            .build()
+            .expect("random selector tree");
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
     }
 
     #[test]

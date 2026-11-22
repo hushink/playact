@@ -82,6 +82,7 @@ pub mod error;
 pub mod leaf;
 pub mod node;
 pub mod status;
+pub mod subtree;
 pub mod time;
 pub mod trace;
 pub mod tree;
@@ -89,7 +90,9 @@ pub mod tree;
 pub use blackboard::{Blackboard, Key};
 pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
-pub use composite::{Parallel, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold};
+pub use composite::{
+    Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
+};
 pub use context::Context;
 pub use decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK, Repeat,
@@ -99,6 +102,7 @@ pub use error::BuildError;
 pub use leaf::{Action, Condition, Wait};
 pub use node::{BoxedNode, Kind, Node};
 pub use status::Status;
+pub use subtree::SubtreeFactory;
 pub use time::Time;
 pub use trace::{AbortReason, TraceEvent, Tracer};
 pub use tree::{BehaviorTree, TreeDescription};
@@ -113,7 +117,8 @@ pub mod prelude {
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
         Cooldown, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, Node, Parallel,
-        ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector, Sequence, Status, Threshold,
-        Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure, UntilSuccess, Wait,
+        RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, Retry, Selector, Sequence,
+        Status, SubtreeFactory, Threshold, Time, Timeout, TraceEvent, Tracer, TreeDescription,
+        UntilFailure, UntilSuccess, Wait,
     };
 }

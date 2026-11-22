@@ -77,9 +77,12 @@ pub trait Node<W>: Send {
 | `ReactiveSequence` | 每 tick 从头评估；旧 Running 子节点被抢占时 abort |
 | `Selector` | 记忆式：失败后尝试下一个，Running 停留 |
 | `ReactiveSelector` | 每 tick 从头评估；高优先级 Success/Running 抢占并 abort 低优先级分支 |
+| `RandomSelector` | 带记忆；需要新分支时用确定性 seed 打乱顺序，Running 分支续跑 |
 | `Parallel` | 全部子节点 tick 后按成功/失败阈值汇总；失败优先；结论确定后 abort 剩余 Running |
 
 `Parallel` 的阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：不同 tick 分别成功的子节点不会让 `All` 自动满足；`Any` 每次成功都会 abort 其余仍在 Running 的兄弟。需要累积语义请用自定义节点（v0.2 计划中的累积式 Parallel）。
+
+`RandomSelector` 的 `seed` 决定随机顺序；相同 seed + 相同 tick 序列可复现，`reset()` 恢复初始 RNG。
 
 `Parallel` 阈值支持 `All`、`Any`、`AtLeast(n)`；`AtLeast(n)` 在构建期校验不超过子节点数量。
 
@@ -199,6 +202,7 @@ let mut tree = spec.build(&registry)?;
 ```
 
 - 配置只描述树结构、节点名和叶子参数；
+- 支持 `random_selector`（`seed` 必填，确定性）与 `custom` 子节点；
 - 叶子参数在构建期解析为具体 `P`，tick 期没有动态值；
 - 配置结构拒绝未知字段（`deny_unknown_fields`），拼错的键不会被静默忽略；
 - 省略 `params` 等价于 `null`：无参 action/condition 用 `P = ()` 并省略 `params`；带字段的 struct 参数请显式写 `"params": {}`；
@@ -229,6 +233,19 @@ let mut tree = spec.build(&registry)?;
 - 每个 AI 持有自己的树和黑板，多 AI 用工厂函数分别构建；共享世界由驱动方顺序 tick 或自行同步。
 - `BehaviorTree::into_root()` 会丢弃黑板与 Tracer，但保留 root 的内部状态；如果 Running 子树依赖黑板数据，挂到新树前要重新准备。
 
+### 子树复用
+
+`SubtreeFactory` 是可克隆的子树蓝图；每次 `instantiate()` / builder `.subtree()` 都创建一份全新的节点状态：
+
+```rust
+let goblin = SubtreeFactory::new(|| build_goblin_root());
+let tree = BehaviorTreeBuilder::<World>::new("pair")
+    .sequence(|b| b.subtree(&goblin).subtree(&goblin))
+    .build()?;
+```
+
+需要保留 Running 子树依赖的黑板数据时，用工厂重新构建，而不是只 `into_root()`。
+
 ## 示例
 
 ```text
@@ -250,9 +267,14 @@ cargo doc --workspace --all-features --no-deps
 
 包含模块单测、公共 API 集成测试、doctest 和 `compile_fail` doctest（验证根/装饰器子节点数量、黑板 key 类型错误）。CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows。
 
-## v0.1 不做
+## 0.2 开发线
 
-`RandomSelector`、`Subtree::factory`、async action/远程动作、proc-macro DSL、热重载/远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
+当前 crate 版本号仍为 **0.1.1**，但已包含 0.2 计划中的：
+
+- `RandomSelector`：带记忆、确定性 seed 的随机选择；
+- `SubtreeFactory`：可克隆、可重复实例化的子树工厂。
+
+仍未实现：累积式 Parallel、async action/远程动作、proc-macro DSL、热重载/远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
 
 ## License
 

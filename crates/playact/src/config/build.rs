@@ -3,7 +3,7 @@
 use core::time::Duration;
 
 use crate::composite::{
-    Parallel, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
+    Parallel, RandomSelector, ReactiveSelector, ReactiveSequence, Selector, Sequence, Threshold,
 };
 use crate::decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Repeat, Retry, Timeout, UntilFailure,
@@ -66,6 +66,14 @@ fn build_node<W: 'static>(
         }
         SpecNode::ReactiveSelector { name, children } => {
             let node = ReactiveSelector::new(build_children(children, registry, path)?);
+            Ok(Box::new(with_name(node, name)))
+        }
+        SpecNode::RandomSelector {
+            name,
+            seed,
+            children,
+        } => {
+            let node = RandomSelector::new(build_children(children, registry, path)?, *seed);
             Ok(Box::new(with_name(node, name)))
         }
         SpecNode::Parallel {
@@ -215,6 +223,7 @@ impl_named_node!(
     ReactiveSequence,
     Selector,
     ReactiveSelector,
+    RandomSelector,
     Parallel,
     Inverter,
     AlwaysSucceed,

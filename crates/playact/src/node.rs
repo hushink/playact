@@ -23,6 +23,8 @@ pub enum Kind {
     Selector,
     /// 反应式选择节点。
     ReactiveSelector,
+    /// 带记忆的随机选择节点。
+    RandomSelector,
     /// 并行节点。
     Parallel,
     /// 结果反转。
@@ -64,6 +66,7 @@ impl Kind {
             Self::ReactiveSequence => "reactive_sequence",
             Self::Selector => "selector",
             Self::ReactiveSelector => "reactive_selector",
+            Self::RandomSelector => "random_selector",
             Self::Parallel => "parallel",
             Self::Inverter => "inverter",
             Self::AlwaysSucceed => "always_succeed",

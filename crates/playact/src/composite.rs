@@ -442,6 +442,152 @@ impl<W> Node<W> for ReactiveSelector<W> {
     }
 }
 
+// ==================== 随机选择 ====================
+
+/// 带记忆的随机选择节点。
+///
+/// 需要选择新分支时，用确定性 PRNG 打乱子节点顺序；某个分支进入
+/// `Running` 后，后续 tick 优先继续它，不会因为重新随机而丢弃。分支
+/// 失败后才会在同一 tick 从剩余分支中随机尝试（跳过刚失败的分支）。
+///
+/// 相同 `seed` 与相同 tick 序列产生相同顺序；`reset()` 恢复初始 seed。
+pub struct RandomSelector<W> {
+    name: String,
+    children: Vec<BoxedNode<W>>,
+    seed: u64,
+    rng: u64,
+    order: Vec<usize>,
+    current: Option<usize>,
+}
+
+impl<W> RandomSelector<W> {
+    /// 用子节点和确定性 seed 构造。`seed = 0` 会被替换为固定非零值。
+    #[must_use]
+    pub fn new(children: Vec<BoxedNode<W>>, seed: u64) -> Self {
+        let seed = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
+        let order = (0..children.len()).collect();
+
+        Self {
+            name: String::from("RandomSelector"),
+            children,
+            seed,
+            rng: seed,
+            order,
+            current: None,
+        }
+    }
+
+    /// 覆盖显示名。
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut value = self.rng;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.rng = value;
+        value.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn shuffle(&mut self) {
+        for index in (1..self.order.len()).rev() {
+            let swap_with = (self.next_u64() % (index as u64 + 1)) as usize;
+            self.order.swap(index, swap_with);
+        }
+    }
+
+    fn abort_index(&mut self, ctx: &mut Context<'_, W>, index: usize) {
+        if index < self.children.len() {
+            ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+        }
+    }
+}
+
+impl<W> Node<W> for RandomSelector<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.children.is_empty() {
+            return Status::Failure;
+        }
+
+        let mut skip = None;
+
+        if let Some(index) = self.current {
+            match ctx.tick_child(index, &mut self.children[index]) {
+                Status::Success => {
+                    self.current = None;
+                    return Status::Success;
+                }
+                Status::Failure => {
+                    skip = Some(index);
+                    self.current = None;
+                }
+                Status::Running => return Status::Running,
+            }
+        }
+
+        self.shuffle();
+
+        for position in 0..self.order.len() {
+            let index = self.order[position];
+            if skip == Some(index) {
+                continue;
+            }
+
+            match ctx.tick_child(index, &mut self.children[index]) {
+                Status::Failure => continue,
+                Status::Running => {
+                    self.current = Some(index);
+                    return Status::Running;
+                }
+                Status::Success => {
+                    self.current = None;
+                    return Status::Success;
+                }
+            }
+        }
+
+        self.current = None;
+        Status::Failure
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        if let Some(index) = self.current.take() {
+            self.abort_index(ctx, index);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.current = None;
+        self.rng = self.seed;
+        for (index, slot) in self.order.iter_mut().enumerate() {
+            *slot = index;
+        }
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::RandomSelector
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+}
+
 // ==================== 并行 ====================
 
 /// 并行节点。
@@ -586,8 +732,8 @@ impl<W> Node<W> for Parallel<W> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use crate::blackboard::Blackboard;
@@ -766,6 +912,98 @@ mod tests {
         *c.world() = true;
         assert_eq!(tree.tick(&mut c), Status::Success);
         assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn random_selector_empty_fails() {
+        let mut tree = RandomSelector::<()>::new(Vec::new(), 42);
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree.tick(&mut c), Status::Failure);
+    }
+
+    #[test]
+    fn random_selector_aborts_current_branch() {
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_cb = Arc::clone(&aborts);
+
+        let child = Action::<()>::new("running", |_| Status::Running).with_abort(
+            move |_: &mut Context<'_, ()>| {
+                aborts_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+
+        let mut tree = RandomSelector::new(vec![Box::new(child) as BoxedNode<()>], 7);
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        tree.abort(&mut c);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn random_selector_keeps_running_branch() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+
+        let child = Action::<()>::new("child", move |_| {
+            let attempt = calls_in_action.fetch_add(1, Ordering::Relaxed);
+            if attempt == 0 {
+                Status::Running
+            } else {
+                Status::Success
+            }
+        });
+
+        let mut tree = RandomSelector::new(vec![Box::new(child) as BoxedNode<()>], 7);
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+
+        assert_eq!(tree.tick(&mut c), Status::Running);
+        assert_eq!(tree.tick(&mut c), Status::Success);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+    }
+
+    fn random_tree(seed: u64, log: Arc<Mutex<Vec<usize>>>) -> RandomSelector<()> {
+        let mut children: Vec<BoxedNode<()>> = Vec::new();
+        for index in 0..5 {
+            let log = Arc::clone(&log);
+            children.push(Box::new(Action::<()>::new("choice", move |_| {
+                log.lock().expect("log lock").push(index);
+                Status::Failure
+            })));
+        }
+        RandomSelector::new(children, seed)
+    }
+
+    #[test]
+    fn random_selector_is_deterministic_and_resettable() {
+        let log_a = Arc::new(Mutex::new(Vec::new()));
+        let log_b = Arc::new(Mutex::new(Vec::new()));
+
+        let mut tree_a = random_tree(42, Arc::clone(&log_a));
+        let mut tree_b = random_tree(42, Arc::clone(&log_b));
+
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut c = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(tree_a.tick(&mut c), Status::Failure);
+        assert_eq!(tree_b.tick(&mut c), Status::Failure);
+
+        let first_order = log_a.lock().expect("log lock").clone();
+        assert_eq!(&first_order, &*log_b.lock().expect("log lock"));
+        assert_eq!(first_order.len(), 5);
+
+        log_a.lock().expect("log lock").clear();
+        tree_a.reset();
+        assert_eq!(tree_a.tick(&mut c), Status::Failure);
+        assert_eq!(&first_order, &*log_a.lock().expect("log lock"));
     }
 
     #[test]

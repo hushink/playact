@@ -87,6 +87,17 @@ pub enum SpecNode {
         #[serde(default)]
         children: Vec<SpecNode>,
     },
+    /// 带记忆的随机选择。
+    RandomSelector {
+        /// 显示名。
+        #[serde(default)]
+        name: Option<String>,
+        /// 确定性 seed。
+        seed: u64,
+        /// 子节点。
+        #[serde(default)]
+        children: Vec<SpecNode>,
+    },
     /// 并行。
     Parallel {
         /// 显示名。
@@ -343,6 +354,18 @@ mod tests {
 
         let mut world = ();
         assert_eq!(tree.name(), "demo");
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_random_selector_from_json() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"random_selector","seed":7,"children":[{"type":"action","name":"ok"}]}}"#,
+        )
+        .expect("valid spec");
+
+        let mut tree = spec.build(&action_registry()).expect("build tree");
+        let mut world = ();
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
     }
 
