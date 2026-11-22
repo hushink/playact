@@ -117,8 +117,13 @@ pub use tree::{BehaviorTree, TreeDescription};
 #[cfg(feature = "tracing")]
 pub use trace::TracingTracer;
 
+#[cfg(feature = "macros")]
+pub use playact_macros::bt;
+
 /// 常用类型与宏的集中导入。
 pub mod prelude {
+    #[cfg(feature = "macros")]
+    pub use crate::bt;
     pub use crate::key;
     pub use crate::{
         AbortReason, Action, AlwaysFail, AlwaysSucceed, AsyncAction, AsyncTask, BehaviorTree,

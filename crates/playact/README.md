@@ -273,6 +273,28 @@ loop {
 - `TreeWatcher::toml` / `yaml` / `ron` 随对应 feature 提供；也可用 `with_parser` 接入自定义格式。
 - `TreeWatcher::tick` 在重载失败时不 tick；需要继续旧树时直接使用 `tree_mut().tick`。
 
+## proc-macro DSL
+
+启用 `macros` feature 后可用 `bt!` 展开为类型安全的 builder 调用：
+
+```rust
+use playact::prelude::*;
+
+let tree = playact::bt!(World, "player", reactive_selector {
+    sequence {
+        condition("low_hp", |ctx: &Context<'_, World>| ctx.world_ref().hp < 0.3),
+        action("drink", |_| Status::Success),
+    },
+    action("patrol", |_| Status::Running),
+})?;
+```
+
+- 组合：`sequence`、`reactive_sequence`、`selector`、`reactive_selector`、`random_selector(seed)`、`parallel(success, failure)`、`mem_parallel(success, failure)`；
+- 装饰：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、`retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、`timeout(duration)`、`limiter(n)`，块内必须恰好一个子节点；
+- 叶子：`action(name, closure)`、`condition(name, closure)`、`wait(duration)`、`raw(expression)`；
+- 未知节点、叶子带 body、装饰器子节点数量不对都会在宏展开期报错；最后仍走 builder 的 typestate 检查；
+- `bt!` 返回 `Result<BehaviorTree<W>, BuildError>`。
+
 ## Feature 矩阵
 
 | feature | 内容 |
@@ -284,7 +306,10 @@ loop {
 | `ron` | `from_ron_str` |
 | `tracing` | `TracingTracer` |
 | `hot-reload` | `TreeWatcher` + `notify` 文件监听（依赖 `config`） |
+| `macros` | `playact-macros` 的 `bt!` proc-macro DSL |
 | `full` | 以上全部 |
+
+> 发布顺序：`playact` 的 `macros` feature 依赖同版本 `playact-macros`。需要先发布 `playact-macros`，再打包/发布 `playact`；否则 `cargo package -p playact` 会因 registry 中找不到该依赖而失败。
 
 ## 线程模型
 
@@ -339,9 +364,10 @@ cargo doc --workspace --all-features --no-deps
 - `SubtreeFactory`：可克隆、可重复实例化的子树工厂；
 - `MemParallel`：跨 tick 累计终态的并行节点；
 - `hot-reload`：`TreeWatcher` 文件监听、去抖重载、黑板保留、失败回退旧树；
-- `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消。
+- `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
+- `macros`：`bt!` proc-macro DSL，展开为 builder 调用。
 
-仍未实现：proc-macro DSL、远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
+仍未实现：远程配置、共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
 
 ## License
 

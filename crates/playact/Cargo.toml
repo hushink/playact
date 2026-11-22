@@ -19,7 +19,8 @@ yaml = ["config", "dep:serde_yaml_ng"]
 ron = ["config", "dep:ron"]
 tracing = ["dep:tracing"]
 hot-reload = ["config", "dep:notify"]
-full = ["config", "toml", "yaml", "ron", "tracing", "hot-reload"]
+macros = ["dep:playact-macros"]
+full = ["config", "toml", "yaml", "ron", "tracing", "hot-reload", "macros"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -30,6 +31,7 @@ serde_yaml_ng = { workspace = true, optional = true }
 ron = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+playact-macros = { version = "0.1.1", path = "../playact-macros", optional = true }
 
 [dev-dependencies]
 serde = { workspace = true }

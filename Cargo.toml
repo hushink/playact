@@ -11,6 +11,10 @@ ron = "0.12"
 toml = { version = "1.2", features = ["preserve_order"] }
 tracing = "0.1"
 notify = "8.2"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+proc-macro-crate = "3"
 
 
 [workspace.package]
