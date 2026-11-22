@@ -1,4 +1,5 @@
-//! 公共 API 集成测试：保命打断、冷却、射程切换与 abort 清理。
+//! Public API integration tests: survival preemption, cooldowns, range transitions,
+//! and abort cleanup.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

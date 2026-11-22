@@ -1,7 +1,8 @@
-//! `playact` 的 proc-macro DSL。
+//! The proc-macro DSL for `playact`.
 //!
-//! 主入口是 [`bt!`]：用嵌套块构造行为树，展开为 `BehaviorTreeBuilder`
-//! 调用。宏只生成代码，不依赖 async runtime，也不引入业务类型。
+//! The main entry point is [`bt!`]: it builds a behavior tree from nested blocks and
+//! expands to `BehaviorTreeBuilder` calls. The macro only generates code; it does not
+//! depend on an async runtime or pull in domain types.
 //!
 //! ```ignore
 //! use playact::prelude::*;
@@ -83,27 +84,27 @@ impl Parse for Node {
     }
 }
 
-/// 用嵌套 DSL 构建 `BehaviorTree`。
+/// Builds a `BehaviorTree` with the nested DSL.
 ///
-/// 语法：
+/// Syntax:
 ///
 /// ```text
 /// bt!(WorldType, "tree name", <root node>)
 /// ```
 ///
-/// 组合节点：`sequence`、`reactive_sequence`、`selector`、
-/// `reactive_selector`、`random_selector(seed)`、`parallel(success, failure)`、
-/// `mem_parallel(success, failure)`、`race`。
+/// Composite nodes: `sequence`, `reactive_sequence`, `selector`,
+/// `reactive_selector`, `random_selector(seed)`, `parallel(success, failure)`,
+/// `mem_parallel(success, failure)`, `race`.
 ///
-/// 装饰节点：`inverter`、`always_succeed`、`always_fail`、`repeat(n)`、
-/// `retry(n)`、`until_success`、`until_failure`、`cooldown(duration)`、
-/// `timeout(duration)`、`limiter(n)`、`throttle(window, max)`、
-/// `guard(condition)`；装饰块必须恰好一个子节点。
+/// Decorator nodes: `inverter`, `always_succeed`, `always_fail`, `repeat(n)`,
+/// `retry(n)`, `until_success`, `until_failure`, `cooldown(duration)`,
+/// `timeout(duration)`, `limiter(n)`, `throttle(window, max)`,
+/// `guard(condition)`; a decorator block must contain exactly one child.
 ///
-/// 叶子：`action(name, closure)`、`condition(name, closure)`、`wait(duration)`、
-/// `set_value(name, key, value)`、`raw(expression)`。
+/// Leaves: `action(name, closure)`, `condition(name, closure)`, `wait(duration)`,
+/// `set_value(name, key, value)`, `raw(expression)`.
 ///
-/// 展开结果是 `Result<BehaviorTree<WorldType>, BuildError>`。
+/// Expands to `Result<BehaviorTree<WorldType>, BuildError>`.
 #[proc_macro]
 pub fn bt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as TreeInput);

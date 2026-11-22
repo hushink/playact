@@ -1,8 +1,9 @@
-//! 行为树节点状态快照与恢复。
+//! Snapshot and restore of behavior tree node state.
 //!
-//! 快照只包含节点内部状态和结构信息，不包含 world、黑板值、闭包捕获状态、
-//! `AsyncAction` 任务、`SubtreeSlot` 动态子树或外部资源。恢复时应使用相同
-//! 的树结构；节点自定义状态格式由节点自己负责。
+//! A snapshot contains only node-internal state and structural information; it
+//! does not include the world, blackboard values, closure captures,
+//! `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or external resources.
+//! Restore into the same tree structure; each node owns its custom state format.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -10,45 +11,47 @@ use core::fmt;
 
 use crate::node::BoxedNode;
 
-/// 当前快照格式版本。
+/// Current snapshot format version.
 pub const SNAPSHOT_VERSION: u32 = 1;
 
-/// 一棵行为树的状态快照。
+/// A state snapshot of a behavior tree.
 ///
-/// `root` 与 `services` 中的字节由各节点的 `Node::save_state` 定义；`None`
-/// 表示该节点（或其子树中的关键节点）不支持状态快照。快照不包含 world、
-/// 黑板或闭包捕获状态。
+/// The bytes in `root` and `services` are defined by each node's
+/// `Node::save_state`; `None` means that node (or a key node in its subtree) does
+/// not support snapshots. A snapshot contains no world, blackboard, or closure
+/// capture state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeSnapshot {
-    /// 快照格式版本，通常等于 [`SNAPSHOT_VERSION`]。
+    /// Snapshot format version, normally equal to [`SNAPSHOT_VERSION`].
     pub version: u32,
-    /// 根节点状态。
+    /// Root node state.
     pub root: Option<Vec<u8>>,
-    /// 服务节点状态，顺序与服务注册顺序一致。
+    /// Service node states, in service registration order.
     pub services: Vec<Option<Vec<u8>>>,
 }
 
-/// 恢复快照时发现的错误。
+/// Errors found while restoring a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RestoreError {
-    /// 快照版本不受支持。
+    /// The snapshot version is not supported.
     UnsupportedVersion {
-        /// 快照中的版本。
+        /// Version found in the snapshot.
         found: u32,
-        /// 当前支持的版本。
+        /// Currently supported version.
         supported: u32,
     },
-    /// 快照中的服务数量与当前树不一致。
+    /// The number of services in the snapshot does not match the current tree.
     ServiceCountMismatch {
-        /// 快照中的服务数量。
+        /// Number of services in the snapshot.
         snapshot: usize,
-        /// 当前树的服务数量。
+        /// Number of services in the current tree.
         tree: usize,
     },
-    /// 节点拒绝了状态（通常意味着树结构变化或状态字节损坏）。
+    /// A node rejected the state (usually meaning the tree structure changed or
+    /// the state bytes are corrupt).
     InvalidState {
-        /// 节点名或 `service[i] 名字`。
+        /// Node name, or `service[i] name`.
         node: String,
     },
 }
@@ -148,12 +151,13 @@ pub(crate) fn load_children<W>(children: &mut [BoxedNode<W>], states: &[Option<V
     true
 }
 
-/// 节点状态的紧凑二进制编解码。
+/// Compact binary encoding/decoding of node state.
 pub(crate) mod state {
     use alloc::vec::Vec;
     use core::time::Duration;
 
-    /// 单个 `Vec` 长度上限，避免损坏/恶意字节触发超大分配。
+    /// Per-`Vec` length limit, preventing corrupt or malicious bytes from
+    /// triggering huge allocations.
     const MAX_ITEMS: usize = 1 << 20;
 
     pub(crate) fn encode<T: Codec>(value: &T) -> Vec<u8> {

@@ -1,8 +1,9 @@
-//! 类型安全黑板。
+//! Type-safe blackboard.
 //!
-//! 黑板按 [`Key<T>`] 存取，公共 API 不暴露字符串查找，也不暴露 `Any`。
-//! 同名但不同类型的 key 是不同槽位，`set`/`get` 的类型不匹配在编译期
-//! 就被 `Key<T>` 拦住。
+//! The blackboard stores values by [`Key<T>`]; the public API exposes neither
+//! string lookup nor `Any`. Keys with the same name but different types are
+//! different slots, and `set`/`get` type mismatches are caught at compile time
+//! by `Key<T>`.
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -11,7 +12,7 @@ use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 
-/// 类型安全的黑板键。
+/// A type-safe blackboard key.
 ///
 /// ```ignore
 /// static TARGET: playact::Key<u32> = playact::key!("target");
@@ -23,7 +24,8 @@ pub struct Key<T: Send + 'static> {
 }
 
 impl<T: Send + 'static> Key<T> {
-    /// 用 `'static` 字符串构造。推荐配合 `key!` 宏使用命名空间。
+    /// Construct from a `'static` string. Pair it with the `key!` macro to get
+    /// namespacing.
     pub const fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -31,7 +33,7 @@ impl<T: Send + 'static> Key<T> {
         }
     }
 
-    /// key 的静态名字。
+    /// The key's static name.
     pub const fn name(self) -> &'static str {
         self.name
     }
@@ -68,7 +70,7 @@ impl<T: Send + 'static> Hash for Key<T> {
     }
 }
 
-/// 生成带当前模块路径前缀的 [`Key`]。
+/// Generate a [`Key`] prefixed with the current module path.
 ///
 /// ```
 /// use playact::Key;
@@ -85,32 +87,34 @@ macro_rules! key {
 
 type SlotKey = (&'static str, TypeId);
 
-/// 类型安全的共享数据槽。
+/// Type-safe shared data slots.
 ///
-/// 黑板随一棵 [`crate::BehaviorTree`] 存活，跨 tick 保留数据；同一个
-/// 黑板可以在不同节点之间传递目标、缓存、命令等。
+/// A blackboard lives as long as one [`crate::BehaviorTree`] and keeps its data
+/// across ticks; the same blackboard lets different nodes pass targets, caches,
+/// commands, and so on.
 #[derive(Default)]
 pub struct Blackboard {
     slots: BTreeMap<SlotKey, Box<dyn Any + Send>>,
 }
 
 impl Blackboard {
-    /// 创建空黑板。
+    /// Create an empty blackboard.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 预分配槽位容量。
+    /// Preallocate slot capacity.
     ///
-    /// 核心实现使用 `BTreeMap`，容量参数仅保留 API 兼容并被忽略；
-    /// 黑板通常只有少量槽位，不做预分配。
+    /// The core implementation uses a `BTreeMap`; the capacity argument is kept
+    /// only for API compatibility and is ignored. Blackboards usually hold few
+    /// slots, so no preallocation is done.
     #[must_use]
     pub fn with_capacity(_capacity: usize) -> Self {
         Self::new()
     }
 
-    /// 写入一个值，返回旧值（如果有）。
+    /// Write a value, returning the old value if any.
     pub fn set<T: Send + 'static>(&mut self, key: &Key<T>, value: T) -> Option<T> {
         self.slots
             .insert((key.name, TypeId::of::<T>()), Box::new(value))
@@ -118,7 +122,7 @@ impl Blackboard {
             .map(|old| *old)
     }
 
-    /// 读取一个值。
+    /// Read a value.
     #[must_use]
     pub fn get<T: Send + 'static>(&self, key: &Key<T>) -> Option<&T> {
         self.slots.get(&(key.name, TypeId::of::<T>())).map(|slot| {
@@ -127,7 +131,7 @@ impl Blackboard {
         })
     }
 
-    /// 可变读取一个值。
+    /// Read a value mutably.
     #[must_use]
     pub fn get_mut<T: Send + 'static>(&mut self, key: &Key<T>) -> Option<&mut T> {
         self.slots
@@ -138,7 +142,7 @@ impl Blackboard {
             })
     }
 
-    /// 读取或插入一个值。
+    /// Read a value or insert one.
     pub fn get_or_insert_with<T: Send + 'static>(
         &mut self,
         key: &Key<T>,
@@ -151,13 +155,13 @@ impl Blackboard {
             .expect("playact blackboard slot type invariant violated")
     }
 
-    /// 是否存在该 key。
+    /// Whether the key exists.
     #[must_use]
     pub fn contains<T: Send + 'static>(&self, key: &Key<T>) -> bool {
         self.slots.contains_key(&(key.name, TypeId::of::<T>()))
     }
 
-    /// 移除并返回一个值。
+    /// Remove and return a value.
     pub fn remove<T: Send + 'static>(&mut self, key: &Key<T>) -> Option<T> {
         self.slots
             .remove(&(key.name, TypeId::of::<T>()))
@@ -165,23 +169,23 @@ impl Blackboard {
             .map(|value| *value)
     }
 
-    /// 移除指定 key，忽略旧值。
+    /// Remove the given key, discarding any old value.
     pub fn clear_key<T: Send + 'static>(&mut self, key: &Key<T>) {
         self.slots.remove(&(key.name, TypeId::of::<T>()));
     }
 
-    /// 清空所有槽位。
+    /// Clear all slots.
     pub fn clear(&mut self) {
         self.slots.clear();
     }
 
-    /// 槽位数量。
+    /// Number of slots.
     #[must_use]
     pub fn len(&self) -> usize {
         self.slots.len()
     }
 
-    /// 是否为空。
+    /// Whether the blackboard is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()

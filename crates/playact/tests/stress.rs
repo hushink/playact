@@ -1,8 +1,10 @@
-//! 确定性随机压力测试。
+//! Deterministic randomized stress test.
 //!
-//! 随机生成组合、装饰、叶子与嵌套树，覆盖 tick / abort / reset / describe /
-//! Send 等路径。固定 seed 完全可复现，不需要 nightly 或 cargo-fuzz；它不能
-//! 替代覆盖率引导的 fuzzer，但可以低成本守住“任意结构不 panic”的底线。
+//! Randomly generates composites, decorators, leaves, and nested trees, exercising
+//! the tick / abort / reset / describe / Send paths. A fixed seed is fully reproducible
+//! and requires neither nightly nor cargo-fuzz; it is no substitute for a
+//! coverage-guided fuzzer, but it cheaply holds the line that arbitrary structures
+//! must not panic.
 
 use std::num::NonZeroUsize;
 use std::time::Duration;
@@ -250,7 +252,7 @@ fn random_trees_survive_tick_abort_reset() {
             }
         }
 
-        // abort / reset 幂等，之后仍能继续 tick。
+        // abort / reset are idempotent, and ticking still works afterwards.
         let time = Time::from_millis(200 * 16, 16);
         tree.abort(&mut world, time);
         tree.abort(&mut world, time);

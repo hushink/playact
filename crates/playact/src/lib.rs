@@ -1,12 +1,13 @@
-//! playact：面向游戏自动化的类型安全行为树引擎。
+//! playact: a type-safe behavior tree engine for game automation.
 //!
-//! 引擎只认识三类东西：
+//! The engine knows only three things:
 //!
-//! - [`Status`]：`Success` / `Failure` / `Running`，节点之间唯一的控制流协议；
-//! - [`Node`]：所有节点统一实现 `tick(&mut Context<W>) -> Status`；
-//! - [`Context`]：借用式 world、类型安全 [`Blackboard`] 与 [`Time`]。
+//! - [`Status`]: `Success` / `Failure` / `Running`, the only control-flow protocol
+//!   between nodes;
+//! - [`Node`]: every node implements `tick(&mut Context<W>) -> Status`;
+//! - [`Context`]: a borrowed world, a type-safe [`Blackboard`], and [`Time`].
 //!
-//! # 快速开始
+//! # Quick start
 //!
 //! ```
 //! use playact::{BehaviorTreeBuilder, Status, Time};
@@ -23,31 +24,36 @@
 //! assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
 //! ```
 //!
-//! # 设计边界
+//! # Design boundaries
 //!
-//! playact 不定义 `WorldState`、业务 `Action` 或任何具体命令类型。世界类型
-//! `W`、命令类型 `C`、配置参数 `P` 都由使用方提供；示例中的战斗类型只
-//! 存在于示例里。
+//! playact defines no `WorldState`, business `Action`, or concrete command type.
+//! The world type `W`, command type `C`, and configuration parameters `P` are all
+//! supplied by the user; the combat types in the examples exist only in the
+//! examples.
 //!
-//! 核心 crate 默认通过 `std` feature 使用标准库并保持零第三方依赖；关闭后
-//! 以 `alloc` 编译。配置层、文件格式与 `tracing` 集成都是可选 feature。
+//! By default the core crate uses the standard library through the `std` feature
+//! and keeps zero third-party dependencies; with that feature off it builds on
+//! `alloc`. The config layer, file formats, and `tracing` integration are all
+//! optional features.
 //!
 //! # no_std
 //!
-//! 关闭默认 `std` feature 后，核心引擎改用 `alloc` 编译：
+//! With the default `std` feature disabled, the core engine builds on `alloc`:
 //!
 //! ```toml
 //! playact = { version = "0.1.1", default-features = false }
 //! ```
 //!
-//! 树、构建器、黑板、组合/装饰/叶子、命令缓冲与 `SubtreeFactory` 均可用。
-//! `SharedBlackboard`、`AsyncAction`、配置/热重载/远程配置与 tracing 集成
-//! 需要 `std`。`SubtreeFactory` 使用 `alloc::sync::Arc`，目标需支持原子指针。
+//! Trees, builders, blackboards, composites/decorators/leaves, command buffers,
+//! and `SubtreeFactory` are all available. `SharedBlackboard`, `AsyncAction`,
+//! config/hot-reload/remote-config, and tracing integration require `std`.
+//! `SubtreeFactory` uses `alloc::sync::Arc`, so the target must support atomic
+//! pointers.
 //!
-//! # 编译期保证
+//! # Compile-time guarantees
 //!
-//! 根节点多个子节点、装饰器子节点数量不对、黑板 key 类型不匹配都会直接
-//! 编译失败：
+//! A root with multiple children, a decorator with the wrong number of children,
+//! or a blackboard key type mismatch all fail to compile outright:
 //!
 //! ```compile_fail
 //! use playact::prelude::*;
@@ -157,7 +163,7 @@ pub use trace::TracingTracer;
 #[cfg(feature = "macros")]
 pub use playact_macros::bt;
 
-/// 常用类型与宏的集中导入。
+/// Centralized imports of common types and macros.
 pub mod prelude {
     #[cfg(feature = "tokio")]
     pub use crate::TokioTask;

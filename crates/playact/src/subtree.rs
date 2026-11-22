@@ -1,4 +1,4 @@
-//! 可重复实例化的子树工厂。
+//! A subtree factory for repeatable instantiation.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -10,11 +10,12 @@ use crate::node::{BoxedNode, Kind, Node};
 use crate::status::Status;
 use crate::trace::AbortReason;
 
-/// 一个可克隆、可重复实例化的子树工厂。
+/// A cloneable subtree factory that produces repeatable instances.
 ///
-/// 每次 [`SubtreeFactory::instantiate`] 都调用一次工厂，创建一份全新的
-/// 节点状态；因此同一个蓝图可以挂到多棵行为树或多个分支，而不会共享
-/// Running/计时/黑板写入等内部状态。
+/// Each call to [`SubtreeFactory::instantiate`] invokes the factory once,
+/// creating fresh node state; the same blueprint can therefore be attached to
+/// multiple behavior trees or branches without sharing internal state such as
+/// Running status, timers, or blackboard writes.
 ///
 /// ```ignore
 /// let goblin = SubtreeFactory::new(|| build_goblin_root());
@@ -29,7 +30,7 @@ pub struct SubtreeFactory<W: 'static> {
 }
 
 impl<W: 'static> SubtreeFactory<W> {
-    /// 用工厂闭包构造。
+    /// Constructs from a factory closure.
     pub fn new<F>(factory: F) -> Self
     where
         F: Fn() -> BoxedNode<W> + Send + Sync + 'static,
@@ -39,7 +40,7 @@ impl<W: 'static> SubtreeFactory<W> {
         }
     }
 
-    /// 创建一份新的子树根节点。
+    /// Creates a new subtree root node.
     #[must_use]
     pub fn instantiate(&self) -> BoxedNode<W> {
         (self.factory)()
@@ -62,15 +63,19 @@ impl<W: 'static> core::fmt::Debug for SubtreeFactory<W> {
 
 type SlotFactory<W, K> = Box<dyn Fn(&K) -> BoxedNode<W> + Send>;
 
-/// 根据黑板 typed key 动态切换子树的节点。
+/// A node that switches subtrees dynamically based on a typed blackboard key.
 ///
-/// 每个 tick 读取 `Key<K>`：
-/// - key 不变：继续 tick 现有子树，保留其内部状态；
-/// - key 改变：旧子树 `abort → reset`，再用工厂创建新子树；
-/// - key 缺失：放弃现有子树并返回 `Failure`。
+/// Reads `Key<K>` on every tick:
+/// - key unchanged: keeps ticking the existing subtree, preserving its internal
+///   state;
+/// - key changed: `abort → reset` the old subtree, then build a new one with
+///   the factory;
+/// - key missing: drops the existing subtree and returns `Failure`.
 ///
-/// 工厂接收当前 key，可据此返回不同子树，适合 Boss 阶段、任务阶段等
-/// 运行时切换。`reset()` 会丢弃当前子树，下一次 tick 重新实例化。
+/// The factory receives the current key and can return different subtrees
+/// accordingly, which suits runtime switching such as boss phases or quest
+/// stages. `reset()` discards the current subtree; the next tick instantiates a
+/// new one.
 pub struct SubtreeSlot<W, K: Send + 'static> {
     name: String,
     key: Key<K>,
@@ -82,7 +87,7 @@ impl<W, K> SubtreeSlot<W, K>
 where
     K: Clone + PartialEq + Send + 'static,
 {
-    /// 用显示名、key 和工厂构造。
+    /// Constructs from a display name, a key, and a factory.
     pub fn new(
         name: impl Into<String>,
         key: &Key<K>,
@@ -96,7 +101,7 @@ where
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();

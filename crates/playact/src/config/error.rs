@@ -1,10 +1,10 @@
-//! 配置层错误类型。
+//! Error types for the configuration layer.
 
 use core::fmt;
 
 use crate::error::BuildError;
 
-/// JSON/TOML/YAML/RON 解析错误。
+/// JSON/TOML/YAML/RON parse error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
     path: Option<String>,
@@ -12,7 +12,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
-    /// 构造一个无路径错误。
+    /// Creates an error without a path.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self {
@@ -21,7 +21,7 @@ impl ConfigError {
         }
     }
 
-    /// 构造一个带配置路径的错误。
+    /// Creates an error with a configuration path.
     #[must_use]
     pub fn with_path(path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -30,13 +30,13 @@ impl ConfigError {
         }
     }
 
-    /// 配置路径，例如 `root.children[0]`。
+    /// Configuration path, for example `root.children[0]`.
     #[must_use]
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
 
-    /// 错误消息。
+    /// Error message.
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
@@ -54,7 +54,7 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// 从 `TreeSpec` 构建行为树时的错误。
+/// Error raised while building a behavior tree from a `TreeSpec`.
 #[derive(Debug)]
 pub struct ConfigBuildError {
     path: Option<String>,
@@ -62,13 +62,13 @@ pub struct ConfigBuildError {
 }
 
 impl ConfigBuildError {
-    /// 构造一个未绑定路径的错误。
+    /// Creates an error with no path bound.
     #[must_use]
     pub fn new(kind: ConfigBuildErrorKind) -> Self {
         Self { path: None, kind }
     }
 
-    /// 绑定配置路径；已有路径时保留原路径。
+    /// Binds a configuration path; if one is already set, the original is kept.
     #[must_use]
     pub fn at(mut self, path: impl Into<String>) -> Self {
         if self.path.is_none() {
@@ -77,13 +77,13 @@ impl ConfigBuildError {
         self
     }
 
-    /// 配置路径。
+    /// Configuration path.
     #[must_use]
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
 
-    /// 错误种类。
+    /// Error kind.
     #[must_use]
     pub fn kind(&self) -> &ConfigBuildErrorKind {
         &self.kind
@@ -108,53 +108,53 @@ impl std::error::Error for ConfigBuildError {
     }
 }
 
-/// 配置构建错误的具体种类。
+/// Specific kinds of configuration build errors.
 #[derive(Debug)]
 pub enum ConfigBuildErrorKind {
-    /// 不支持的 spec 版本。
+    /// Unsupported spec version.
     UnsupportedVersion {
-        /// 配置中的版本。
+        /// Version found in the configuration.
         found: u32,
-        /// 当前支持的版本。
+        /// Currently supported version.
         supported: u32,
     },
-    /// 未注册的 action 名字。
+    /// Unregistered action name.
     UnknownAction {
-        /// action 名字。
+        /// Action name.
         name: String,
     },
-    /// 未注册的 condition 名字。
+    /// Unregistered condition name.
     UnknownCondition {
-        /// condition 名字。
+        /// Condition name.
         name: String,
     },
-    /// 未注册的 custom kind。
+    /// Unregistered custom kind.
     UnknownCustom {
-        /// custom kind。
+        /// Custom kind.
         kind: String,
     },
-    /// 叶子参数反序列化失败。
+    /// Leaf parameter deserialization failed.
     InvalidParams {
-        /// 错误消息。
+        /// Error message.
         message: String,
     },
-    /// `Parallel` 阈值不合法。
+    /// Invalid `Parallel` threshold.
     InvalidThreshold(BuildError),
-    /// 树结构不合法。
+    /// Invalid tree structure.
     InvalidTree {
-        /// 错误消息。
+        /// Error message.
         message: String,
     },
-    /// 自定义节点工厂返回的错误。
+    /// Error returned by a custom node factory.
     Custom {
-        /// 错误消息。
+        /// Error message.
         message: String,
     },
-    /// include 解析失败。
+    /// Include resolution failed.
     Include {
-        /// include 路径。
+        /// Include path.
         path: String,
-        /// 错误消息。
+        /// Error message.
         message: String,
     },
 }
@@ -180,19 +180,19 @@ impl fmt::Display for ConfigBuildErrorKind {
     }
 }
 
-/// 注册节点工厂时的错误。
+/// Error raised when registering node factories.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistryError {
-    /// 名字为空或只包含空白。
+    /// Name is empty or whitespace only.
     EmptyName {
-        /// `action` / `condition` / `custom`。
+        /// `action` / `condition` / `custom`.
         category: &'static str,
     },
-    /// 同一类别中名字重复。
+    /// Duplicate name within the same category.
     Duplicate {
-        /// `action` / `condition` / `custom`。
+        /// `action` / `condition` / `custom`.
         category: &'static str,
-        /// 重复的名字。
+        /// The duplicate name.
         name: String,
     },
 }

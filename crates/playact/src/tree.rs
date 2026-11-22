@@ -1,4 +1,4 @@
-//! 行为树驱动外壳与结构描述。
+//! Behavior tree driver shell and structure description.
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
@@ -13,11 +13,12 @@ use crate::status::Status;
 use crate::time::Time;
 use crate::trace::{AbortReason, Tracer};
 
-/// 一棵完整的行为树。
+/// A complete behavior tree.
 ///
-/// 每个 AI 持有自己的实例；树持有黑板与可选 Tracer，world 由驱动方持有。
-/// 树不能 `Clone`：需要多 AI 时用工厂函数分别构建，或把 root 通过
-/// [`BehaviorTree::into_root`] 挂到别的树上。
+/// Each AI owns its own instance; the tree owns the blackboard and an optional
+/// tracer, while the world is owned by the driver. The tree is not `Clone`: for
+/// multiple AIs, build one per AI with a factory function, or attach the root to
+/// another tree via [`BehaviorTree::into_root`].
 pub struct BehaviorTree<W> {
     name: String,
     root: BoxedNode<W>,
@@ -29,7 +30,7 @@ pub struct BehaviorTree<W> {
 }
 
 impl<W> BehaviorTree<W> {
-    /// 用根节点构造，默认名为 `BehaviorTree`。
+    /// Builds from a root node; the default name is `BehaviorTree`.
     #[must_use]
     pub fn new(root: BoxedNode<W>) -> Self {
         Self {
@@ -43,58 +44,61 @@ impl<W> BehaviorTree<W> {
         }
     }
 
-    /// 覆盖树名。
+    /// Overrides the tree name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
-    /// 安装 Tracer；传 `None` 卸载。
+    /// Installs a tracer; pass `None` to uninstall it.
     pub fn set_tracer(&mut self, tracer: Option<Box<dyn Tracer + Send>>) {
         self.tracer = tracer;
     }
 
-    /// 链式安装 Tracer。
+    /// Installs a tracer in builder style.
     #[must_use]
     pub fn with_tracer(mut self, tracer: Box<dyn Tracer + Send>) -> Self {
         self.tracer = Some(tracer);
         self
     }
 
-    /// 追加一个服务节点。
+    /// Appends a service node.
     ///
-    /// 服务在每个 tick 的根节点之前运行，与主树共享 world / time / 黑板；
-    /// 返回值被忽略，适合感知、缓存或维护外部状态。服务子树不产生 Tracer
-    /// 事件，也不影响 [`BehaviorTree::last_status`]。
+    /// Services run before the root node on every tick and share the world /
+    /// time / blackboard with the main tree; their return values are ignored,
+    /// which suits perception, caching, or maintaining external state. Service
+    /// subtrees emit no tracer events and do not affect
+    /// [`BehaviorTree::last_status`].
     ///
-    /// 服务的 `abort` / `reset` 随整棵树一起传播；服务需要自己管理终态，
-    /// 引擎只记录状态用于判断是否在 tree abort 时清理。
+    /// A service's `abort` / `reset` propagates with the whole tree. Services
+    /// manage their own terminal state; the engine only records each status to
+    /// decide whether cleanup is needed on tree abort.
     #[must_use]
     pub fn with_service(mut self, service: BoxedNode<W>) -> Self {
         self.add_service(service);
         self
     }
 
-    /// 追加一个服务节点。
+    /// Appends a service node.
     pub fn add_service(&mut self, service: BoxedNode<W>) {
         self.services.push(service);
         self.service_status.push(None);
     }
 
-    /// 服务节点列表。
+    /// The list of service nodes.
     #[must_use]
     pub fn services(&self) -> &[BoxedNode<W>] {
         &self.services
     }
 
-    /// 服务节点数量。
+    /// The number of service nodes.
     #[must_use]
     pub fn service_count(&self) -> usize {
         self.services.len()
     }
 
-    /// 驱动一次逻辑帧。
+    /// Drives one logic frame.
     pub fn tick(&mut self, world: &mut W, time: Time) -> Status {
         let status = {
             let Self {
@@ -123,11 +127,13 @@ impl<W> BehaviorTree<W> {
         status
     }
 
-    /// 用外部黑板 tick；用于 `SharedBlackboard` 或自定义共享状态。
+    /// Ticks with an external blackboard; intended for `SharedBlackboard` or
+    /// custom shared state.
     ///
-    /// 本次 tick 不使用树自带的黑板；树自带的黑板保持不变。Tracer 仍然生效。
-    /// 不要在 Running 中途切换黑板来源：节点可能已缓存黑板数据；需要切换时
-    /// 应先 `abort` 并 `reset` 整棵树。
+    /// This tick does not use the tree's own blackboard, which stays untouched.
+    /// The tracer still applies. Do not switch blackboard sources while the
+    /// tree is Running: nodes may have cached blackboard data. To switch, first
+    /// `abort` and `reset` the whole tree.
     pub fn tick_with_blackboard(
         &mut self,
         world: &mut W,
@@ -160,8 +166,10 @@ impl<W> BehaviorTree<W> {
         status
     }
 
-    /// 只复位节点内部状态，不清空黑板，也不会触发 `abort`。用于角色复活、
-    /// 战斗重开。若当前是 Running 且需要外部清理，应先调用 [`BehaviorTree::abort`]。
+    /// Resets only internal node state; does not clear the blackboard and does
+    /// not trigger `abort`. Intended for respawns and combat restarts. If the
+    /// tree is currently Running and external cleanup is needed, call
+    /// [`BehaviorTree::abort`] first.
     pub fn reset(&mut self) {
         self.root.reset();
         for service in &mut self.services {
@@ -171,9 +179,10 @@ impl<W> BehaviorTree<W> {
         self.last_status = None;
     }
 
-    /// 放弃整棵树：根节点仅在最后一次 tick 返回 `Running` 时执行 `abort`，
-    /// 随后 `reset`；服务节点中上次返回 `Running` 的也会 `abort`，所有服务
-    /// 都会 `reset`。终态树没有需要清理的 Running 子树。
+    /// Abandons the whole tree: the root runs `abort` only if its last tick
+    /// returned `Running`, and is then `reset`; services that last returned
+    /// `Running` are also aborted, and all services are `reset`. A terminal
+    /// tree has no Running subtree that needs cleanup.
     pub fn abort(&mut self, world: &mut W, time: Time) {
         let root_running = self.last_status == Some(Status::Running);
 
@@ -209,7 +218,8 @@ impl<W> BehaviorTree<W> {
         self.last_status = None;
     }
 
-    /// 用外部黑板放弃整棵树；语义与 [`BehaviorTree::abort`] 相同。
+    /// Abandons the whole tree using an external blackboard; semantics match
+    /// [`BehaviorTree::abort`].
     pub fn abort_with_blackboard(
         &mut self,
         world: &mut W,
@@ -249,13 +259,13 @@ impl<W> BehaviorTree<W> {
         self.last_status = None;
     }
 
-    /// 结构描述，用于调试与可视化。
+    /// A structural description for debugging and visualization.
     #[must_use]
     pub fn describe(&self) -> TreeDescription {
         TreeDescription::from_node(self.root.as_ref())
     }
 
-    /// 服务节点的结构描述，保持注册顺序。
+    /// Structural descriptions of the service nodes, in registration order.
     #[must_use]
     pub fn describe_services(&self) -> Vec<TreeDescription> {
         self.services
@@ -264,52 +274,55 @@ impl<W> BehaviorTree<W> {
             .collect()
     }
 
-    /// 只读黑板。
+    /// The blackboard, read-only.
     #[must_use]
     pub fn blackboard(&self) -> &Blackboard {
         &self.blackboard
     }
 
-    /// 可变黑板。
+    /// The blackboard, mutable.
     pub fn blackboard_mut(&mut self) -> &mut Blackboard {
         &mut self.blackboard
     }
 
-    /// 树名。
+    /// The tree name.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// 上一次 tick 的顶层状态。
+    /// The top-level status of the last tick.
     ///
-    /// 尚未 tick 或刚执行过 `reset` / `abort` 时返回 `None`。
+    /// Returns `None` before the first tick or right after `reset` / `abort`.
     #[must_use]
     pub fn last_status(&self) -> Option<Status> {
         self.last_status
     }
 
-    /// 上一次 tick 是否返回 `Running`。
+    /// Whether the last tick returned `Running`.
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.last_status == Some(Status::Running)
     }
 
-    /// 导出根节点与服务节点的状态快照。
+    /// Exports a state snapshot of the root and service nodes.
     ///
-    /// 快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 的任务或
-    /// `SubtreeSlot` 的动态状态；这些需要由使用方另行持久化或重新建立。
+    /// The snapshot excludes the world, blackboard values, closure-captured
+    /// state, `AsyncAction` tasks, and the dynamic state of `SubtreeSlot`;
+    /// callers must persist or rebuild those separately.
     #[must_use]
     pub fn snapshot(&self) -> crate::snapshot::TreeSnapshot {
         crate::snapshot::capture(&self.root, &self.services)
     }
 
-    /// 用快照恢复节点状态。
+    /// Restores node state from a snapshot.
     ///
-    /// 恢复前会 `reset` 根节点与服务节点；随后按快照恢复各节点状态，并清空
-    /// `last_status` 与服务状态记录。应使用与快照相同的树结构；服务数量必须
-    /// 一致。不支持状态快照的节点会被留在 reset 后的状态。恢复失败时树可能
-    /// 已部分恢复，调用方应按需重新 `reset`。
+    /// The root and service nodes are `reset` first; then each node's state is
+    /// restored from the snapshot, and `last_status` plus the service status
+    /// records are cleared. Use the same tree structure the snapshot was taken
+    /// from; the number of services must match. Nodes that do not support state
+    /// snapshots are left in their post-reset state. On failure the tree may be
+    /// partially restored, so callers should `reset` again as needed.
     pub fn restore(
         &mut self,
         snapshot: &crate::snapshot::TreeSnapshot,
@@ -320,28 +333,34 @@ impl<W> BehaviorTree<W> {
         result
     }
 
-    /// 拆出根节点，用于把整棵树作为子树复用。
+    /// Extracts the root node so the tree can be reused as a subtree.
     ///
-    /// 注意：会丢弃黑板、Tracer 与服务节点，但保留 root 的内部状态。若 root
-    /// 是 Running 且依赖黑板数据（例如目标索引），挂到新树前需要重新准备
-    /// 黑板；需要保留黑板/状态的子树复用请用工厂函数或 `SubtreeFactory`。
+    /// Note: this discards the blackboard, tracer, and service nodes, but keeps
+    /// the root's internal state. If the root is Running and depends on
+    /// blackboard data (such as a target index), the blackboard must be
+    /// prepared again before attaching it to a new tree; to reuse a subtree
+    /// together with its blackboard and state, use a factory function or
+    /// `SubtreeFactory`.
     #[must_use]
     pub fn into_root(self) -> BoxedNode<W> {
         self.root
     }
 }
 
-/// 整棵行为树可以直接作为节点嵌套进另一棵树。
+/// A whole behavior tree can be nested directly into another tree as a node.
 ///
-/// 嵌套树共享外层 tick 的 world、time、黑板与 Tracer：
-/// - 它自带的黑板不参与嵌套 tick；跨树共享数据请用外层黑板或
-///   `SharedBlackboard`；
-/// - 它自带的 Tracer 不生效，外层 Tracer 会看到嵌套树根及其子树；
-/// - 被外层抢占时按 `abort → reset` 传播到嵌套树根；
-/// - 在 `describe()` 中显示为 `tree "<名字>"`，其唯一子节点是原根节点。
+/// A nested tree shares the outer tick's world, time, blackboard, and tracer:
+/// - its own blackboard does not participate in the nested tick; share data
+///   across trees through the outer blackboard or `SharedBlackboard`;
+/// - its own tracer is inactive; the outer tracer sees the nested tree root and
+///   its subtrees;
+/// - when preempted by the outer tree, `abort → reset` propagates to the nested
+///   tree root;
+/// - it shows up in `describe()` as `tree "<name>"`, with the original root
+///   node as its only child.
 ///
-/// 通过 builder 的 `.raw(Box::new(tree))` 挂载；需要可重复实例化时用
-/// [`crate::SubtreeFactory`]。
+/// Attach it with the builder's `.raw(Box::new(tree))`; use
+/// [`crate::SubtreeFactory`] when repeatable instantiation is needed.
 impl<W> Node<W> for BehaviorTree<W> {
     fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
         for (service, status) in self.services.iter_mut().zip(self.service_status.iter_mut()) {
@@ -427,14 +446,14 @@ impl<W> Node<W> for BehaviorTree<W> {
     }
 }
 
-/// 节点结构描述。
+/// A node's structural description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeDescription {
-    /// 节点显示名。
+    /// The node display name.
     pub name: String,
-    /// 节点类型标签。
+    /// The node kind label.
     pub kind: Kind,
-    /// 子节点描述。
+    /// Descriptions of the child nodes.
     pub children: Vec<TreeDescription>,
 }
 
@@ -451,7 +470,7 @@ impl TreeDescription {
         }
     }
 
-    /// 生成 Graphviz DOT 字符串。
+    /// Renders a Graphviz DOT string.
     #[must_use]
     pub fn to_dot(&self) -> String {
         fn visit(
@@ -540,7 +559,8 @@ fn escape_dot(value: &str) -> String {
     escaped
 }
 
-/// 只改显示名、不改变状态语义的透明包装。
+/// A transparent wrapper that changes only the display name, not state
+/// semantics.
 #[cfg_attr(not(feature = "config"), allow(dead_code))]
 pub(crate) struct Named<W> {
     name: String,
@@ -735,7 +755,7 @@ mod tests {
         running.abort(&mut world, Time::ZERO);
         assert_eq!(running_aborts.load(Ordering::Relaxed), 1);
 
-        // 第二次 abort 是幂等的；上一次状态已清空。
+        // A second abort is idempotent; the previous status was already cleared.
         running.abort(&mut world, Time::ZERO);
         assert_eq!(running_aborts.load(Ordering::Relaxed), 1);
     }
@@ -782,7 +802,7 @@ mod tests {
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
         assert_eq!(tree.last_status(), Some(Status::Success));
 
-        // 根节点已终止，但 Running 服务仍需清理。
+        // The root has terminated, but Running services still need cleanup.
         tree.abort(&mut world, Time::from_millis(16, 16));
         assert_eq!(service_aborts.load(Ordering::Relaxed), 1);
 

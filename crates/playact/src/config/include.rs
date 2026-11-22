@@ -1,17 +1,18 @@
-//! include 解析与安全的文件系统解析器。
+//! Include resolution and a sandboxed filesystem resolver.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{ConfigError, TreeParser, TreeSpec};
 
-/// 把 include 路径解析成一份 [`TreeSpec`]。
+/// Resolves an include path into a [`TreeSpec`].
 ///
-/// 实现可以读取文件、发起 HTTP 请求或查内存表；引擎只负责递归构建与
-/// 深度/循环保护。闭包 `Fn(&str) -> Result<TreeSpec, ConfigError>` 自动
-/// 实现本 trait。
+/// Implementations may read files, issue HTTP requests, or look up an in-memory
+/// table; the engine only handles recursive building plus depth/cycle
+/// protection. The closure `Fn(&str) -> Result<TreeSpec, ConfigError>`
+/// implements this trait automatically.
 pub trait IncludeResolver {
-    /// 解析一个 include 路径。
+    /// Resolves one include path.
     fn resolve(&self, path: &str) -> Result<TreeSpec, ConfigError>;
 }
 
@@ -24,17 +25,19 @@ where
     }
 }
 
-/// 从基准目录读取 include 文件的解析器。
+/// Resolver that reads include files from a base directory.
 ///
-/// 目标路径会经 `canonicalize` 规范化，并必须仍位于基准目录内，从而拒绝
-/// `..`、绝对路径和符号链接逃逸。基准目录在构造时规范化并校验存在。
+/// Target paths are canonicalized and must still reside inside the base
+/// directory, which rejects `..`, absolute paths, and symlink escapes. The base
+/// directory is canonicalized and checked for existence at construction time.
 pub struct FsIncludeResolver {
     base: PathBuf,
     parser: TreeParser,
 }
 
 impl FsIncludeResolver {
-    /// 用基准目录和 parser 构造；基准目录必须存在且是目录。
+    /// Creates a resolver from a base directory and parser; the base directory
+    /// must exist and be a directory.
     pub fn new(base: impl Into<PathBuf>, parser: TreeParser) -> Result<Self, ConfigError> {
         let base = base.into();
         let base = base.canonicalize().map_err(|error| {
@@ -52,30 +55,30 @@ impl FsIncludeResolver {
         Ok(Self { base, parser })
     }
 
-    /// 从基准目录读取 JSON include。
+    /// Reads JSON includes from the base directory.
     pub fn json(base: impl Into<PathBuf>) -> Result<Self, ConfigError> {
         Self::new(base, TreeSpec::from_json_str)
     }
 
-    /// 从基准目录读取 TOML include。
+    /// Reads TOML includes from the base directory.
     #[cfg(feature = "toml")]
     pub fn toml(base: impl Into<PathBuf>) -> Result<Self, ConfigError> {
         Self::new(base, TreeSpec::from_toml_str)
     }
 
-    /// 从基准目录读取 YAML include。
+    /// Reads YAML includes from the base directory.
     #[cfg(feature = "yaml")]
     pub fn yaml(base: impl Into<PathBuf>) -> Result<Self, ConfigError> {
         Self::new(base, TreeSpec::from_yaml_str)
     }
 
-    /// 从基准目录读取 RON include。
+    /// Reads RON includes from the base directory.
     #[cfg(feature = "ron")]
     pub fn ron(base: impl Into<PathBuf>) -> Result<Self, ConfigError> {
         Self::new(base, TreeSpec::from_ron_str)
     }
 
-    /// 规范化后的基准目录。
+    /// The canonicalized base directory.
     #[must_use]
     pub fn base_dir(&self) -> &Path {
         &self.base

@@ -1,14 +1,20 @@
-//! 配置热重载：监听文件变化，重建行为树并保留黑板数据。
+//! Configuration hot reload: watch file changes, rebuild the behavior tree, and
+//! preserve blackboard data.
 //!
-//! 这是可选的 `hot-reload` feature，依赖 [`notify`]；不引入 async runtime。
-//! 驱动方每帧调用一次 [`TreeWatcher::poll`] 或 [`TreeWatcher::tick`] 即可。
+//! This is the optional `hot-reload` feature, which depends on [`notify`] and
+//! does not pull in an async runtime. Have the driver call [`TreeWatcher::poll`]
+//! or [`TreeWatcher::tick`] once per frame.
 //!
-//! 重载语义：
-//! - 新配置解析/构建成功：新树替换旧树，**黑板数据保留**；节点内部状态重置；
-//! - 解析/构建失败：旧树保持不变，错误返回给调用方；
-//! - Tracer 不会被保留；重载后可通过 [`TreeWatcher::tree_mut`] 重新安装；
-//! - `include` 文件在每次重载时重新解析；监听器仍然只关注根文件，include
-//!   文件单独变化时可调用 [`TreeWatcher::reload_now`] 或触碰根文件。
+//! Reload semantics:
+//! - New configuration parses/builds successfully: the new tree replaces the old
+//!   one and **blackboard data is preserved**; node-internal state is reset;
+//! - Parse/build failure: the old tree stays untouched and the error is returned
+//!   to the caller;
+//! - Tracers are not preserved; reinstall them through [`TreeWatcher::tree_mut`]
+//!   after a reload;
+//! - `include` files are re-resolved on every reload; the watcher still only
+//!   watches the root file, so when an include file changes on its own call
+//!   [`TreeWatcher::reload_now`] or touch the root file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,17 +30,17 @@ use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
 
-/// 热重载错误。
+/// Hot reload error.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum HotReloadError {
-    /// 读取配置文件失败。
+    /// Failed to read the configuration file.
     Io(std::io::Error),
-    /// 配置文本解析失败。
+    /// Failed to parse the configuration text.
     Parse(ConfigError),
-    /// 配置通过解析但构建行为树失败。
+    /// Configuration parsed but building the behavior tree failed.
     Build(ConfigBuildError),
-    /// 文件监听器错误。
+    /// File watcher error.
     Watch(notify::Error),
 }
 
@@ -84,10 +90,11 @@ impl From<notify::Error> for HotReloadError {
     }
 }
 
-/// 监听一个配置文件并维护对应行为树。
+/// Watches a configuration file and maintains its behavior tree.
 ///
-/// 监听的是配置文件所在目录（通过文件名过滤目标文件），因此编辑器采用
-/// “写临时文件再 rename”的原子保存方式也能收到事件。
+/// It watches the directory containing the configuration file (filtering events
+/// by file name), so atomic saves that write a temp file and then rename it are
+/// also observed.
 pub struct TreeWatcher<W: 'static> {
     path: PathBuf,
     registry: NodeRegistry<W>,
@@ -101,7 +108,8 @@ pub struct TreeWatcher<W: 'static> {
 }
 
 impl<W: 'static> TreeWatcher<W> {
-    /// 用自定义解析器构造；初始文件必须能成功构建。
+    /// Creates a watcher with a custom parser; the initial file must build
+    /// successfully.
     pub fn with_parser(
         path: impl Into<PathBuf>,
         registry: NodeRegistry<W>,
@@ -110,11 +118,12 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser_impl(path, registry, parser, None)
     }
 
-    /// 用自定义解析器和 include 解析器构造。
+    /// Creates a watcher with a custom parser and include resolver.
     ///
-    /// resolver 在初次构建与每次重载时都会重新执行。注意监听器仍然只关注
-    /// 根配置文件：被 include 的文件单独变化不会触发事件，可调用
-    /// [`TreeWatcher::reload_now`] 或触碰根文件。
+    /// The resolver runs again on the initial build and on every reload. Note
+    /// that the watcher still only watches the root configuration file: a change
+    /// to an included file alone triggers no event, so call
+    /// [`TreeWatcher::reload_now`] or touch the root file.
     pub fn with_parser_and_resolver(
         path: impl Into<PathBuf>,
         registry: NodeRegistry<W>,
@@ -124,7 +133,7 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser_impl(path, registry, parser, Some(Box::new(resolver)))
     }
 
-    /// 用 JSON 配置和 include 解析器构造。
+    /// Creates a watcher with a JSON configuration and an include resolver.
     pub fn json_with_resolver(
         path: impl Into<PathBuf>,
         registry: NodeRegistry<W>,
@@ -171,7 +180,7 @@ impl<W: 'static> TreeWatcher<W> {
         })
     }
 
-    /// 用 JSON 配置构造。
+    /// Creates a watcher with a JSON configuration.
     pub fn json(
         path: impl Into<PathBuf>,
         registry: NodeRegistry<W>,
@@ -179,7 +188,7 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser(path, registry, TreeSpec::from_json_str)
     }
 
-    /// 用 TOML 配置构造。
+    /// Creates a watcher with a TOML configuration.
     #[cfg(feature = "toml")]
     pub fn toml(
         path: impl Into<PathBuf>,
@@ -188,7 +197,7 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser(path, registry, TreeSpec::from_toml_str)
     }
 
-    /// 用 YAML 配置构造。
+    /// Creates a watcher with a YAML configuration.
     #[cfg(feature = "yaml")]
     pub fn yaml(
         path: impl Into<PathBuf>,
@@ -197,7 +206,7 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser(path, registry, TreeSpec::from_yaml_str)
     }
 
-    /// 用 RON 配置构造。
+    /// Creates a watcher with a RON configuration.
     #[cfg(feature = "ron")]
     pub fn ron(
         path: impl Into<PathBuf>,
@@ -206,44 +215,45 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser(path, registry, TreeSpec::from_ron_str)
     }
 
-    /// 设置事件去抖时长，默认 200ms。
+    /// Sets the event debounce duration; defaults to 200ms.
     #[must_use]
     pub fn with_debounce(mut self, debounce: Duration) -> Self {
         self.debounce = debounce;
         self
     }
 
-    /// 当前行为树。
+    /// The current behavior tree.
     #[must_use]
     pub fn tree(&self) -> &BehaviorTree<W> {
         &self.tree
     }
 
-    /// 可变行为树。重载后可用它重新安装 Tracer。
+    /// Mutable behavior tree. Use it to reinstall Tracers after a reload.
     pub fn tree_mut(&mut self) -> &mut BehaviorTree<W> {
         &mut self.tree
     }
 
-    /// 当前监听的配置文件。
+    /// The configuration file currently being watched.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// 构建/重载使用的注册表。
+    /// The registry used for building and reloading.
     #[must_use]
     pub fn registry(&self) -> &NodeRegistry<W> {
         &self.registry
     }
 
-    /// 可变注册表；注册新节点后下一次重载生效。
+    /// Mutable registry; newly registered nodes take effect on the next reload.
     pub fn registry_mut(&mut self) -> &mut NodeRegistry<W> {
         &mut self.registry
     }
 
-    /// 处理文件事件；如果完成一次成功重载返回 `true`。
+    /// Processes file events; returns `true` if a reload completed successfully.
     ///
-    /// 解析/构建失败时返回错误，旧树保持不变；需要等下一次文件事件再重试。
+    /// On a parse/build failure it returns an error and the old tree stays
+    /// unchanged; retrying requires waiting for the next file event.
     pub fn poll(&mut self) -> Result<bool, HotReloadError> {
         let mut relevant = false;
 
@@ -271,16 +281,18 @@ impl<W: 'static> TreeWatcher<W> {
         Ok(true)
     }
 
-    /// 立即从磁盘重载一次，不等待文件事件/去抖。
+    /// Reloads from disk once immediately, without waiting for a file event or
+    /// debounce.
     pub fn reload_now(&mut self) -> Result<(), HotReloadError> {
         self.pending_since = None;
         self.reload()
     }
 
-    /// 先处理热重载，再 tick 当前树。
+    /// Processes hot reload first, then ticks the current tree.
     ///
-    /// 如果重载失败，本次返回错误且不 tick；需要继续使用旧树时调用
-    /// [`TreeWatcher::tree_mut`] 直接 tick，旧树仍然有效。
+    /// If the reload fails, this returns an error and does not tick; to keep
+    /// using the old tree, tick it directly via [`TreeWatcher::tree_mut`], which
+    /// is still valid.
     pub fn tick(&mut self, world: &mut W, time: Time) -> Result<Status, HotReloadError> {
         self.poll()?;
         Ok(self.tree.tick(world, time))
@@ -409,7 +421,7 @@ mod tests {
         fs::write(&path, "{").expect("write invalid");
         assert!(watcher.reload_now().is_err());
 
-        // 失败时旧树仍然可用。
+        // The old tree remains usable after a failure.
         assert_eq!(watcher.tree().blackboard().get(&MARKER), Some(&42));
         assert_eq!(
             watcher.tree_mut().tick(&mut world, Time::ZERO),

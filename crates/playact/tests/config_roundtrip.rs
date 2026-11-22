@@ -1,6 +1,6 @@
 #![cfg(feature = "config")]
 
-//! 配置层公共 API 集成测试。
+//! Public API integration tests for the config layer.
 
 use playact::config::{ConfigBuildErrorKind, NodeRegistry, TreeSpec};
 use playact::prelude::*;

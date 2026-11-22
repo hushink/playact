@@ -1,4 +1,4 @@
-//! 节点契约与节点类型标签。
+//! The node contract and node type tags.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -7,82 +7,83 @@ use core::fmt;
 use crate::context::Context;
 use crate::status::Status;
 
-/// 节点类型标签。
+/// A node type tag.
 ///
-/// 内建节点使用固定变体，享有编译期穷尽性；自定义节点使用
-/// [`Kind::Custom`] 携带一个 `'static` 的可读名字。
+/// Built-in nodes use fixed variants and get compile-time exhaustiveness; custom
+/// nodes use [`Kind::Custom`] to carry a readable `'static` name.
 ///
-/// `Kind` 只是类型标签，不承载参数或运行状态。配置层的 `SpecNode`
-/// 使用自己的 `type` 标签，运行期不会通过字符串查表。
+/// `Kind` is only a type tag; it carries no parameters or runtime state. The
+/// config layer's `SpecNode` uses its own `type` tag, and no string lookup
+/// happens at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Kind {
-    /// 记忆式顺序节点。
+    /// Memorizing sequence node.
     Sequence,
-    /// 反应式顺序节点。
+    /// Reactive sequence node.
     ReactiveSequence,
-    /// 记忆式选择节点。
+    /// Memorizing selector node.
     Selector,
-    /// 反应式选择节点。
+    /// Reactive selector node.
     ReactiveSelector,
-    /// 带记忆的随机选择节点。
+    /// Random selector with memory.
     RandomSelector,
-    /// 带权重、确定性 seed 的随机选择节点。
+    /// Weighted random selector with a deterministic seed.
     WeightedRandomSelector,
-    /// 按动态评分选择子节点的效用选择节点。
+    /// Utility selector that picks a child by dynamic score.
     UtilitySelector,
-    /// 条件成立才执行子节点。
+    /// Executes the child only when the condition holds.
     Guard,
-    /// 按条件选择 then/else 分支。
+    /// Picks the then/else branch by condition.
     IfThenElse,
-    /// 并行节点。
+    /// Parallel node.
     Parallel,
-    /// 跨 tick 记住终态的并行节点。
+    /// Parallel node that remembers terminal states across ticks.
     MemParallel,
-    /// 第一个终态获胜的并行节点。
+    /// Parallel node where the first terminal state wins.
     Race,
-    /// 结果反转。
+    /// Inverts the result.
     Inverter,
-    /// 始终成功。
+    /// Always succeeds.
     AlwaysSucceed,
-    /// 始终失败。
+    /// Always fails.
     AlwaysFail,
-    /// 重复执行。
+    /// Repeats execution.
     Repeat,
-    /// 失败重试。
+    /// Retries on failure.
     Retry,
-    /// 直到成功。
+    /// Repeats until success.
     UntilSuccess,
-    /// 直到失败。
+    /// Repeats until failure.
     UntilFailure,
-    /// 成功冷却。
+    /// Cooldown after success.
     Cooldown,
-    /// 运行超时。
+    /// Execution timeout.
     Timeout,
-    /// 次数限制。
+    /// Usage limit.
     Limiter,
-    /// 时间窗口配额。
+    /// Time-window quota.
     Throttle,
-    /// 等待时间。
+    /// Waits for a duration.
     Wait,
-    /// 闭包动作。
+    /// Closure action.
     Action,
-    /// 异步/远程动作。
+    /// Async/remote action.
     AsyncAction,
-    /// 闭包条件。
+    /// Closure condition.
     Condition,
-    /// 写入黑板固定值。
+    /// Writes a fixed value to the blackboard.
     SetValue,
-    /// 按黑板 key 动态切换的子树槽。
+    /// Subtree slot switched dynamically by a blackboard key.
     SubtreeSlot,
-    /// 整棵行为树作为节点。
+    /// A whole behavior tree as a node.
     Tree,
-    /// 自定义节点类型。
+    /// Custom node type.
     Custom(&'static str),
 }
 
 impl Kind {
-    /// 可读的 snake_case 名称；自定义 kind 返回其静态字符串。
+    /// Readable snake_case name; a custom kind returns its static string.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -120,7 +121,7 @@ impl Kind {
         }
     }
 
-    /// 是否为自定义类型标签。
+    /// Whether this is a custom type tag.
     #[must_use]
     pub const fn is_custom(self) -> bool {
         matches!(self, Self::Custom(_))
@@ -133,58 +134,68 @@ impl fmt::Display for Kind {
     }
 }
 
-/// 所有节点的统一契约。
+/// The unified contract for all nodes.
 ///
-/// `W` 是使用方提供的世界/客户端类型；引擎不关心它的具体内容。
+/// `W` is the world/client type supplied by the user; the engine does not care
+/// what it contains.
 ///
-/// # 生命周期契约
+/// # Lifecycle contract
 ///
-/// - [`Node::tick`] 每个逻辑帧调用一次。
-/// - [`Node::abort`] 在一个仍在 `Running` 的子树被放弃时调用，用于释放按键、
-///   取消技能等外部副作用；默认空实现。
-/// - [`Node::reset`] 清除内部记忆，用于角色复活、战斗重开等全局复位；默认空实现。
-/// - 引擎放弃 Running 子树时会先调用 `abort`，再调用 `reset`；两者都应幂等。
-/// - 节点返回 `Success` / `Failure` 时必须自行恢复到可重新开始的状态。
+/// - [`Node::tick`] is called once per logic frame.
+/// - [`Node::abort`] is called when a subtree that is still `Running` is
+///   abandoned, to release external side effects such as held keys and active
+///   skills; empty by default.
+/// - [`Node::reset`] clears internal memory for global resets such as character
+///   revival or combat restart; empty by default.
+/// - When the engine abandons a Running subtree it calls `abort` first, then
+///   `reset`; both must be idempotent.
+/// - A node returning `Success` / `Failure` must restore itself to a state where
+///   it can start again.
 pub trait Node<W>: Send {
-    /// 推进一次逻辑帧。
+    /// Advance one logic frame.
     fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status;
 
-    /// 放弃当前 Running 的子树时调用，负责外部副作用清理。
+    /// Called when the current Running subtree is abandoned; responsible for
+    /// cleaning up external side effects.
     fn abort(&mut self, _ctx: &mut Context<'_, W>) {}
 
-    /// 清除内部记忆。全局复位或引擎在 abort 后调用。
+    /// Clear internal memory. Called on global reset or by the engine after
+    /// abort.
     fn reset(&mut self) {}
 
-    /// 调试显示名。
+    /// Display name for debugging.
     fn name(&self) -> &str {
         "node"
     }
 
-    /// 节点类型标签。
+    /// Node type tag.
     fn kind(&self) -> Kind {
         Kind::Custom("node")
     }
 
-    /// 直接子节点；默认空。用于 `describe()` 与自定义工具遍历。
+    /// Direct children; empty by default. Used by `describe()` and custom
+    /// tooling.
     fn children(&self) -> &[BoxedNode<W>] {
         &[]
     }
 
-    /// 导出节点内部状态；默认不支持，返回 `None`。
+    /// Export the node's internal state; unsupported by default, returns `None`.
     ///
-    /// 组合/装饰节点应把子树状态一起编码（内建节点已实现）；叶子可以返回
-    /// `None`。状态字节的格式由节点自己定义，引擎只负责保存/恢复。
+    /// Composite/decorator nodes should encode their subtree state as well (the
+    /// built-in nodes already do); leaves may return `None`. The node defines the
+    /// state byte format itself; the engine only saves and restores it.
     fn save_state(&self) -> Option<Vec<u8>> {
         None
     }
 
-    /// 载入 [`Node::save_state`] 产生的状态；返回 `false` 表示拒绝。
+    /// Load state produced by [`Node::save_state`]; returns `false` on rejection.
     fn load_state(&mut self, _state: &[u8]) -> bool {
         false
     }
 }
 
-/// 树中孩子的统一载体。
+/// The unified carrier for children in a tree.
 ///
-/// 异构树必须动态派发；`Send` 让树可以被移到线程池或工作线程。
+/// Heterogeneous trees require dynamic dispatch; `Send` lets the tree move to a
+/// thread pool or worker thread.
 pub type BoxedNode<W> = Box<dyn Node<W> + Send>;

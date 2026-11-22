@@ -1,4 +1,4 @@
-//! 叶子节点：真正干活的执行节点。
+//! Leaf nodes: the execution nodes that do the actual work.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -17,13 +17,14 @@ type AbortFn<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) + Send>;
 type ResetFn = Box<dyn FnMut() + Send>;
 type PredicateFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send>;
 
-/// 闭包动作节点。
+/// Closure-based action node.
 ///
-/// 简单动作直接返回 `Success` / `Failure`；跨 tick 动作返回 `Running`
-/// 并在闭包内部维护状态。
+/// Simple actions return `Success` / `Failure` directly; actions spanning
+/// multiple ticks return `Running` and keep their state inside the closure.
 ///
-/// 需要外部副作用清理时用 [`Action::with_abort`]；需要重置闭包内部状态
-/// 时用 [`Action::with_reset`]。二者都会在对应生命周期由引擎调用。
+/// Use [`Action::with_abort`] when external side effects need cleanup, and
+/// [`Action::with_reset`] when the closure's internal state needs resetting.
+/// The engine calls both at the corresponding lifecycle points.
 pub struct Action<W> {
     name: String,
     tick: TickFn<W>,
@@ -32,7 +33,7 @@ pub struct Action<W> {
 }
 
 impl<W> Action<W> {
-    /// 用名字和 tick 闭包构造。
+    /// Creates the node from a name and a tick closure.
     pub fn new<F>(name: impl Into<String>, tick: F) -> Self
     where
         F: for<'a> FnMut(&mut Context<'a, W>) -> Status + Send + 'static,
@@ -45,14 +46,14 @@ impl<W> Action<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
-    /// 注册被抢占时的外部清理回调。
+    /// Registers an external cleanup callback invoked on preemption.
     #[must_use]
     pub fn with_abort<F>(mut self, abort: F) -> Self
     where
@@ -62,7 +63,7 @@ impl<W> Action<W> {
         self
     }
 
-    /// 注册内部状态复位回调。
+    /// Registers a callback that resets internal state.
     #[must_use]
     pub fn with_reset<F>(mut self, reset: F) -> Self
     where
@@ -99,14 +100,14 @@ impl<W> Node<W> for Action<W> {
     }
 }
 
-/// 只读条件节点；`true` → Success，`false` → Failure。
+/// Read-only condition node; `true` → Success, `false` → Failure.
 pub struct Condition<W> {
     name: String,
     predicate: PredicateFn<W>,
 }
 
 impl<W> Condition<W> {
-    /// 用名字和判断闭包构造。
+    /// Creates the node from a name and a predicate closure.
     pub fn new<F>(name: impl Into<String>, predicate: F) -> Self
     where
         F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
@@ -117,7 +118,7 @@ impl<W> Condition<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -139,7 +140,7 @@ impl<W> Node<W> for Condition<W> {
     }
 }
 
-/// 等待节点：在 `duration` 内返回 Running，到点后 Success。
+/// Wait node: returns Running for `duration`, then Success once it elapses.
 pub struct Wait<W> {
     name: String,
     duration: Duration,
@@ -148,7 +149,7 @@ pub struct Wait<W> {
 }
 
 impl<W> Wait<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(duration: Duration) -> Self {
         Self {
@@ -159,7 +160,7 @@ impl<W> Wait<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -209,10 +210,11 @@ impl<W> Node<W> for Wait<W> {
     }
 }
 
-/// 将固定值写入类型安全黑板的叶子节点。
+/// Leaf node that writes a fixed value into the typed blackboard.
 ///
-/// 每次 tick 都写入并返回 `Success`，因此 `Repeat` 等循环中也会持续保持；
-/// `T` 需要 `Clone`。`reset` 不会清除黑板中已经写入的值。
+/// It writes on every tick and returns `Success`, so it also keeps the value
+/// up to date inside loops such as `Repeat`; `T` must be `Clone`. `reset` does
+/// not clear values already written to the blackboard.
 pub struct SetValue<W, T: Send + 'static> {
     name: String,
     key: Key<T>,
@@ -221,7 +223,7 @@ pub struct SetValue<W, T: Send + 'static> {
 }
 
 impl<W, T: Send + 'static> SetValue<W, T> {
-    /// 用 key 和固定值构造。
+    /// Creates the node from a key and a fixed value.
     #[must_use]
     pub fn new(name: impl Into<String>, key: &Key<T>, value: T) -> Self {
         Self {
@@ -232,7 +234,7 @@ impl<W, T: Send + 'static> SetValue<W, T> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();

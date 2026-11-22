@@ -1,4 +1,4 @@
-//! 组合节点：只编排 `Status` 流转，不碰业务。
+//! Composite nodes: they orchestrate only `Status` transitions, never business logic.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -12,19 +12,19 @@ use crate::snapshot::{load_children, save_children, state};
 use crate::status::Status;
 use crate::trace::AbortReason;
 
-/// `Parallel` 的成功/失败阈值。
+/// Success/failure thresholds for `Parallel`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Threshold {
-    /// 所有子节点都满足。
+    /// Every child must satisfy it.
     All,
-    /// 任一子节点满足。
+    /// Any child satisfying it is enough.
     Any,
-    /// 至少 `n` 个子节点满足。
+    /// At least `n` children must satisfy it.
     AtLeast(NonZeroUsize),
 }
 
 impl Threshold {
-    /// 在 `total` 个子节点中，已有 `count` 个满足时是否达到阈值。
+    /// Whether the threshold is reached when `count` out of `total` children satisfy it.
     #[must_use]
     pub fn is_satisfied(self, count: usize, total: usize) -> bool {
         match self {
@@ -35,12 +35,13 @@ impl Threshold {
     }
 }
 
-// ==================== 记忆式顺序 ====================
+// ==================== Memory-based sequence ====================
 
-/// 记忆式顺序节点。
+/// Memory-based sequence node.
 ///
-/// 记住当前 Running 的子节点，不重跑已经 Success 的步骤。适合连招、
-/// 多步交互等“一旦开始就做完”的流程。
+/// Remembers the currently Running child and never re-runs steps that already
+/// succeeded. Suited to combos, multi-step interactions, and other
+/// "once started, finish it" flows.
 pub struct Sequence<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -49,7 +50,7 @@ pub struct Sequence<W> {
 }
 
 impl<W> Sequence<W> {
-    /// 用子节点构造，默认名为 `Sequence`。
+    /// Creates the node from its children; the default name is `Sequence`.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>) -> Self {
         Self {
@@ -60,7 +61,7 @@ impl<W> Sequence<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -148,13 +149,14 @@ impl<W> Node<W> for Sequence<W> {
     }
 }
 
-// ==================== 反应式顺序 ====================
+// ==================== Reactive sequence ====================
 
-/// 反应式顺序节点。
+/// Reactive sequence node.
 ///
-/// 每 tick 从第一个子节点重新评估；如果之前的 Running 子节点被新的
-/// Running/失败结果取代，会先 abort 旧子节点。适合“条件随时可能变化”
-/// 的流程；连招请用 [`Sequence`]。
+/// Re-evaluates from the first child on every tick; if the previously Running
+/// child is superseded by a new Running/failure result, the old child is
+/// aborted first. Suited to flows whose conditions may change at any time;
+/// use [`Sequence`] for combos.
 pub struct ReactiveSequence<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -162,7 +164,7 @@ pub struct ReactiveSequence<W> {
 }
 
 impl<W> ReactiveSequence<W> {
-    /// 用子节点构造，默认名为 `ReactiveSequence`。
+    /// Creates the node from its children; the default name is `ReactiveSequence`.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>) -> Self {
         Self {
@@ -172,7 +174,7 @@ impl<W> ReactiveSequence<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -194,7 +196,7 @@ impl<W> Node<W> for ReactiveSequence<W> {
             if let Some(old) = previous
                 && index > old
             {
-                // 防御性处理：旧 Running 子节点已被越过，说明状态不一致。
+                // Defensive: the old Running child was skipped over, so the state is inconsistent.
                 self.abort_index(ctx, old);
                 previous = None;
             }
@@ -228,8 +230,8 @@ impl<W> Node<W> for ReactiveSequence<W> {
         }
 
         if let Some(old) = previous {
-            // 正常不变量下 previous 已在上面的分支消费；保留兜底，防止未来
-            // 改动漏掉 abort。
+            // Under normal invariants `previous` is consumed by the branches
+            // above; this fallback keeps a future change from missing the abort.
             self.abort_index(ctx, old);
         }
         self.last_running = None;
@@ -284,13 +286,14 @@ impl<W> Node<W> for ReactiveSequence<W> {
     }
 }
 
-// ==================== 记忆式选择 ====================
+// ==================== Memory-based selector ====================
 
-/// 记忆式选择节点。
+/// Memory-based selector node.
 ///
-/// 从左到右尝试；一旦某个分支进入 Running，后续 tick 优先继续它，
-/// 只有它失败才回退到下一个分支。适合“Plan A 执行中不要切到 Plan B”
-/// 的长流程；安全打断请用 [`ReactiveSelector`]。
+/// Tries branches from left to right; once a branch enters Running, subsequent
+/// ticks keep running it and fall back to the next branch only when it fails.
+/// Suited to long flows where "Plan A should not switch to Plan B mid-flight";
+/// use [`ReactiveSelector`] when safe interruption is required.
 pub struct Selector<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -299,7 +302,7 @@ pub struct Selector<W> {
 }
 
 impl<W> Selector<W> {
-    /// 用子节点构造，默认名为 `Selector`。
+    /// Creates the node from its children; the default name is `Selector`.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>) -> Self {
         Self {
@@ -310,7 +313,7 @@ impl<W> Selector<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -398,13 +401,14 @@ impl<W> Node<W> for Selector<W> {
     }
 }
 
-// ==================== 反应式选择 ====================
+// ==================== Reactive selector ====================
 
-/// 反应式选择节点。
+/// Reactive selector node.
 ///
-/// 每 tick 从高优先级到低优先级重新评估；如果更高优先级分支开始
-/// Running 或 Success，会 abort 之前低优先级的 Running 分支。这是
-/// “低血量随时打断追击”的实现方式。
+/// Re-evaluates from highest to lowest priority on every tick; if a
+/// higher-priority branch starts Running or succeeds, the previously Running
+/// lower-priority branch is aborted. This is how "low health interrupts a chase
+/// at any moment" is implemented.
 pub struct ReactiveSelector<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -412,7 +416,7 @@ pub struct ReactiveSelector<W> {
 }
 
 impl<W> ReactiveSelector<W> {
-    /// 用子节点构造，默认名为 `ReactiveSelector`。
+    /// Creates the node from its children; the default name is `ReactiveSelector`.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>) -> Self {
         Self {
@@ -422,7 +426,7 @@ impl<W> ReactiveSelector<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -444,7 +448,7 @@ impl<W> Node<W> for ReactiveSelector<W> {
             if let Some(old) = previous
                 && index > old
             {
-                // 防御性处理：正常不变量下 old 已在 index == old 时被消费。
+                // Defensive: under normal invariants `old` is consumed when index == old.
                 self.abort_index(ctx, old);
                 previous = None;
             }
@@ -478,8 +482,8 @@ impl<W> Node<W> for ReactiveSelector<W> {
         }
 
         if let Some(old) = previous {
-            // 正常不变量下 previous 已在上面的分支消费；保留兜底，防止未来
-            // 改动漏掉 abort。
+            // Under normal invariants `previous` is consumed by the branches
+            // above; this fallback keeps a future change from missing the abort.
             self.abort_index(ctx, old);
         }
         self.last_running = None;
@@ -534,15 +538,18 @@ impl<W> Node<W> for ReactiveSelector<W> {
     }
 }
 
-// ==================== 随机选择 ====================
+// ==================== Random selector ====================
 
-/// 带记忆的随机选择节点。
+/// Memory-based random selector node.
 ///
-/// 需要选择新分支时，用确定性 PRNG 打乱子节点顺序；某个分支进入
-/// `Running` 后，后续 tick 优先继续它，不会因为重新随机而丢弃。分支
-/// 失败后才会在同一 tick 从剩余分支中随机尝试（跳过刚失败的分支）。
+/// When a new branch has to be chosen, a deterministic PRNG shuffles the child
+/// order; once a branch enters `Running`, subsequent ticks keep running it
+/// instead of discarding it on a re-roll. Only after a branch fails are the
+/// remaining branches tried randomly within the same tick (skipping the branch
+/// that just failed).
 ///
-/// 相同 `seed` 与相同 tick 序列产生相同顺序；`reset()` 恢复初始 seed。
+/// The same `seed` and the same tick sequence produce the same order;
+/// `reset()` restores the initial seed.
 pub struct RandomSelector<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -553,7 +560,7 @@ pub struct RandomSelector<W> {
 }
 
 impl<W> RandomSelector<W> {
-    /// 用子节点和确定性 seed 构造。`seed = 0` 会被替换为固定非零值。
+    /// Creates the node from its children and a deterministic seed. `seed = 0` is replaced with a fixed non-zero value.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>, seed: u64) -> Self {
         let seed = if seed == 0 {
@@ -573,7 +580,7 @@ impl<W> RandomSelector<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -720,24 +727,25 @@ impl<W> Node<W> for RandomSelector<W> {
     }
 }
 
-// ==================== 带权重随机选择 ====================
+// ==================== Weighted random selector ====================
 
-/// 带权重的随机选择子节点。
+/// A child with a weight for random selection.
 ///
-/// `weight = 0` 表示该分支永远不会被选中；权重越大被抽中的概率越高。
+/// `weight = 0` means the branch is never selected; higher weights are more
+/// likely to be drawn.
 pub struct WeightedChild<W> {
     weight: u32,
     child: BoxedNode<W>,
 }
 
 impl<W> WeightedChild<W> {
-    /// 用权重和子节点构造。
+    /// Creates the child from a weight and a node.
     #[must_use]
     pub fn new(weight: u32, child: BoxedNode<W>) -> Self {
         Self { weight, child }
     }
 
-    /// 该分支的相对权重。
+    /// The branch's relative weight.
     #[must_use]
     pub fn weight(&self) -> u32 {
         self.weight
@@ -752,14 +760,17 @@ impl<W> core::fmt::Debug for WeightedChild<W> {
     }
 }
 
-/// 带权重、确定性 seed 的随机选择节点。
+/// Random selector with weights and a deterministic seed.
 ///
-/// 需要选择新分支时，按权重无放回抽样生成一个确定性的尝试顺序；某个分支
-/// 进入 `Running` 后，后续 tick 继续它，不会重新抽样丢弃进度。分支失败后
-/// 才在同一 tick 尝试顺序中的下一个分支。
+/// When a new branch has to be chosen, weighted sampling without replacement
+/// produces a deterministic attempt order; once a branch enters `Running`,
+/// subsequent ticks continue it without re-sampling and losing progress. Only
+/// after a branch fails is the next branch in the order tried within the same
+/// tick.
 ///
-/// 相同 `seed` 与相同 tick 序列产生相同顺序；`reset()` 恢复初始 seed。
-/// 所有分支权重为 0（或没有子节点）时直接 `Failure`。
+/// The same `seed` and the same tick sequence produce the same order;
+/// `reset()` restores the initial seed. If every branch has weight 0 (or there
+/// are no children), the result is `Failure` immediately.
 pub struct WeightedRandomSelector<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -772,7 +783,7 @@ pub struct WeightedRandomSelector<W> {
 }
 
 impl<W> WeightedRandomSelector<W> {
-    /// 用带权重的子节点和确定性 seed 构造。`seed = 0` 会被替换为固定非零值。
+    /// Creates the node from weighted children and a deterministic seed. `seed = 0` is replaced with a fixed non-zero value.
     #[must_use]
     pub fn new(children: Vec<WeightedChild<W>>, seed: u64) -> Self {
         let seed = if seed == 0 {
@@ -800,7 +811,7 @@ impl<W> WeightedRandomSelector<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -974,20 +985,21 @@ impl<W> Node<W> for WeightedRandomSelector<W> {
     }
 }
 
-// ==================== 效用选择 ====================
+// ==================== Utility selector ====================
 
 type ScoreFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> f32 + Send>;
 
-/// 带动态评分的效用子节点。
+/// Utility child with a dynamic score.
 ///
-/// 评分闭包只读 [`Context`]，每 tick 重新计算；`NaN` 按最低分处理。
+/// The scoring closure only reads [`Context`] and is re-evaluated every tick;
+/// `NaN` is treated as the lowest score.
 pub struct UtilityChild<W> {
     score: ScoreFn<W>,
     child: BoxedNode<W>,
 }
 
 impl<W> UtilityChild<W> {
-    /// 用评分闭包和子节点构造。
+    /// Creates the child from a scoring closure and a node.
     #[must_use]
     pub fn new<F>(score: F, child: BoxedNode<W>) -> Self
     where
@@ -1006,14 +1018,18 @@ impl<W> core::fmt::Debug for UtilityChild<W> {
     }
 }
 
-/// 效用选择节点：选择当前评分最高的子节点。
+/// Utility selector node: picks the child with the highest current score.
 ///
-/// - 没有 Running 分支时，选择最高分（同分取靠前的子节点）；
-/// - 当前分支仍在 Running 时继续它，除非其他分支的分数超过
-///   `current + hysteresis`，此时旧分支 `abort → reset` 后切换；
-/// - 当前分支返回终态后，下一次 tick 重新评分。
+/// - With no Running branch, picks the highest score (ties go to the earlier
+///   child);
+/// - While the current branch is still Running it is continued, unless another
+///   branch's score exceeds `current + hysteresis`, in which case the old
+///   branch is `abort → reset` and then switched away from;
+/// - Once the current branch returns a terminal status, scores are recomputed
+///   on the next tick.
 ///
-/// 所有评分每 tick 都会重新计算；评分闭包不得修改 world/黑板。
+/// All scores are recomputed every tick; scoring closures must not modify the
+/// world/blackboard.
 pub struct UtilitySelector<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -1023,7 +1039,7 @@ pub struct UtilitySelector<W> {
 }
 
 impl<W> UtilitySelector<W> {
-    /// 用效用子节点构造，默认 `hysteresis = 0`。
+    /// Creates the node from utility children; `hysteresis = 0` by default.
     #[must_use]
     pub fn new(children: Vec<UtilityChild<W>>) -> Self {
         let mut nodes = Vec::with_capacity(children.len());
@@ -1041,14 +1057,14 @@ impl<W> UtilitySelector<W> {
         }
     }
 
-    /// 设置切换所需的分数优势；负值按 0 处理。
+    /// Sets the score advantage required to switch; negative values are treated as 0.
     #[must_use]
     pub fn with_hysteresis(mut self, hysteresis: f32) -> Self {
         self.hysteresis = hysteresis.max(0.0);
         self
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -1169,14 +1185,16 @@ impl<W> Node<W> for UtilitySelector<W> {
     }
 }
 
-// ==================== 条件分支 ====================
+// ==================== Conditional branch ====================
 
 type PredicateFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send>;
 
-/// 条件分支节点：条件为真执行 `then`，否则执行 `else`。
+/// Conditional branch node: runs `then` when the condition is true, otherwise
+/// runs `else`.
 ///
-/// 条件每 tick 重新评估；若选择发生变化且旧分支上次为 `Running`，会先
-/// `abort → reset` 旧分支，再 tick 新分支。
+/// The condition is re-evaluated every tick; if the selection changes while the
+/// old branch was `Running` on the previous tick, the old branch is
+/// `abort → reset` before the new branch is ticked.
 pub struct IfThenElse<W> {
     name: String,
     condition: PredicateFn<W>,
@@ -1186,7 +1204,7 @@ pub struct IfThenElse<W> {
 }
 
 impl<W> IfThenElse<W> {
-    /// 用条件、`then` 子节点和 `else` 子节点构造。
+    /// Creates the node from a condition, a `then` child, and an `else` child.
     #[must_use]
     pub fn new<F>(condition: F, then_branch: BoxedNode<W>, else_branch: BoxedNode<W>) -> Self
     where
@@ -1201,7 +1219,7 @@ impl<W> IfThenElse<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -1285,7 +1303,7 @@ impl<W> Node<W> for IfThenElse<W> {
     }
 }
 
-// ==================== 并行 ====================
+// ==================== Parallel ====================
 
 fn validate_parallel_thresholds(
     success: Threshold,
@@ -1305,20 +1323,23 @@ fn validate_parallel_thresholds(
     Ok(())
 }
 
-/// 并行节点。
+/// Parallel node.
 ///
-/// 同一 tick 先 tick 全部子节点，再按阈值汇总。失败优先：只要失败阈值
-/// 达成，整体返回 Failure 并 abort 剩余 Running 子节点；否则检查成功
-/// 阈值。空 `Parallel` 直接 Success。
+/// On each tick every child is ticked first, then the statuses are aggregated
+/// against the thresholds. Failure takes priority: as soon as the failure
+/// threshold is met, the whole node returns Failure and aborts the remaining
+/// Running children; otherwise the success threshold is checked. An empty
+/// `Parallel` returns Success immediately.
 ///
-/// 阈值按**单个 tick 的汇总**计算，不跨 tick 累计终态：两个子节点如果
-/// 分别在不同 tick 返回 Success，`Threshold::All` 不会因为它们都成功过
-/// 而成功；`Threshold::Any` 每次成功都会 abort 其余仍在 Running 的兄弟。
-/// 需要“各并行任务分别完成一次后整体成功”的累积语义，请用
-/// [`MemParallel`]。
+/// Thresholds are evaluated over the **single tick's aggregate** and do not
+/// accumulate terminal statuses across ticks: if two children return Success on
+/// different ticks, `Threshold::All` does not succeed just because both
+/// succeeded once; `Threshold::Any` aborts the other still-Running siblings on
+/// every success. For the cumulative semantics of "the whole node succeeds once
+/// every parallel task has completed", use [`MemParallel`].
 ///
-/// 通过 [`Parallel::new`] 构造时允许“不可能满足”的阈值；需要构建期校验
-/// 时使用 [`Parallel::try_new`]。
+/// [`Parallel::new`] accepts "impossible" thresholds; use [`Parallel::try_new`]
+/// for build-time validation.
 pub struct Parallel<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -1328,7 +1349,7 @@ pub struct Parallel<W> {
 }
 
 impl<W> Parallel<W> {
-    /// 构造并行节点，不做阈值校验。
+    /// Creates a parallel node without threshold validation.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>, success: Threshold, failure: Threshold) -> Self {
         let running = alloc::vec![false; children.len()];
@@ -1341,7 +1362,7 @@ impl<W> Parallel<W> {
         }
     }
 
-    /// 构造并校验 `AtLeast(n)` 阈值不超过子节点数量。
+    /// Creates the node and validates that any `AtLeast(n)` threshold does not exceed the child count.
     pub fn try_new(
         children: Vec<BoxedNode<W>>,
         success: Threshold,
@@ -1352,14 +1373,14 @@ impl<W> Parallel<W> {
         Ok(node)
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
-    /// 校验阈值。
+    /// Validates the thresholds.
     pub fn validate(&self) -> Result<(), BuildError> {
         validate_parallel_thresholds(self.success, self.failure, self.children.len())
     }
@@ -1453,14 +1474,18 @@ impl<W> Node<W> for Parallel<W> {
     }
 }
 
-/// 跨 tick 记住终态的并行节点。
+/// Parallel node that remembers terminal statuses across ticks.
 ///
-/// 一次激活内，某个子节点返回 Success/Failure 后不再被 tick；终态计数会
-/// 持续累计，直到成功或失败阈值满足。结论确定后 abort 剩余 Running 子节点，
-/// 并把内部状态复位，下一次激活从头开始。
+/// Within one activation, a child that returns Success/Failure is no longer
+/// ticked; terminal counts keep accumulating until the success or failure
+/// threshold is met. Once the outcome is determined, the remaining Running
+/// children are aborted and the internal state is reset so the next activation
+/// starts from scratch.
 ///
-/// 与 [`Parallel`] 的区别：`Parallel` 只看单个 tick 的汇总；`MemParallel`
-/// 记住“本激活内已经完成/失败”的子节点。空 `MemParallel` 直接 Success。
+/// Compared with [`Parallel`]: `Parallel` only looks at a single tick's
+/// aggregate; `MemParallel` remembers which children already succeeded/failed
+/// within the current activation. An empty `MemParallel` returns Success
+/// immediately.
 pub struct MemParallel<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -1478,7 +1503,7 @@ enum MemChildState {
 }
 
 impl<W> MemParallel<W> {
-    /// 构造并行节点，不做阈值校验。
+    /// Creates a parallel node without threshold validation.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>, success: Threshold, failure: Threshold) -> Self {
         let states = alloc::vec![MemChildState::Pending; children.len()];
@@ -1491,7 +1516,7 @@ impl<W> MemParallel<W> {
         }
     }
 
-    /// 构造并校验 `AtLeast(n)` 阈值不超过子节点数量。
+    /// Creates the node and validates that any `AtLeast(n)` threshold does not exceed the child count.
     pub fn try_new(
         children: Vec<BoxedNode<W>>,
         success: Threshold,
@@ -1502,14 +1527,14 @@ impl<W> MemParallel<W> {
         Ok(node)
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
-    /// 校验阈值。
+    /// Validates the thresholds.
     pub fn validate(&self) -> Result<(), BuildError> {
         validate_parallel_thresholds(self.success, self.failure, self.children.len())
     }
@@ -1648,12 +1673,14 @@ impl<W> Node<W> for MemParallel<W> {
     }
 }
 
-// ==================== 竞速 ====================
+// ==================== Race ====================
 
-/// 竞速节点：所有子节点并行推进，第一个返回终态的子节点获胜。
+/// Race node: all children advance in parallel, and the first child to return a
+/// terminal status wins.
 ///
-/// 同一 tick 内多个子节点返回终态时，按子节点顺序取第一个；获胜后 abort
-/// 其余仍在 `Running` 的子节点。空 `Race` 返回 `Failure`。
+/// When several children return a terminal status within the same tick, the
+/// first in child order wins; the winner then aborts the remaining children
+/// still `Running`. An empty `Race` returns `Failure`.
 pub struct Race<W> {
     name: String,
     children: Vec<BoxedNode<W>>,
@@ -1661,7 +1688,7 @@ pub struct Race<W> {
 }
 
 impl<W> Race<W> {
-    /// 用子节点构造。
+    /// Creates the node from its children.
     #[must_use]
     pub fn new(children: Vec<BoxedNode<W>>) -> Self {
         let running = alloc::vec![false; children.len()];
@@ -1672,7 +1699,7 @@ impl<W> Race<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -1974,12 +2001,12 @@ mod tests {
         assert_eq!(a_calls.load(Ordering::Relaxed), 1);
         assert_eq!(b_calls.load(Ordering::Relaxed), 1);
 
-        // A 已成功，不应被重复 tick；B 成功累计到 2/2。
+        // A already succeeded and must not be ticked again; B's success brings the count to 2/2.
         assert_eq!(tree.tick(&mut c), Status::Success);
         assert_eq!(a_calls.load(Ordering::Relaxed), 1);
         assert_eq!(b_calls.load(Ordering::Relaxed), 2);
 
-        // 下一次激活重新开始。
+        // The next activation starts over.
         assert_eq!(tree.tick(&mut c), Status::Success);
         assert_eq!(a_calls.load(Ordering::Relaxed), 2);
         assert_eq!(b_calls.load(Ordering::Relaxed), 3);

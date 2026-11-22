@@ -1,12 +1,16 @@
-//! 异步/远程动作：tick 内只轮询任务，不阻塞逻辑帧。
+//! Async/remote actions: ticks only poll the task and never block the logic
+//! frame.
 //!
-//! 引擎不绑定任何 async runtime：
-//! - [`AsyncTask`] 是运行时无关的任务句柄，用户可为 Tokio、futures、远程
-//!   RPC 等实现它；
-//! - [`AsyncAction`] 每个 tick 调用一次 `poll`，`Running` 继续、终态结束；
-//! - 被抢占时调用 `cancel`，实现方应尽量协作取消远端任务；
-//! - 内置 [`ThreadTask`] 用标准库线程跑阻塞调用/远程请求，并用
-//!   [`CancellationToken`] 做协作取消。
+//! The engine is not tied to any async runtime:
+//! - [`AsyncTask`] is a runtime-agnostic task handle; users can implement it for
+//!   Tokio, futures, remote RPC, and so on;
+//! - [`AsyncAction`] calls `poll` once per tick, continuing on `Running` and
+//!   finishing on a terminal status;
+//! - `cancel` is called on preemption; implementations should cooperatively
+//!   cancel remote work where possible;
+//! - the built-in [`ThreadTask`] runs blocking calls or remote requests on a
+//!   standard-library thread and uses [`CancellationToken`] for cooperative
+//!   cancellation.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,49 +21,52 @@ use crate::context::Context;
 use crate::node::{Kind, Node};
 use crate::status::Status;
 
-/// 运行时无关的异步任务句柄。
+/// A runtime-agnostic async task handle.
 ///
-/// `poll` 每个逻辑帧调用一次；`cancel` 在动作被抢占/复位时调用。
-/// 取消是协作式的：实现应尽快停止远端工作并丢弃结果。
+/// `poll` is called once per logic frame; `cancel` is called when the action is
+/// preempted or reset. Cancellation is cooperative: implementations should stop
+/// remote work as soon as possible and discard its result.
 pub trait AsyncTask: Send {
-    /// 推进任务；`Running` 表示尚未结束。
+    /// Advances the task; `Running` means it has not finished yet.
     fn poll(&mut self) -> Status;
 
-    /// 请求取消。引擎随后会 drop 任务；实现应幂等。
+    /// Requests cancellation. The engine drops the task afterwards;
+    /// implementations should be idempotent.
     fn cancel(&mut self);
 }
 
-/// 协作取消信号。
+/// A cooperative cancellation signal.
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
     flag: Arc<AtomicBool>,
 }
 
 impl CancellationToken {
-    /// 创建未取消的 token。
+    /// Creates a token that is not yet cancelled.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 请求取消；幂等。
+    /// Requests cancellation; idempotent.
     pub fn cancel(&self) {
         self.flag.store(true, Ordering::Release);
     }
 
-    /// 是否已取消。
+    /// Whether cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.flag.load(Ordering::Acquire)
     }
 }
 
-/// 用标准库线程执行阻塞/远程工作的任务。
+/// A task that performs blocking or remote work on a standard-library thread.
 ///
-/// 线程只负责执行 `work` 并通过 channel 回报 `Status`；tick 侧只做
-/// `try_recv`，不会阻塞。`cancel` 设置 [`CancellationToken`]，线程应检查
-/// token 后尽快退出。若线程长时间不检查 token，drop 会 detach 线程而不是
-/// 强制终止它。
+/// The thread only runs `work` and reports the `Status` through a channel; the
+/// tick side only calls `try_recv`, so it never blocks. `cancel` sets the
+/// [`CancellationToken`], and the thread should check the token and exit
+/// promptly. If the thread does not check the token for a long time, drop
+/// detaches it rather than force-terminating it.
 pub struct ThreadTask {
     result: Receiver<Status>,
     cancel: CancellationToken,
@@ -67,9 +74,10 @@ pub struct ThreadTask {
 }
 
 impl ThreadTask {
-    /// 启动一个工作线程。
+    /// Spawns a worker thread.
     ///
-    /// 线程创建失败会退化为一个立即 `Failure` 的任务（不会 panic）。
+    /// If thread creation fails, this degrades to a task that immediately
+    /// returns `Failure` (without panicking).
     #[must_use]
     pub fn spawn<F>(work: F) -> Self
     where
@@ -114,13 +122,15 @@ impl Drop for ThreadTask {
     }
 }
 
-/// 在 Tokio 运行时中执行 async 工作的任务句柄。
+/// A task handle that runs async work on a Tokio runtime.
 ///
-/// 任务在 Tokio 中运行，tick 侧只 `try_recv`；`cancel` / drop 调用
-/// `JoinHandle::abort`。future 需要自行把业务错误映射为 `Status`。
+/// The task runs inside Tokio and the tick side only calls `try_recv`;
+/// `cancel` / drop call `JoinHandle::abort`. The future must map business errors
+/// to `Status` itself.
 ///
-/// 在 Tokio runtime 之外调用 [`TokioTask::spawn`] 不会 panic，而是返回一个
-/// 立即 `Failure` 的任务；也可以显式用 [`TokioTask::spawn_on`] 指定 handle。
+/// Calling [`TokioTask::spawn`] outside a Tokio runtime does not panic; it
+/// returns a task that immediately returns `Failure`. Alternatively, pass an
+/// explicit handle to [`TokioTask::spawn_on`].
 #[cfg(feature = "tokio")]
 pub struct TokioTask {
     result: tokio::sync::oneshot::Receiver<Status>,
@@ -129,7 +139,7 @@ pub struct TokioTask {
 
 #[cfg(feature = "tokio")]
 impl TokioTask {
-    /// 在当前 Tokio runtime 上 spawn。
+    /// Spawns on the current Tokio runtime.
     #[must_use]
     pub fn spawn<F>(future: F) -> Self
     where
@@ -141,7 +151,7 @@ impl TokioTask {
         }
     }
 
-    /// 在指定 runtime handle 上 spawn；runtime 必须仍然存活。
+    /// Spawns on the given runtime handle; the runtime must still be alive.
     #[must_use]
     pub fn spawn_on<F>(handle: &tokio::runtime::Handle, future: F) -> Self
     where
@@ -197,10 +207,11 @@ impl Drop for TokioTask {
 
 type StartFn<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send>;
 
-/// 异步/远程动作叶子。
+/// An async/remote action leaf.
 ///
-/// 第一次 tick 调用 `start` 创建任务；之后每个 tick 轮询任务。任务返回
-/// 终态后动作结束，下一次激活重新创建任务。被抢占/复位时调用 `cancel`。
+/// The first tick calls `start` to create the task; subsequent ticks poll it.
+/// The action ends once the task returns a terminal status, and a new task is
+/// created on the next activation. `cancel` is called on preemption or reset.
 pub struct AsyncAction<W> {
     name: String,
     start: StartFn<W>,
@@ -208,7 +219,7 @@ pub struct AsyncAction<W> {
 }
 
 impl<W> AsyncAction<W> {
-    /// 用名字和任务工厂构造。
+    /// Constructs from a name and a task factory.
     pub fn new<F>(name: impl Into<String>, start: F) -> Self
     where
         F: for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send + 'static,
@@ -220,7 +231,7 @@ impl<W> AsyncAction<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -316,7 +327,7 @@ mod tests {
         assert_eq!(action.tick(&mut ctx), Status::Running);
         assert_eq!(action.tick(&mut ctx), Status::Success);
 
-        // 新激活后再取消。
+        // Cancel after a new activation.
         assert_eq!(action.tick(&mut ctx), Status::Running);
         action.abort(&mut ctx);
         assert!(cancelled.load(Ordering::Relaxed));

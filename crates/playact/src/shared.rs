@@ -1,11 +1,11 @@
-//! 可跨行为树/线程共享的黑板。
+//! A blackboard that can be shared across behavior trees and threads.
 //!
-//! [`SharedBlackboard`] 是 `Arc<Mutex<Blackboard>>` 的薄封装。一次
-//! [`SharedBlackboard::tick`] 会在整个树 tick 期间持有锁，因此：
-//! - 多个树可以共享 typed key 数据；
-//! - 不要在动作/条件内部再次 lock 同一个 `SharedBlackboard`（会死锁），
-//!   直接用 `ctx.blackboard()` / `ctx.blackboard_ref()`；
-//! - 多线程 tick 会被黑板锁串行化。
+//! [`SharedBlackboard`] is a thin wrapper around `Arc<Mutex<Blackboard>>`. A call
+//! to [`SharedBlackboard::tick`] holds the lock for the entire tree tick, so:
+//! - multiple trees can share typed-key data;
+//! - do not lock the same `SharedBlackboard` again inside actions/conditions (it
+//!   deadlocks); use `ctx.blackboard()` / `ctx.blackboard_ref()` instead;
+//! - ticks from multiple threads are serialized by the blackboard lock.
 
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
@@ -14,9 +14,9 @@ use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
 
-/// 可克隆、可跨线程共享的黑板。
+/// A cloneable blackboard that can be shared across threads.
 ///
-/// # 示例
+/// # Example
 ///
 /// ```
 /// use playact::prelude::*;
@@ -43,13 +43,13 @@ pub struct SharedBlackboard {
 }
 
 impl SharedBlackboard {
-    /// 创建空共享黑板。
+    /// Create an empty shared blackboard.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 用已有黑板创建共享黑板。
+    /// Create a shared blackboard from an existing blackboard.
     #[must_use]
     pub fn from_board(board: Blackboard) -> Self {
         Self {
@@ -57,16 +57,18 @@ impl SharedBlackboard {
         }
     }
 
-    /// 锁定黑板。若锁被 poison，会取回内部数据继续使用。
+    /// Lock the blackboard. If the lock is poisoned, the inner data is recovered
+    /// and used.
     pub fn lock(&self) -> MutexGuard<'_, Blackboard> {
         self.board
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// 尝试锁定黑板；锁已被占用时返回 `None`。
+    /// Try to lock the blackboard; returns `None` when the lock is already held.
     ///
-    /// 与 [`SharedBlackboard::lock`] 一样，锁中毒会取回内部数据继续使用。
+    /// As with [`SharedBlackboard::lock`], a poisoned lock recovers the inner
+    /// data and keeps using it.
     pub fn try_lock(&self) -> Option<MutexGuard<'_, Blackboard>> {
         match self.board.try_lock() {
             Ok(guard) => Some(guard),
@@ -75,33 +77,34 @@ impl SharedBlackboard {
         }
     }
 
-    /// 在锁内只读执行闭包。
+    /// Run a closure with read-only access while holding the lock.
     pub fn with<R>(&self, f: impl FnOnce(&Blackboard) -> R) -> R {
         let board = self.lock();
         f(&board)
     }
 
-    /// 在锁内可变执行闭包。
+    /// Run a closure with mutable access while holding the lock.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Blackboard) -> R) -> R {
         let mut board = self.lock();
         f(&mut board)
     }
 
-    /// 用共享黑板 tick 一棵树。
+    /// Tick a tree with the shared blackboard.
     ///
-    /// 锁会覆盖整个 tick；树自带的黑板不参与本次 tick。
+    /// The lock covers the whole tick; the tree's own blackboard is not used for
+    /// this tick.
     pub fn tick<W>(&self, tree: &mut BehaviorTree<W>, world: &mut W, time: Time) -> Status {
         let mut board = self.lock();
         tree.tick_with_blackboard(world, time, &mut board)
     }
 
-    /// 用共享黑板 abort 一棵树。
+    /// Abort a tree with the shared blackboard.
     pub fn abort<W>(&self, tree: &mut BehaviorTree<W>, world: &mut W, time: Time) {
         let mut board = self.lock();
         tree.abort_with_blackboard(world, time, &mut board);
     }
 
-    /// 如果当前只剩这一个引用，取回黑板。
+    /// Recover the blackboard if this is the only remaining reference.
     #[must_use]
     pub fn into_inner(self) -> Option<Blackboard> {
         Arc::try_unwrap(self.board).ok().map(|mutex| {
@@ -155,7 +158,7 @@ mod tests {
             Some(42)
         );
 
-        // 树自带黑板没有被使用。
+        // The tree's own blackboard was not used.
         assert!(writer.blackboard().is_empty());
         assert!(reader.blackboard().is_empty());
     }

@@ -1,14 +1,20 @@
-//! 远程配置：从 HTTP(S) 拉取 `TreeSpec`，按间隔刷新并保留黑板数据。
+//! Remote configuration: fetch a `TreeSpec` over HTTP(S), refresh it on an
+//! interval, and preserve blackboard data.
 //!
-//! 这是可选的 `remote-config` feature，使用 `reqwest::blocking`；不引入
-//! async runtime。刷新在调用 `poll`/`tick` 的线程同步执行，因此高延迟环境
-//! 应把刷新放到工作线程，或使用自定义 `Client` 设置超时。
+//! This is the optional `remote-config` feature, which uses `reqwest::blocking`
+//! and does not pull in an async runtime. Refreshes run synchronously on the
+//! thread calling `poll`/`tick`, so in high-latency environments move refreshing
+//! to a worker thread or use a custom `Client` with a timeout.
 //!
-//! 刷新语义与热重载一致：
-//! - 新配置成功构建后替换旧树，黑板数据保留，节点内部状态重置；
-//! - 解析/构建/网络失败时旧树保持不变，错误返回；
-//! - 支持 ETag / Last-Modified 条件请求，304 时不重建；
-//! - Tracer 不保留，可刷新后通过 [`RemoteTreeLoader::tree_mut`] 重新安装。
+//! Refresh semantics match hot reload:
+//! - Once a new configuration builds successfully it replaces the old tree,
+//!   blackboard data is preserved, and node-internal state is reset;
+//! - On parse/build/network failure the old tree stays untouched and the error
+//!   is returned;
+//! - ETag / Last-Modified conditional requests are supported, and a 304 skips
+//!   rebuilding;
+//! - Tracers are not preserved; reinstall them through
+//!   [`RemoteTreeLoader::tree_mut`] after a refresh.
 
 use std::time::{Duration, Instant};
 
@@ -24,17 +30,17 @@ use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
 
-/// 远程配置错误。
+/// Remote configuration error.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RemoteConfigError {
-    /// HTTP 请求或响应错误。
+    /// HTTP request or response error.
     Http(reqwest::Error),
-    /// 配置文本解析失败。
+    /// Failed to parse the configuration text.
     Parse(ConfigError),
-    /// 配置通过解析但构建行为树失败。
+    /// Configuration parsed but building the behavior tree failed.
     Build(ConfigBuildError),
-    /// 初次加载时服务器返回了意外的 304 Not Modified。
+    /// The server returned an unexpected 304 Not Modified on the initial load.
     NotModified,
 }
 
@@ -80,7 +86,7 @@ impl From<ConfigBuildError> for RemoteConfigError {
 
 type Fetched<W> = Option<(BehaviorTree<W>, Option<String>, Option<String>)>;
 
-/// 远程配置加载器。
+/// Remote configuration loader.
 pub struct RemoteTreeLoader<W: 'static> {
     url: String,
     client: Client,
@@ -95,7 +101,8 @@ pub struct RemoteTreeLoader<W: 'static> {
 }
 
 impl<W: 'static> RemoteTreeLoader<W> {
-    /// 用自定义 parser 和默认 Client 构造；初次加载失败会返回错误。
+    /// Creates a loader with a custom parser and the default `Client`; a failed
+    /// initial load returns an error.
     pub fn with_parser(
         url: impl Into<String>,
         registry: NodeRegistry<W>,
@@ -104,10 +111,11 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_parser_impl(url, registry, parser, None)
     }
 
-    /// 用自定义解析器和 include 解析器构造。
+    /// Creates a loader with a custom parser and include resolver.
     ///
-    /// resolver 在初次加载与每次刷新时重新执行；304 响应不会重建树，因此
-    /// include 内容变化需要 ETag/Last-Modified 变化或手动重新加载。
+    /// The resolver runs again on the initial load and on every refresh; a 304
+    /// response does not rebuild the tree, so changes to include contents require
+    /// a changed ETag/Last-Modified or a manual reload.
     pub fn with_parser_and_resolver(
         url: impl Into<String>,
         registry: NodeRegistry<W>,
@@ -127,7 +135,8 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_client_impl(client, url, registry, parser, resolver)
     }
 
-    /// 用自定义 Client 构造；便于配置代理、超时和 TLS。
+    /// Creates a loader with a custom `Client`, which is convenient for
+    /// configuring proxies, timeouts, and TLS.
     pub fn with_client(
         client: Client,
         url: impl Into<String>,
@@ -137,7 +146,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_client_impl(client, url, registry, parser, None)
     }
 
-    /// 用自定义 Client 和 include 解析器构造。
+    /// Creates a loader with a custom `Client` and include resolver.
     pub fn with_client_and_resolver(
         client: Client,
         url: impl Into<String>,
@@ -183,7 +192,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         })
     }
 
-    /// 用 JSON 远程配置构造。
+    /// Creates a loader for a remote JSON configuration.
     pub fn json(
         url: impl Into<String>,
         registry: NodeRegistry<W>,
@@ -191,7 +200,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_parser(url, registry, TreeSpec::from_json_str)
     }
 
-    /// 用 JSON 远程配置和 include 解析器构造。
+    /// Creates a loader for a remote JSON configuration and an include resolver.
     pub fn json_with_resolver(
         url: impl Into<String>,
         registry: NodeRegistry<W>,
@@ -200,7 +209,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_parser_and_resolver(url, registry, TreeSpec::from_json_str, resolver)
     }
 
-    /// 用 TOML 远程配置构造。
+    /// Creates a loader for a remote TOML configuration.
     #[cfg(feature = "toml")]
     pub fn toml(
         url: impl Into<String>,
@@ -209,7 +218,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_parser(url, registry, TreeSpec::from_toml_str)
     }
 
-    /// 用 YAML 远程配置构造。
+    /// Creates a loader for a remote YAML configuration.
     #[cfg(feature = "yaml")]
     pub fn yaml(
         url: impl Into<String>,
@@ -218,7 +227,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_parser(url, registry, TreeSpec::from_yaml_str)
     }
 
-    /// 用 RON 远程配置构造。
+    /// Creates a loader for a remote RON configuration.
     #[cfg(feature = "ron")]
     pub fn ron(
         url: impl Into<String>,
@@ -227,42 +236,43 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Self::with_parser(url, registry, TreeSpec::from_ron_str)
     }
 
-    /// 设置刷新间隔，默认 30 秒。
+    /// Sets the refresh interval; defaults to 30 seconds.
     #[must_use]
     pub fn with_refresh_interval(mut self, interval: Duration) -> Self {
         self.refresh_interval = interval;
         self
     }
 
-    /// 远程配置 URL。
+    /// Remote configuration URL.
     #[must_use]
     pub fn url(&self) -> &str {
         &self.url
     }
 
-    /// 当前行为树。
+    /// The current behavior tree.
     #[must_use]
     pub fn tree(&self) -> &BehaviorTree<W> {
         &self.tree
     }
 
-    /// 可变行为树。刷新后可用它重新安装 Tracer。
+    /// Mutable behavior tree. Use it to reinstall Tracers after a refresh.
     pub fn tree_mut(&mut self) -> &mut BehaviorTree<W> {
         &mut self.tree
     }
 
-    /// 构建/刷新使用的注册表。
+    /// The registry used for building and refreshing.
     #[must_use]
     pub fn registry(&self) -> &NodeRegistry<W> {
         &self.registry
     }
 
-    /// 可变注册表；注册新节点后下一次刷新生效。
+    /// Mutable registry; newly registered nodes take effect on the next refresh.
     pub fn registry_mut(&mut self) -> &mut NodeRegistry<W> {
         &mut self.registry
     }
 
-    /// 按刷新间隔拉取；发生重载返回 `true`，304/未到时间返回 `false`。
+    /// Fetches according to the refresh interval; returns `true` when a reload
+    /// happened, `false` on 304 or when the interval has not elapsed.
     pub fn poll(&mut self) -> Result<bool, RemoteConfigError> {
         if self.last_refresh.elapsed() < self.refresh_interval {
             return Ok(false);
@@ -270,9 +280,10 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.refresh_now()
     }
 
-    /// 立即拉取一次，忽略刷新间隔。
+    /// Fetches once immediately, ignoring the refresh interval.
     ///
-    /// 304 返回 `false`；成功构建并替换返回 `true`。
+    /// Returns `false` on 304, and `true` when a new tree built successfully and
+    /// replaced the old one.
     pub fn refresh_now(&mut self) -> Result<bool, RemoteConfigError> {
         self.last_refresh = Instant::now();
 
@@ -300,10 +311,10 @@ impl<W: 'static> RemoteTreeLoader<W> {
         Ok(true)
     }
 
-    /// 先按间隔刷新，再 tick 当前树。
+    /// Refreshes according to the interval first, then ticks the current tree.
     ///
-    /// 刷新失败时返回错误且不 tick；需要继续旧树时直接使用
-    /// [`RemoteTreeLoader::tree_mut`]。
+    /// On refresh failure it returns an error and does not tick; to keep using
+    /// the old tree, use [`RemoteTreeLoader::tree_mut`] directly.
     pub fn tick(&mut self, world: &mut W, time: Time) -> Result<Status, RemoteConfigError> {
         self.poll()?;
         Ok(self.tree.tick(world, time))

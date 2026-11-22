@@ -1,9 +1,9 @@
-//! 无第三方依赖的微基准。
+//! Microbenchmarks with no third-party dependencies.
 //!
-//! 运行：`cargo bench -p playact`
+//! Run: `cargo bench -p playact`
 //!
-//! 每个样例先预热 100ms，再测量约 300ms。数字适合做相对比较与回归观察，
-//! 不替代 profiler。
+//! Each case warms up for 100ms and then measures for about 300ms. The numbers suit
+//! relative comparisons and regression tracking; they are no substitute for a profiler.
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};

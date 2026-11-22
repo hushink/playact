@@ -1,4 +1,4 @@
-//! 装饰节点：包装一个子节点，改变其状态语义。
+//! Decorator nodes: they wrap a single child and change its status semantics.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -23,16 +23,16 @@ fn load_child_state<W>(child: &mut BoxedNode<W>, state: Option<Vec<u8>>) -> bool
     }
 }
 
-// ==================== 结果翻转 ====================
+// ==================== Result inversion ====================
 
-/// 反转 Success / Failure，Running 透传。
+/// Inverts Success / Failure; Running passes through.
 pub struct Inverter<W> {
     name: String,
     child: BoxedNode<W>,
 }
 
 impl<W> Inverter<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(child: BoxedNode<W>) -> Self {
         Self {
@@ -41,7 +41,7 @@ impl<W> Inverter<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -87,16 +87,16 @@ impl<W> Node<W> for Inverter<W> {
     }
 }
 
-// ==================== 恒定结果 ====================
+// ==================== Constant results ====================
 
-/// 无论子节点成功还是失败，终态都返回 Success；Running 透传。
+/// Returns Success for either terminal status of the child; Running passes through.
 pub struct AlwaysSucceed<W> {
     name: String,
     child: BoxedNode<W>,
 }
 
 impl<W> AlwaysSucceed<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(child: BoxedNode<W>) -> Self {
         Self {
@@ -105,7 +105,7 @@ impl<W> AlwaysSucceed<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -150,14 +150,14 @@ impl<W> Node<W> for AlwaysSucceed<W> {
     }
 }
 
-/// 无论子节点成功还是失败，终态都返回 Failure；Running 透传。
+/// Returns Failure for either terminal status of the child; Running passes through.
 pub struct AlwaysFail<W> {
     name: String,
     child: BoxedNode<W>,
 }
 
 impl<W> AlwaysFail<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(child: BoxedNode<W>) -> Self {
         Self {
@@ -166,7 +166,7 @@ impl<W> AlwaysFail<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -211,18 +211,20 @@ impl<W> Node<W> for AlwaysFail<W> {
     }
 }
 
-// ==================== 重复 ====================
+// ==================== Repeat ====================
 
-/// `Repeat` 单 tick 最多推进的迭代次数。
+/// Maximum number of iterations `Repeat` advances within a single tick.
 ///
-/// 超过后返回 `Running`，下一帧继续。这样即使配置里写了极大的 `times`，
-/// 也不会让一个逻辑帧卡死或在一帧内堆积海量命令。
+/// Once exceeded it returns `Running` and continues on the next frame. This
+/// keeps one logic frame from stalling or piling up a huge number of commands
+/// even if the configuration specifies a very large `times`.
 pub const MAX_REPEAT_STEPS_PER_TICK: usize = 1024;
 
-/// 连续成功执行子节点 `times` 次。
+/// Runs the child to Success `times` times in a row.
 ///
-/// 每成功一次显式 reset 子节点再开始下一轮；单 tick 最多执行
-/// [`MAX_REPEAT_STEPS_PER_TICK`] 次，之后返回 `Running`，下一帧继续。
+/// After each success the child is explicitly reset before the next round; at
+/// most [`MAX_REPEAT_STEPS_PER_TICK`] iterations happen per tick, after which
+/// `Running` is returned and the next frame continues.
 pub struct Repeat<W> {
     name: String,
     child: BoxedNode<W>,
@@ -231,7 +233,7 @@ pub struct Repeat<W> {
 }
 
 impl<W> Repeat<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(times: NonZeroUsize, child: BoxedNode<W>) -> Self {
         Self {
@@ -242,7 +244,7 @@ impl<W> Repeat<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -318,12 +320,13 @@ impl<W> Node<W> for Repeat<W> {
     }
 }
 
-// ==================== 重试 ====================
+// ==================== Retry ====================
 
-/// 子节点失败后重试，最多 `max_attempts` 次。
+/// Retries the child after a failure, up to `max_attempts` times.
 ///
-/// 每个 tick 最多尝试一次：失败但未到上限时返回 Running，让出一帧；
-/// 避免同一逻辑帧内连续刷副作用。
+/// At most one attempt per tick: while the failure count has not reached the
+/// limit it returns Running, yielding a frame; this avoids firing side effects
+/// repeatedly within the same logic frame.
 pub struct Retry<W> {
     name: String,
     child: BoxedNode<W>,
@@ -333,7 +336,7 @@ pub struct Retry<W> {
 }
 
 impl<W> Retry<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(max_attempts: NonZeroUsize, child: BoxedNode<W>) -> Self {
         Self {
@@ -345,7 +348,7 @@ impl<W> Retry<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -433,12 +436,13 @@ impl<W> Node<W> for Retry<W> {
     }
 }
 
-// ==================== 直到成功 / 失败 ====================
+// ==================== Until success / failure ====================
 
-/// 反复 tick 子节点直到 Success；Failure/Running 都返回 Running。
+/// Ticks the child repeatedly until Success; both Failure and Running report
+/// Running.
 ///
-/// 每 tick 只尝试一次，不会在同一帧内自旋。建议用 Timeout 包住无上限
-/// 的 UntilSuccess。
+/// Only one attempt per tick, so it does not spin within a single frame. Wrap
+/// an unbounded `UntilSuccess` in a `Timeout`.
 pub struct UntilSuccess<W> {
     name: String,
     child: BoxedNode<W>,
@@ -446,7 +450,7 @@ pub struct UntilSuccess<W> {
 }
 
 impl<W> UntilSuccess<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(child: BoxedNode<W>) -> Self {
         Self {
@@ -456,7 +460,7 @@ impl<W> UntilSuccess<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -520,7 +524,7 @@ impl<W> Node<W> for UntilSuccess<W> {
     }
 }
 
-/// 反复 tick 子节点直到 Failure；此时整体返回 Success。
+/// Ticks the child repeatedly until Failure, at which point the node returns Success.
 pub struct UntilFailure<W> {
     name: String,
     child: BoxedNode<W>,
@@ -528,7 +532,7 @@ pub struct UntilFailure<W> {
 }
 
 impl<W> UntilFailure<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(child: BoxedNode<W>) -> Self {
         Self {
@@ -538,7 +542,7 @@ impl<W> UntilFailure<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -602,9 +606,9 @@ impl<W> Node<W> for UntilFailure<W> {
     }
 }
 
-// ==================== 冷却 ====================
+// ==================== Cooldown ====================
 
-/// 子节点成功后进入冷却；冷却期间直接 Failure，不 tick 子节点。
+/// Enters cooldown after the child succeeds; during cooldown it returns Failure without ticking the child.
 pub struct Cooldown<W> {
     name: String,
     child: BoxedNode<W>,
@@ -613,7 +617,7 @@ pub struct Cooldown<W> {
 }
 
 impl<W> Cooldown<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(duration: Duration, child: BoxedNode<W>) -> Self {
         Self {
@@ -624,7 +628,7 @@ impl<W> Cooldown<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -687,12 +691,13 @@ impl<W> Node<W> for Cooldown<W> {
     }
 }
 
-// ==================== 超时 ====================
+// ==================== Timeout ====================
 
-/// 子节点 Running 超过 `duration` 后 abort 子节点并返回 Failure。
+/// Aborts the child and returns Failure once it has been Running longer than
+/// `duration`.
 ///
-/// `duration` 为 0 时首次 tick 直接 Failure，不会 tick 子节点，也不会对
-/// 尚未运行过的子节点调用 `reset`。
+/// With `duration` of 0 the first tick returns Failure immediately without
+/// ticking the child, and `reset` is not called on a child that has never run.
 pub struct Timeout<W> {
     name: String,
     child: BoxedNode<W>,
@@ -702,7 +707,7 @@ pub struct Timeout<W> {
 }
 
 impl<W> Timeout<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(duration: Duration, child: BoxedNode<W>) -> Self {
         Self {
@@ -714,7 +719,7 @@ impl<W> Timeout<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -798,13 +803,15 @@ impl<W> Node<W> for Timeout<W> {
     }
 }
 
-// ==================== 次数限制 ====================
+// ==================== Usage limits ====================
 
-/// 子节点最多产生 `max` 次终态结果；之后直接 Failure。
+/// Lets the child produce at most `max` terminal results; afterwards it returns
+/// Failure directly.
 ///
-/// `Failure` 也计入次数。计数跨 tick 保留，但全局 `reset()` 或引擎放弃
-/// Running 子树时的 `abort→reset` 会清零；也就是说 `Limiter` 是“每次激活”
-/// 的配额。需要跨抢占保留的配额，请把计数放进黑板 typed slot。
+/// `Failure` also counts. The count persists across ticks, but a global
+/// `reset()` or the `abort→reset` performed when the engine abandons a Running
+/// subtree clears it; in other words, `Limiter` is a per-activation quota. For a
+/// quota that survives preemption, keep the count in a typed blackboard slot.
 pub struct Limiter<W> {
     name: String,
     child: BoxedNode<W>,
@@ -813,7 +820,7 @@ pub struct Limiter<W> {
 }
 
 impl<W> Limiter<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(max: NonZeroUsize, child: BoxedNode<W>) -> Self {
         Self {
@@ -824,7 +831,7 @@ impl<W> Limiter<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -884,13 +891,17 @@ impl<W> Node<W> for Limiter<W> {
 
 type GuardFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send>;
 
-/// 条件守卫：条件为真时 tick 子节点，否则直接 `Failure`。
+/// Conditional guard: ticks the child while the condition is true, otherwise
+/// returns `Failure` directly.
 ///
-/// 条件每 tick 重新评估；条件由真变假且子节点上次为 `Running` 时，先
-/// `abort → reset` 子节点。适合“目标仍有效才继续追击/施法”这类反应式守卫。
+/// The condition is re-evaluated every tick; when it turns false while the
+/// child was `Running` on the previous tick, the child is `abort → reset`
+/// first. Suited to reactive guards such as "keep chasing/casting only while
+/// the target is still valid".
 ///
-/// 这等价于 `ReactiveSequence(condition, child)` 的常用形态，但省去了显式
-/// 条件叶子，并且 `describe()`/Tracer 中语义更直接。
+/// This is equivalent to the common `ReactiveSequence(condition, child)` shape,
+/// but without the explicit condition leaf, and its semantics are more direct
+/// in `describe()`/Tracer.
 pub struct Guard<W> {
     name: String,
     condition: GuardFn<W>,
@@ -899,7 +910,7 @@ pub struct Guard<W> {
 }
 
 impl<W> Guard<W> {
-    /// 用条件闭包和子节点构造。
+    /// Creates the node from a condition closure and a child.
     #[must_use]
     pub fn new<F>(condition: F, child: BoxedNode<W>) -> Self
     where
@@ -913,7 +924,7 @@ impl<W> Guard<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -976,14 +987,16 @@ impl<W> Node<W> for Guard<W> {
     }
 }
 
-/// 时间窗口配额装饰节点。
+/// Time-window quota decorator.
 ///
-/// 在一个 `window` 内最多允许子节点产生 `max` 个终态结果；`Running` 不消耗
-/// 配额。配额耗尽时直接返回 `Failure`，不 tick 子节点。窗口按
-/// [`Context::time`] 的 `now` 滑动，`window = 0` 等价于不限流。
+/// Allows the child at most `max` terminal results within one `window`;
+/// `Running` does not consume quota. When the quota is exhausted it returns
+/// `Failure` directly without ticking the child. The window slides according to
+/// `now` from [`Context::time`]; `window = 0` is equivalent to no throttling.
 ///
-/// 与 [`Limiter`] 的区别：`Limiter` 是“每次激活”的固定次数；`Throttle` 按
-/// 时间窗口恢复配额，适合限制按键、技能或网络请求频率。
+/// Compared with [`Limiter`]: `Limiter` caps a fixed count per activation;
+/// `Throttle` restores quota by time window, making it suitable for limiting
+/// the rate of key presses, abilities, or network requests.
 pub struct Throttle<W> {
     name: String,
     child: BoxedNode<W>,
@@ -994,7 +1007,7 @@ pub struct Throttle<W> {
 }
 
 impl<W> Throttle<W> {
-    /// 构造。
+    /// Creates the node.
     #[must_use]
     pub fn new(window: Duration, max: NonZeroUsize, child: BoxedNode<W>) -> Self {
         Self {
@@ -1007,7 +1020,7 @@ impl<W> Throttle<W> {
         }
     }
 
-    /// 覆盖显示名。
+    /// Overrides the display name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -1327,7 +1340,7 @@ mod tests {
         let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(99, 49));
         assert_eq!(node.tick(&mut ctx), Status::Failure);
 
-        // 窗口从首次 tick 的 now=0 开始，now=100 时恢复配额。
+        // The window starts at now=0 on the first tick; quota is restored at now=100.
         let mut ctx = Context::new(&mut world, &mut board, Time::from_millis(100, 1));
         assert_eq!(node.tick(&mut ctx), Status::Success);
     }

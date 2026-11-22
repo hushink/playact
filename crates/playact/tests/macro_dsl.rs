@@ -1,6 +1,6 @@
 #![cfg(feature = "macros")]
 
-//! `bt!` proc-macro DSL 集成测试。
+//! Integration tests for the `bt!` proc-macro DSL.
 
 use std::num::NonZeroUsize;
 use std::time::Duration;

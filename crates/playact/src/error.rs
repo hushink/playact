@@ -1,31 +1,34 @@
-//! 核心构建错误。
+//! Core build errors.
 
 use core::fmt;
 use core::num::NonZeroUsize;
 
-/// 构建行为树时发现的配置错误。
+/// Configuration errors found while building a behavior tree.
 ///
-/// typestate 构建器已经用类型系统拦住了“根节点为空”“装饰器子节点数量
-/// 不对”等问题；这里只处理仍需运行期校验的语义错误。
+/// The typestate builder already uses the type system to rule out problems such
+/// as an empty root or a decorator with the wrong number of children; this
+/// covers only semantic errors that still need runtime validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuildError {
-    /// `Parallel` 的成功阈值大于子节点数量，永远不可能满足。
+    /// The `Parallel` success threshold exceeds the child count and can never
+    /// be met.
     InvalidSuccessThreshold {
-        /// 配置的 `AtLeast` 值。
+        /// The configured `AtLeast` value.
         at_least: NonZeroUsize,
-        /// 实际子节点数量。
+        /// The actual child count.
         children: usize,
     },
-    /// `Parallel` 的失败阈值大于子节点数量，永远不可能满足。
+    /// The `Parallel` failure threshold exceeds the child count and can never
+    /// be met.
     InvalidFailureThreshold {
-        /// 配置的 `AtLeast` 值。
+        /// The configured `AtLeast` value.
         at_least: NonZeroUsize,
-        /// 实际子节点数量。
+        /// The actual child count.
         children: usize,
     },
-    /// 内部构建状态不一致。正常使用不应出现。
+    /// Internal build state is inconsistent. Should not occur in normal use.
     InvalidTree {
-        /// 错误说明。
+        /// Error description.
         message: &'static str,
     },
 }

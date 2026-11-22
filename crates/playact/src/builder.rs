@@ -1,7 +1,8 @@
-//! 闭包作用域 + typestate 构建器。
+//! A closure-scoped, typestate-based builder.
 //!
-//! 根节点必须恰好一个子节点；装饰节点闭包必须恰好产生一个子节点。
-//! 这些约束都由类型系统保证，不需要 `.end()`，也不会在运行时 panic。
+//! A root must have exactly one child, and a decorator closure must produce
+//! exactly one child. The type system enforces these constraints, so no
+//! `.end()` calls are needed and nothing panics at runtime.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -33,22 +34,22 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// 构建器状态标记的密封 trait。
+/// Sealed trait for builder state markers.
 #[doc(hidden)]
 pub trait BuilderState: sealed::Sealed {
-    /// 追加一个节点后的状态。
+    /// The state after appending one node.
     type Next: BuilderState;
 }
 
-/// 还没有子节点。[`BuilderState`] 标记类型。
+/// No children yet. A [`BuilderState`] marker type.
 #[doc(hidden)]
 pub struct Empty;
 
-/// 恰好一个子节点。[`BuilderState`] 标记类型。
+/// Exactly one child. A [`BuilderState`] marker type.
 #[doc(hidden)]
 pub struct One;
 
-/// 两个或更多子节点。[`BuilderState`] 标记类型。
+/// Two or more children. A [`BuilderState`] marker type.
 #[doc(hidden)]
 pub struct Many;
 
@@ -82,10 +83,10 @@ impl<W> Frame<W> {
     }
 }
 
-/// 行为树构建器。
+/// A behavior tree builder.
 ///
-/// 根构建器用 [`BehaviorTreeBuilder::new`] 创建；闭包参数类型是
-/// [`BranchBuilder`]。示例：
+/// Create the root builder with [`BehaviorTreeBuilder::new`]; the closure
+/// parameter type is [`BranchBuilder`]. Example:
 ///
 /// ```
 /// use std::time::Duration;
@@ -110,11 +111,11 @@ pub struct BehaviorTreeBuilder<W, S = Empty> {
     _state: PhantomData<S>,
 }
 
-/// 闭包内部的分支构建器别名。
+/// Alias for the branch builder used inside closures.
 pub type BranchBuilder<W, S = Empty> = BehaviorTreeBuilder<W, S>;
 
 impl<W: 'static> BehaviorTreeBuilder<W, Empty> {
-    /// 创建一个根构建器。
+    /// Creates a root builder.
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -180,9 +181,9 @@ where
         (child, error)
     }
 
-    // ---------- 叶子 ----------
+    // ---------- Leaves ----------
 
-    /// 追加一个闭包动作。
+    /// Appends a closure action.
     pub fn action<F>(self, name: impl Into<String>, f: F) -> BehaviorTreeBuilder<W, S::Next>
     where
         F: for<'a> FnMut(&mut Context<'a, W>) -> Status + Send + 'static,
@@ -190,7 +191,7 @@ where
         self.push_node(Box::new(Action::new(name, f)))
     }
 
-    /// 追加一个异步/远程动作。
+    /// Appends an async/remote action.
     #[cfg(feature = "std")]
     pub fn async_action<F>(
         self,
@@ -203,7 +204,7 @@ where
         self.push_node(Box::new(AsyncAction::new(name, start)))
     }
 
-    /// 追加一个只读条件。
+    /// Appends a read-only condition.
     pub fn condition<F>(self, name: impl Into<String>, f: F) -> BehaviorTreeBuilder<W, S::Next>
     where
         F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
@@ -211,12 +212,13 @@ where
         self.push_node(Box::new(Condition::new(name, f)))
     }
 
-    /// 追加一个等待叶子。
+    /// Appends a wait leaf.
     pub fn wait(self, duration: Duration) -> BehaviorTreeBuilder<W, S::Next> {
         self.push_node(Box::new(Wait::new(duration)))
     }
 
-    /// 追加一个向黑板写入固定值的叶子；每次 tick 都写入。
+    /// Appends a leaf that writes a fixed value to the blackboard on every
+    /// tick.
     pub fn set_value<T>(
         self,
         name: impl Into<String>,
@@ -229,19 +231,19 @@ where
         self.push_node(Box::new(SetValue::<W, T>::new(name, key, value)))
     }
 
-    /// 追加一个已经构造好的自定义节点/子树。
+    /// Appends a pre-built custom node or subtree.
     pub fn raw(self, node: BoxedNode<W>) -> BehaviorTreeBuilder<W, S::Next> {
         self.push_node(node)
     }
 
-    /// 通过子树工厂追加一份全新实例化的子树。
+    /// Appends a freshly instantiated subtree from a subtree factory.
     pub fn subtree(self, factory: &SubtreeFactory<W>) -> BehaviorTreeBuilder<W, S::Next> {
         self.push_node(factory.instantiate())
     }
 
-    // ---------- 组合 ----------
+    // ---------- Composites ----------
 
-    /// 打开一个记忆式顺序节点。
+    /// Opens a memory sequence node.
     pub fn sequence<S2>(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
@@ -255,7 +257,7 @@ where
             .set_error(error)
     }
 
-    /// 打开一个反应式顺序节点。
+    /// Opens a reactive sequence node.
     pub fn reactive_sequence<S2>(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
@@ -269,7 +271,7 @@ where
             .set_error(error)
     }
 
-    /// 打开一个记忆式选择节点。
+    /// Opens a memory selector node.
     pub fn selector<S2>(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
@@ -283,7 +285,7 @@ where
             .set_error(error)
     }
 
-    /// 打开一个反应式选择节点。
+    /// Opens a reactive selector node.
     pub fn reactive_selector<S2>(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
@@ -297,7 +299,7 @@ where
             .set_error(error)
     }
 
-    /// 打开一个带记忆的随机选择节点。
+    /// Opens a random selector node with memory.
     pub fn random_selector<S2>(
         self,
         seed: u64,
@@ -312,10 +314,11 @@ where
             .set_error(error)
     }
 
-    /// 追加一个带权重的随机选择节点。
+    /// Appends a weighted random selector node.
     ///
-    /// builder 闭包无法表达每个子节点的权重，因此这里直接接收构造好的
-    /// [`WeightedChild`]；需要闭包作用域时可先构造节点再用 `.raw(...)`。
+    /// A builder closure cannot express per-child weights, so this takes
+    /// pre-built [`WeightedChild`] values directly; when closure scoping is
+    /// needed, build the node first and attach it with `.raw(...)`.
     pub fn weighted_random_selector(
         self,
         children: Vec<WeightedChild<W>>,
@@ -324,10 +327,11 @@ where
         self.push_node(Box::new(WeightedRandomSelector::new(children, seed)))
     }
 
-    /// 追加一个效用选择节点。
+    /// Appends a utility selector node.
     ///
-    /// 评分闭包无法用 builder 闭包表达，因此直接接收构造好的
-    /// [`UtilityChild`]；需要 hysteresis 时可先构造节点再 `.raw(...)`。
+    /// Scoring closures cannot be expressed through a builder closure, so this
+    /// takes pre-built [`UtilityChild`] values directly; when hysteresis is
+    /// needed, build the node first and attach it with `.raw(...)`.
     pub fn utility_selector(
         self,
         children: Vec<UtilityChild<W>>,
@@ -335,7 +339,7 @@ where
         self.push_node(Box::new(UtilitySelector::new(children)))
     }
 
-    /// 打开一个并行节点（单 tick 汇总）。
+    /// Opens a parallel node (aggregated within a single tick).
     pub fn parallel<S2>(
         self,
         success: Threshold,
@@ -354,7 +358,7 @@ where
         self.push_node(Box::new(node)).set_error(error)
     }
 
-    /// 打开一个跨 tick 累计终态的并行节点。
+    /// Opens a parallel node that accumulates terminal statuses across ticks.
     pub fn mem_parallel<S2>(
         self,
         success: Threshold,
@@ -373,7 +377,8 @@ where
         self.push_node(Box::new(node)).set_error(error)
     }
 
-    /// 打开一个条件分支节点；两个分支都必须恰好一个子节点。
+    /// Opens an if/then/else branch node; each branch must have exactly one
+    /// child.
     pub fn if_then_else<F, T, E>(
         self,
         condition: F,
@@ -404,7 +409,7 @@ where
             .set_error(error)
     }
 
-    /// 打开一个竞速节点：第一个返回终态的子节点获胜。
+    /// Opens a race node: the first child to return a terminal status wins.
     pub fn race<S2>(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, S2>,
@@ -418,7 +423,7 @@ where
             .set_error(error)
     }
 
-    // ---------- 装饰 ----------
+    // ---------- Decorators ----------
 
     fn decorator<M>(
         self,
@@ -448,7 +453,7 @@ where
         self.push_node(node).set_error(error)
     }
 
-    /// 反转结果。
+    /// Inverts the result.
     pub fn inverter(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
@@ -456,7 +461,7 @@ where
         self.decorator(f, |child| Box::new(Inverter::new(child)))
     }
 
-    /// 终态恒为成功。
+    /// Always ends in success.
     pub fn always_succeed(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
@@ -464,7 +469,7 @@ where
         self.decorator(f, |child| Box::new(AlwaysSucceed::new(child)))
     }
 
-    /// 终态恒为失败。
+    /// Always ends in failure.
     pub fn always_fail(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
@@ -472,7 +477,7 @@ where
         self.decorator(f, |child| Box::new(AlwaysFail::new(child)))
     }
 
-    /// 重复成功执行 `times` 次。
+    /// Repeats on success `times` times.
     pub fn repeat(
         self,
         times: core::num::NonZeroUsize,
@@ -481,7 +486,7 @@ where
         self.decorator(f, move |child| Box::new(Repeat::new(times, child)))
     }
 
-    /// 失败最多重试 `max_attempts` 次，每 tick 一次尝试。
+    /// Retries on failure up to `max_attempts` times, one attempt per tick.
     pub fn retry(
         self,
         max_attempts: core::num::NonZeroUsize,
@@ -490,7 +495,7 @@ where
         self.decorator(f, move |child| Box::new(Retry::new(max_attempts, child)))
     }
 
-    /// 直到成功。
+    /// Runs until success.
     pub fn until_success(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
@@ -498,7 +503,7 @@ where
         self.decorator(f, |child| Box::new(UntilSuccess::new(child)))
     }
 
-    /// 直到失败。
+    /// Runs until failure.
     pub fn until_failure(
         self,
         f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
@@ -506,7 +511,7 @@ where
         self.decorator(f, |child| Box::new(UntilFailure::new(child)))
     }
 
-    /// 条件守卫；条件为真才 tick 子节点。
+    /// Conditional guard; ticks the child only when the condition holds.
     pub fn guard<F>(
         self,
         condition: F,
@@ -518,7 +523,7 @@ where
         self.decorator(f, move |child| Box::new(Guard::new(condition, child)))
     }
 
-    /// 成功后冷却。
+    /// Cooldown after success.
     pub fn cooldown(
         self,
         duration: Duration,
@@ -527,7 +532,7 @@ where
         self.decorator(f, move |child| Box::new(Cooldown::new(duration, child)))
     }
 
-    /// 运行超时。
+    /// Enforces a timeout on the running child.
     pub fn timeout(
         self,
         duration: Duration,
@@ -536,7 +541,7 @@ where
         self.decorator(f, move |child| Box::new(Timeout::new(duration, child)))
     }
 
-    /// 次数限制。
+    /// Limits the number of runs.
     pub fn limiter(
         self,
         max: core::num::NonZeroUsize,
@@ -545,7 +550,7 @@ where
         self.decorator(f, move |child| Box::new(Limiter::new(max, child)))
     }
 
-    /// 时间窗口限流。
+    /// Rate-limits within a time window.
     pub fn throttle(
         self,
         window: Duration,
@@ -557,7 +562,7 @@ where
 }
 
 impl<W: 'static> BehaviorTreeBuilder<W, One> {
-    /// 构建行为树。
+    /// Builds the behavior tree.
     pub fn build(mut self) -> Result<BehaviorTree<W>, BuildError> {
         if let Some(error) = self.frame.error {
             return Err(error);

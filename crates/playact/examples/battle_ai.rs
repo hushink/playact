@@ -1,17 +1,18 @@
-//! 完整可运行的战斗 AI 示例：玩家机器人 vs 三只哥布林。
+//! A complete, runnable combat AI example: a player bot vs three goblins.
 //!
-//! 运行：
+//! Run:
 //!
 //! ```text
 //! cargo run --example battle_ai
 //! ```
 //!
-//! 特点：
-//! - 1D 战场、固定 0.25s 逻辑帧、无随机数，完全确定性；
-//! - 玩家用 ReactiveSelector 实现低血量保命打断；
-//! - 每个 agent 一棵独立行为树 + 独立黑板；
-//! - 动作只读 world、把 BattleCommand 写入黑板的 CommandBuffer，
-//!   主循环在所有 agent tick 完之后统一执行命令，演示决策/执行分离。
+//! Highlights:
+//! - 1D battlefield, fixed 0.25s logic frames, no randomness: fully deterministic;
+//! - the player uses a ReactiveSelector to preempt combat and survive at low HP;
+//! - one independent behavior tree and blackboard per agent;
+//! - actions only read the world and push BattleCommands into a CommandBuffer on the
+//!   blackboard; the main loop executes all commands after every agent has ticked,
+//!   demonstrating decision/execution separation.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,7 @@ use std::time::Duration;
 use playact::Kind;
 use playact::prelude::*;
 
-// ==================== 业务类型（只存在于示例） ====================
+// ==================== Domain types (example only) ====================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Entity {
@@ -292,7 +293,7 @@ impl World {
     }
 }
 
-// ==================== 黑板键与命令工具 ====================
+// ==================== Blackboard keys and command helpers ====================
 
 static COMMANDS: Key<CommandBuffer<BattleCommand>> = playact::key!("commands");
 static TARGET: Key<Option<usize>> = playact::key!("target");
@@ -315,7 +316,7 @@ fn target<'a>(ctx: &'a Context<'_, World>) -> Option<&'a Combatant> {
         .filter(|goblin| goblin.alive)
 }
 
-// ==================== 玩家条件 ====================
+// ==================== Player conditions ====================
 
 fn hp_below(ctx: &Context<'_, World>, ratio: f64) -> bool {
     let player = &ctx.world_ref().player;
@@ -344,7 +345,7 @@ fn target_low_hp(ctx: &Context<'_, World>) -> bool {
     target(ctx).is_some_and(|target| target.hp_ratio() < 0.25)
 }
 
-// ==================== 玩家动作 ====================
+// ==================== Player actions ====================
 
 fn select_target(ctx: &mut Context<'_, World>) -> Status {
     let nearest = ctx.world_ref().nearest_goblin().map(|(index, _)| index);
@@ -446,7 +447,7 @@ fn patrol(ctx: &mut Context<'_, World>) -> Status {
     Status::Success
 }
 
-// ==================== 哥布林条件/动作 ====================
+// ==================== Goblin conditions/actions ====================
 
 fn goblin_in_range(ctx: &Context<'_, World>, index: usize) -> bool {
     let world = ctx.world_ref();
@@ -487,12 +488,12 @@ fn goblin_hold(_ctx: &mut Context<'_, World>) -> Status {
     Status::Running
 }
 
-// ==================== 树工厂 ====================
+// ==================== Tree factories ====================
 
 fn build_player_tree() -> BehaviorTree<World> {
     BehaviorTreeBuilder::<World>::new("player")
         .reactive_selector(|b| {
-            // P1 保命：低血量时喝药或撤退，随时打断战斗。
+            // P1 survival: drink a potion or retreat at low HP, preempting combat at any time.
             b.sequence(|b| {
                 b.condition("低血量", |ctx| hp_below(ctx, 0.30))
                     .reactive_selector(|b| {
@@ -504,12 +505,12 @@ fn build_player_tree() -> BehaviorTree<World> {
                         .action("撤退", retreat)
                     })
             })
-            // P2 战斗：目标选择每 tick 刷新。
+            // P2 combat: target selection is refreshed every tick.
             .reactive_sequence(|b| {
                 b.condition("有活目标", has_living_target)
                     .action("选择目标", select_target)
                     .reactive_selector(|b| {
-                        // 斩杀：目标残血且在射程内，技能优先。
+                        // Finisher: skill takes priority when the target is low and in range.
                         b.sequence(|b| {
                             b.condition("目标残血", target_low_hp)
                                 .condition("目标在射程", target_in_range)
@@ -517,21 +518,21 @@ fn build_player_tree() -> BehaviorTree<World> {
                                     b.action("释放技能", cast_skill)
                                 })
                         })
-                        // 普攻：在射程内且冷却结束。
+                        // Basic attack: in range and off cooldown.
                         .sequence(|b| {
                             b.condition("目标在射程", target_in_range)
                                 .cooldown(Duration::from_millis(750), |b| b.action("普攻", attack))
                         })
-                        // 接近：不在射程内时移动；Timeout 防止无限追击。
+                        // Approach: move while out of range; Timeout prevents an endless chase.
                         .sequence(|b| {
                             b.inverter(|b| b.condition("目标在射程", target_in_range))
                                 .timeout(Duration::from_secs(5), |b| b.action("接近目标", approach))
                         })
-                        // 冷却期间保持位置，不打断更高优先级分支。
+                        // Hold position on cooldown without preempting higher-priority branches.
                         .action("保持位置", hold)
                     })
             })
-            // P3 无目标巡逻。
+            // P3 patrol when there is no target.
             .action("巡逻", patrol)
         })
         .build()
@@ -607,7 +608,7 @@ impl Tracer for TraceSink {
     }
 }
 
-// ==================== 驱动 ====================
+// ==================== Driver ====================
 
 fn init_tree(mut tree: BehaviorTree<World>) -> BehaviorTree<World> {
     tree.blackboard_mut().set(&COMMANDS, CommandBuffer::new());

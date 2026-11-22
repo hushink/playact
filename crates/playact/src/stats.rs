@@ -1,11 +1,12 @@
-//! 节点级运行统计。
+//! Per-node runtime statistics.
 //!
-//! [`StatsTracer`] 通过共享句柄收集每个节点路径的 tick 次数、状态分布、
-//! abort 次数与 wall-clock 耗时。安装到树上后，可随时从另一份 clone 读取
-//! 快照，不需要访问 `BehaviorTree` 内部。
+//! [`StatsTracer`] uses a shared handle to collect tick counts, status
+//! distribution, abort counts, and wall-clock time per node path. Once installed
+//! on a tree, a snapshot can be read at any time from another clone without
+//! accessing `BehaviorTree` internals.
 //!
-//! 统计按事件路径区分节点；一个 `StatsTracer` 只应用于一棵树，否则不同树
-//! 的相同路径会被合并。
+//! Statistics distinguish nodes by event path; use one `StatsTracer` per tree,
+//! otherwise identical paths from different trees get merged.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -17,26 +18,26 @@ use crate::node::Kind;
 use crate::status::Status;
 use crate::trace::{TraceEvent, Tracer};
 
-/// 单个节点的累计统计。
+/// Accumulated statistics for a single node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeStats {
-    /// 最近一次事件中的节点名。
+    /// Node name from the most recent event.
     pub name: String,
-    /// 节点类型。
+    /// Node type.
     pub kind: Kind,
-    /// 完成的 tick 次数。
+    /// Number of completed ticks.
     pub ticks: u64,
-    /// 返回 `Success` 的次数。
+    /// Number of `Success` returns.
     pub successes: u64,
-    /// 返回 `Failure` 的次数。
+    /// Number of `Failure` returns.
     pub failures: u64,
-    /// 返回 `Running` 的次数。
+    /// Number of `Running` returns.
     pub running: u64,
-    /// 被 abort 的次数。
+    /// Number of aborts.
     pub aborts: u64,
-    /// 所有 tick 的累计 wall-clock 耗时。
+    /// Total wall-clock time across all ticks.
     pub total_time: Duration,
-    /// 单次 tick 的最长 wall-clock 耗时。
+    /// Longest wall-clock time of a single tick.
     pub max_time: Duration,
 }
 
@@ -55,14 +56,14 @@ impl NodeStats {
         }
     }
 
-    /// 平均 tick 耗时；尚未完成 tick 时返回零。
+    /// Average tick duration; zero until a tick has completed.
     #[must_use]
     pub fn average_time(&self) -> Duration {
         if self.ticks == 0 {
             Duration::ZERO
         } else {
-            // Duration 只支持除以 u32；超过 u32::MAX 次的极端情况用上限近似，
-            // 避免截断后除以 0。
+            // Duration only supports division by u32; in the extreme case of more
+            // than u32::MAX ticks, saturate at the limit to avoid dividing by zero.
             self.total_time / u32::try_from(self.ticks).unwrap_or(u32::MAX)
         }
     }
@@ -85,7 +86,7 @@ struct Inner {
     active: BTreeMap<Vec<usize>, Instant>,
 }
 
-/// 收集节点运行统计的 Tracer。
+/// A Tracer that collects per-node runtime statistics.
 ///
 /// ```ignore
 /// let stats = StatsTracer::new();
@@ -101,13 +102,13 @@ pub struct StatsTracer {
 }
 
 impl StatsTracer {
-    /// 创建空统计器。
+    /// Create an empty statistics collector.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 所有节点的快照，按路径排序。
+    /// Snapshot of all nodes, sorted by path.
     #[must_use]
     pub fn nodes(&self) -> Vec<(Vec<usize>, NodeStats)> {
         self.lock()
@@ -117,25 +118,25 @@ impl StatsTracer {
             .collect()
     }
 
-    /// 指定路径的统计快照。
+    /// Snapshot of the statistics for the given path.
     #[must_use]
     pub fn node(&self, path: &[usize]) -> Option<NodeStats> {
         self.lock().nodes.get(path).cloned()
     }
 
-    /// 已统计的节点数量。
+    /// Number of nodes tracked so far.
     #[must_use]
     pub fn len(&self) -> usize {
         self.lock().nodes.len()
     }
 
-    /// 是否还没有统计到任何节点。
+    /// Whether no node has been tracked yet.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.lock().nodes.is_empty()
     }
 
-    /// 清空统计和进行中的计时。
+    /// Clear the statistics and any in-progress timings.
     pub fn clear(&self) {
         let mut inner = self.lock();
         inner.nodes.clear();

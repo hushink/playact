@@ -1,4 +1,4 @@
-//! 运行期可观测性：结构化 trace 事件。
+//! Runtime observability: structured trace events.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -8,18 +8,18 @@ use crate::node::Kind;
 use crate::status::Status;
 use crate::time::Time;
 
-/// 放弃一个 Running 子树的原因，只用于 Tracer 事件。
+/// Why a Running subtree was abandoned; used only in Tracer events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AbortReason {
-    /// 被更高优先级的兄弟分支抢占。
+    /// Preempted by a higher-priority sibling branch.
     Preempted,
-    /// Timeout 超时。
+    /// Timed out by a Timeout node.
     Timeout,
-    /// Parallel 已得出结论，停止剩余子节点。
+    /// Parallel reached a conclusion and stopped its remaining children.
     ParallelDone,
-    /// Race 已产生胜者，停止其余仍在 Running 的子节点。
+    /// Race produced a winner and stopped the remaining Running children.
     RaceDone,
-    /// 整棵树被外部 abort。
+    /// The whole tree was aborted externally.
     TreeAbort,
 }
 
@@ -35,88 +35,92 @@ impl fmt::Display for AbortReason {
     }
 }
 
-/// 一条节点级 trace 事件。
+/// A node-level trace event.
 ///
-/// `path` 是从根到当前节点的子索引路径：根为 `[]`，第一个孩子为 `[0]`，
-/// 第二个孩子的第三个孩子为 `[1, 2]`。事件不包含 wall-clock 耗时，保证
-/// 虚拟时间下的确定性。
+/// `path` is the child-index path from the root to the current node: the root is
+/// `[]`, its first child is `[0]`, and the third child of the second child is
+/// `[1, 2]`. Events carry no wall-clock durations, preserving determinism under
+/// virtual time.
 #[derive(Debug, Clone, Copy)]
 pub enum TraceEvent<'a> {
-    /// 节点开始 tick。
+    /// The node started ticking.
     Enter {
-        /// 节点名。
+        /// Node name.
         name: &'a str,
-        /// 节点类型。
+        /// Node type.
         kind: Kind,
-        /// 子索引路径。
+        /// Child-index path.
         path: &'a [usize],
-        /// 当前时间。
+        /// Current time.
         time: Time,
     },
-    /// 节点结束 tick。
+    /// The node finished ticking.
     Exit {
-        /// 节点名。
+        /// Node name.
         name: &'a str,
-        /// 节点类型。
+        /// Node type.
         kind: Kind,
-        /// 子索引路径。
+        /// Child-index path.
         path: &'a [usize],
-        /// 返回状态。
+        /// Returned status.
         status: Status,
-        /// 当前时间。
+        /// Current time.
         time: Time,
     },
-    /// 一个 Running 子树被放弃。
+    /// A Running subtree was abandoned.
     Abort {
-        /// 节点名。
+        /// Node name.
         name: &'a str,
-        /// 节点类型。
+        /// Node type.
         kind: Kind,
-        /// 子索引路径。
+        /// Child-index path.
         path: &'a [usize],
-        /// 放弃原因。
+        /// Abort reason.
         reason: AbortReason,
-        /// 当前时间。
+        /// Current time.
         time: Time,
     },
 }
 
-/// 可选的节点事件观察者。
+/// Optional observer of node events.
 ///
-/// 默认不安装 Tracer 时引擎只做一次 `Option` 判断，不产生事件、不分配。
-/// Tracer 要求 `Send` 以便行为树随线程移动；不要求 `Sync`。
+/// With no Tracer installed, the engine only performs one `Option` check: no
+/// events are produced and nothing is allocated. Tracer requires `Send` so the
+/// behavior tree can move between threads; it does not require `Sync`.
 pub trait Tracer: Send {
-    /// 接收一条事件。实现应尽量短小，避免阻塞 tick。
+    /// Receive one event. Implementations should stay short to avoid blocking
+    /// the tick.
     fn event(&mut self, event: TraceEvent<'_>);
 }
 
-/// 将事件广播给多个 Tracer。
+/// Broadcast events to multiple Tracers.
 ///
-/// 常用于同时接日志、统计和可视化；事件是 `Copy`，按注册顺序分发。
+/// Useful for feeding logging, statistics, and visualization at once; events
+/// are `Copy` and dispatched in registration order.
 #[derive(Default)]
 pub struct MultiTracer {
     tracers: Vec<Box<dyn Tracer + Send>>,
 }
 
 impl MultiTracer {
-    /// 创建空的 fan-out。
+    /// Create an empty fan-out.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 追加一个 Tracer。
+    /// Append a Tracer.
     pub fn push(&mut self, tracer: Box<dyn Tracer + Send>) {
         self.tracers.push(tracer);
     }
 
-    /// 已注册的 Tracer 数量。
+    /// Number of registered Tracers.
     #[must_use]
     pub fn len(&self) -> usize {
         self.tracers.len()
     }
 
-    /// 是否没有注册任何 Tracer。
+    /// Whether no Tracer is registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tracers.is_empty()
@@ -139,7 +143,7 @@ impl Tracer for MultiTracer {
     }
 }
 
-/// 一个把事件转成 `tracing` 日志的简单适配器。
+/// A simple adapter that turns events into `tracing` logs.
 #[cfg(feature = "tracing")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TracingTracer;

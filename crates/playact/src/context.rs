@@ -1,4 +1,4 @@
-//! tick 上下文。
+//! The tick context.
 
 use alloc::vec::Vec;
 
@@ -22,11 +22,12 @@ impl<'a> TraceState<'a> {
     }
 }
 
-/// 每次 tick 传入节点的上下文。
+/// The context passed to a node on every tick.
 ///
-/// 字段全部私有：节点不能替换 world/blackboard/time，也不能绕过路径与
-/// Tracer 语义。自定义组合节点应使用 [`Context::tick_child`] 和
-/// [`Context::abort_child`]，以复用 tracing 与 abort/reset 传播。
+/// All fields are private: nodes cannot replace the world/blackboard/time, nor
+/// bypass path and Tracer semantics. Custom composites should use
+/// [`Context::tick_child`] and [`Context::abort_child`] to reuse tracing and
+/// abort/reset propagation.
 pub struct Context<'a, W> {
     world: &'a mut W,
     blackboard: &'a mut Blackboard,
@@ -35,7 +36,8 @@ pub struct Context<'a, W> {
 }
 
 impl<'a, W> Context<'a, W> {
-    /// 创建一个不带 Tracer 的上下文，主要用于单测直接 tick 一个节点。
+    /// Create a context without a Tracer, mainly for unit tests that tick a node
+    /// directly.
     #[must_use]
     pub fn new(world: &'a mut W, blackboard: &'a mut Blackboard, time: Time) -> Self {
         Self {
@@ -60,38 +62,40 @@ impl<'a, W> Context<'a, W> {
         }
     }
 
-    /// 可变访问世界。
+    /// Mutable access to the world.
     pub fn world(&mut self) -> &mut W {
         self.world
     }
 
-    /// 只读访问世界。
+    /// Read-only access to the world.
     #[must_use]
     pub fn world_ref(&self) -> &W {
         self.world
     }
 
-    /// 可变访问黑板。
+    /// Mutable access to the blackboard.
     pub fn blackboard(&mut self) -> &mut Blackboard {
         self.blackboard
     }
 
-    /// 只读访问黑板。
+    /// Read-only access to the blackboard.
     #[must_use]
     pub fn blackboard_ref(&self) -> &Blackboard {
         self.blackboard
     }
 
-    /// 当前时间。
+    /// The current time.
     #[must_use]
     pub fn time(&self) -> Time {
         self.time
     }
 
-    /// 以子索引 `index` tick 一个子节点，并自动产生 Enter/Exit 事件。
+    /// Tick the child at child index `index`, emitting Enter/Exit events
+    /// automatically.
     ///
-    /// 内建组合/装饰节点都通过它 tick 子节点。自定义组合节点也应使用它，
-    /// 否则该子树不会出现在 Tracer 路径中。
+    /// Built-in composite/decorator nodes tick their children through this.
+    /// Custom composites should use it too, otherwise that subtree will not
+    /// appear in the Tracer path.
     pub fn tick_child(&mut self, index: usize, child: &mut BoxedNode<W>) -> Status {
         let kind = child.kind();
         let time = self.time;
@@ -127,9 +131,11 @@ impl<'a, W> Context<'a, W> {
         status
     }
 
-    /// 放弃一个 Running 子节点：产生 Abort 事件，调用 `abort` 再调用 `reset`。
+    /// Abandon a Running child: emit an Abort event, then call `abort` followed
+    /// by `reset`.
     ///
-    /// 内建组合/装饰节点在抢占、超时、Parallel 结束时使用它。
+    /// Built-in composite/decorator nodes use it for preemption, timeouts, and
+    /// when a Parallel finishes.
     pub fn abort_child(&mut self, index: usize, child: &mut BoxedNode<W>, reason: AbortReason) {
         let kind = child.kind();
         let time = self.time;
@@ -184,10 +190,11 @@ impl<'a, W> Context<'a, W> {
         status
     }
 
-    /// 为服务节点创建一个不产生 Tracer 事件的子上下文。
+    /// Create a child context for service nodes that emits no Tracer events.
     ///
-    /// 服务与主树共享 world / blackboard / time，但服务子树不会进入主树的
-    /// 事件路径；调用方应在一次服务 tick 结束后立即丢弃返回的上下文。
+    /// Services share the world / blackboard / time with the main tree, but
+    /// service subtrees do not enter the main tree's event path; callers should
+    /// drop the returned context as soon as one service tick ends.
     pub(crate) fn service_context(&mut self) -> Context<'_, W> {
         Context {
             world: &mut *self.world,

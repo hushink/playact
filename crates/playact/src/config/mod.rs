@@ -1,8 +1,9 @@
-//! 可选配置层：纯数据 `TreeSpec` + 构建期注册的 `NodeRegistry`。
+//! Optional configuration layer: a pure-data `TreeSpec` plus a build-time `NodeRegistry`.
 //!
-//! 配置只描述树结构和叶子参数；业务 action/condition 由使用方在构建期
-//! 按名字注册。叶子参数在构建期反序列化成具体类型，tick 期不再有
-//! `serde_json::Value` 或 `Any`。
+//! The configuration only describes tree structure and leaf parameters; business
+//! actions/conditions are registered by name at build time by the caller. Leaf
+//! parameters are deserialized into concrete types at build time, so ticks no
+//! longer involve `serde_json::Value` or `Any`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,13 +19,14 @@ pub use error::{ConfigBuildError, ConfigBuildErrorKind, ConfigError, RegistryErr
 pub use include::{FsIncludeResolver, IncludeResolver};
 pub use registry::NodeRegistry;
 
-/// 配置文本解析器。JSON/TOML/YAML/RON 构造器会自动提供。
+/// Configuration text parser. Automatically provided by the JSON/TOML/YAML/RON constructors.
 pub type TreeParser = fn(&str) -> Result<TreeSpec, ConfigError>;
 
-/// 当前支持的 spec 版本。
+/// The currently supported spec version.
 pub const CURRENT_VERSION: u32 = 1;
 
-/// include 的最大嵌套层数，用于兜底防止解析器返回循环配置。
+/// Maximum include nesting depth, a fallback guard against resolvers returning
+/// cyclic configurations.
 pub const MAX_INCLUDE_DEPTH: usize = 32;
 
 fn default_version() -> u32 {
@@ -39,285 +41,286 @@ fn default_failure_threshold() -> ThresholdSpec {
     ThresholdSpec::Any
 }
 
-/// 一棵完整行为树的纯数据描述。
+/// Pure-data description of a complete behavior tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TreeSpec {
-    /// schema 版本，默认 1。
+    /// Schema version; defaults to 1.
     #[serde(default = "default_version")]
     pub version: u32,
-    /// 树名，可选。
+    /// Optional tree name.
     #[serde(default)]
     pub name: Option<String>,
-    /// 根节点。
+    /// Root node.
     pub root: SpecNode,
 }
 
-/// 配置中的节点描述。
+/// Node description within a configuration.
 ///
-/// 外层 tag 是 `type`，例如 `{"type":"sequence","children":[...]}`。
+/// The outer tag is `type`, for example `{"type":"sequence","children":[...]}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SpecNode {
-    /// 记忆式顺序。
+    /// Memory sequence.
     Sequence {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 反应式顺序。
+    /// Reactive sequence.
     ReactiveSequence {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 记忆式选择。
+    /// Memory selector.
     Selector {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 反应式选择。
+    /// Reactive selector.
     ReactiveSelector {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 带记忆的随机选择。
+    /// Random selector with memory.
     RandomSelector {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 确定性 seed。
+        /// Deterministic seed.
         seed: u64,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 带权重的随机选择。
+    /// Weighted random selector.
     WeightedRandomSelector {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 确定性 seed。
+        /// Deterministic seed.
         seed: u64,
-        /// 与 `children` 一一对应的权重；省略时全部按 1 处理，0 表示永不选择。
+        /// Weights corresponding one-to-one with `children`; when omitted all default to 1,
+        /// and 0 means never selected.
         #[serde(default)]
         weights: Vec<u32>,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 并行。
+    /// Parallel.
     Parallel {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 成功阈值，默认 `all`。
+        /// Success threshold; defaults to `all`.
         #[serde(default = "default_success_threshold")]
         success: ThresholdSpec,
-        /// 失败阈值，默认 `any`。
+        /// Failure threshold; defaults to `any`.
         #[serde(default = "default_failure_threshold")]
         failure: ThresholdSpec,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 第一个终态获胜的竞速节点。
+    /// Race node: the first terminal state wins.
     Race {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 跨 tick 累计终态的并行。
+    /// Parallel that accumulates terminal states across ticks.
     MemParallel {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 成功阈值，默认 `all`。
+        /// Success threshold; defaults to `all`.
         #[serde(default = "default_success_threshold")]
         success: ThresholdSpec,
-        /// 失败阈值，默认 `any`。
+        /// Failure threshold; defaults to `any`.
         #[serde(default = "default_failure_threshold")]
         failure: ThresholdSpec,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
-    /// 反转结果。
+    /// Inverts the result.
     Inverter {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 终态恒成功。
+    /// Terminal result is always success.
     AlwaysSucceed {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 终态恒失败。
+    /// Terminal result is always failure.
     AlwaysFail {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 重复执行。
+    /// Repeats execution.
     Repeat {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 重复次数。
+        /// Number of repetitions.
         times: core::num::NonZeroUsize,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 失败重试。
+    /// Retries on failure.
     Retry {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 最大尝试次数。
+        /// Maximum number of attempts.
         max_attempts: core::num::NonZeroUsize,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 直到成功。
+    /// Until success.
     UntilSuccess {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 直到失败。
+    /// Until failure.
     UntilFailure {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 成功冷却。
+    /// Cooldown after success.
     Cooldown {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 冷却时长（毫秒）。
+        /// Cooldown duration (milliseconds).
         duration_ms: u64,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 运行超时。
+    /// Execution timeout.
     Timeout {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 超时时长（毫秒）。
+        /// Timeout duration (milliseconds).
         duration_ms: u64,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 次数限制。
+    /// Count limit.
     Limiter {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 最多次数。
+        /// Maximum count.
         max: core::num::NonZeroUsize,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 时间窗口限流。
+    /// Time-window rate limiting.
     Throttle {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 窗口长度（毫秒）。
+        /// Window length (milliseconds).
         window_ms: u64,
-        /// 窗口内最多终态次数。
+        /// Maximum number of terminal states within the window.
         max: core::num::NonZeroUsize,
-        /// 子节点。
+        /// Child nodes.
         child: Box<SpecNode>,
     },
-    /// 等待。
+    /// Wait.
     Wait {
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 等待时长（毫秒）。
+        /// Wait duration (milliseconds).
         duration_ms: u64,
     },
-    /// 注册的 action。
+    /// A registered action.
     Action {
-        /// registry 中的 action 名字，同时也是显示名。
+        /// Action name in the registry, also used as the display name.
         name: String,
-        /// 参数。
+        /// Parameters.
         #[serde(default)]
         params: Value,
     },
-    /// 注册的 condition。
+    /// A registered condition.
     Condition {
-        /// registry 中的 condition 名字，同时也是显示名。
+        /// Condition name in the registry, also used as the display name.
         name: String,
-        /// 参数。
+        /// Parameters.
         #[serde(default)]
         params: Value,
     },
-    /// 引入另一份配置；需要 [`TreeSpec::build_with_resolver`]。
+    /// Includes another configuration; requires [`TreeSpec::build_with_resolver`].
     Include {
-        /// 交给 resolver 解释的路径。
+        /// Path interpreted by the resolver.
         path: String,
-        /// 显示名，默认使用 `path`。
+        /// Display name; defaults to `path`.
         #[serde(default)]
         name: Option<String>,
     },
-    /// 自定义节点。
+    /// Custom node.
     Custom {
-        /// registry 中的 custom kind。
+        /// Custom kind in the registry.
         kind: String,
-        /// 显示名。
+        /// Display name.
         #[serde(default)]
         name: Option<String>,
-        /// 参数。
+        /// Parameters.
         #[serde(default)]
         params: Value,
-        /// 子节点。
+        /// Child nodes.
         #[serde(default)]
         children: Vec<SpecNode>,
     },
 }
 
-/// 配置中的并行阈值。
+/// Parallel threshold in a configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThresholdSpec {
-    /// 全部满足。
+    /// All must be satisfied.
     All,
-    /// 任一满足。
+    /// Any one must be satisfied.
     Any,
-    /// 至少 `n` 个满足。
+    /// At least `n` must be satisfied.
     AtLeast(core::num::NonZeroUsize),
 }
 
@@ -332,31 +335,31 @@ impl From<ThresholdSpec> for Threshold {
 }
 
 impl TreeSpec {
-    /// 从 JSON 字符串解析，错误带 `serde_path_to_error` 路径。
+    /// Parses from a JSON string; errors carry a `serde_path_to_error` path.
     pub fn from_json_str(input: &str) -> Result<Self, ConfigError> {
         let mut deserializer = serde_json::Deserializer::from_str(input);
         parse_with_path(&mut deserializer)
     }
 
-    /// 从 JSON 字节解析。
+    /// Parses from JSON bytes.
     pub fn from_json_slice(input: &[u8]) -> Result<Self, ConfigError> {
         let mut deserializer = serde_json::Deserializer::from_slice(input);
         parse_with_path(&mut deserializer)
     }
 
-    /// 从 TOML 字符串解析。
+    /// Parses from a TOML string.
     #[cfg(feature = "toml")]
     pub fn from_toml_str(input: &str) -> Result<Self, ConfigError> {
         toml::from_str(input).map_err(|error| ConfigError::new(error.to_string()))
     }
 
-    /// 从 YAML 字符串解析。
+    /// Parses from a YAML string.
     #[cfg(feature = "yaml")]
     pub fn from_yaml_str(input: &str) -> Result<Self, ConfigError> {
         serde_yaml_ng::from_str(input).map_err(|error| ConfigError::new(error.to_string()))
     }
 
-    /// 从 RON 字符串解析。
+    /// Parses from a RON string.
     #[cfg(feature = "ron")]
     pub fn from_ron_str(input: &str) -> Result<Self, ConfigError> {
         ron::from_str(input).map_err(|error| ConfigError::new(error.to_string()))

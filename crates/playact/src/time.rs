@@ -1,38 +1,40 @@
-//! tick 时间。
+//! Tick time.
 
 use core::time::Duration;
 
-/// 驱动方每个逻辑帧提供的时间。
+/// The time supplied by the driver on every logic frame.
 ///
-/// `now` 应当是单调递增的模拟时间或系统单调时钟；行为树内部的
-/// Cooldown / Timeout / Wait 都基于它计算，不直接读取系统时钟，
-/// 因此测试可以用虚拟时间完全确定性地推进。
+/// `now` should be monotonic simulation time or a monotonic system clock; the
+/// Cooldown / Timeout / Wait nodes inside the tree compute from it rather than
+/// reading the system clock directly, so tests can advance virtual time fully
+/// deterministically.
 ///
-/// 如果驱动方重置 `now`（战斗重开、重连后把时钟归零），必须先调用
-/// [`crate::BehaviorTree::reset`] 或 [`crate::BehaviorTree::abort`]，否则
-/// 基于绝对时间的节点会观察到时间回退。
+/// If the driver resets `now` (restarting combat, zeroing the clock after a
+/// reconnect), it must first call [`crate::BehaviorTree::reset`] or
+/// [`crate::BehaviorTree::abort`], otherwise nodes based on absolute time will
+/// observe time moving backwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Time {
-    /// 当前时间点。
+    /// The current point in time.
     pub now: Duration,
-    /// 距离上一逻辑帧的时长。
+    /// The duration since the previous logic frame.
     pub dt: Duration,
 }
 
 impl Time {
-    /// 零时间。
+    /// Zero time.
     pub const ZERO: Self = Self {
         now: Duration::ZERO,
         dt: Duration::ZERO,
     };
 
-    /// 构造一个时间点。
+    /// Construct a point in time.
     #[must_use]
     pub const fn new(now: Duration, dt: Duration) -> Self {
         Self { now, dt }
     }
 
-    /// 用毫秒构造，方便示例与测试。
+    /// Construct from milliseconds, convenient for examples and tests.
     #[must_use]
     pub const fn from_millis(now_ms: u64, dt_ms: u64) -> Self {
         Self {

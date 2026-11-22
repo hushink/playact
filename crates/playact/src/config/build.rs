@@ -1,4 +1,4 @@
-//! `TreeSpec` → `BehaviorTree` 的构建逻辑。
+//! Build logic that turns a `TreeSpec` into a `BehaviorTree`.
 
 use core::time::Duration;
 
@@ -19,10 +19,12 @@ use super::registry::NodeRegistry;
 use super::{CURRENT_VERSION, IncludeResolver, MAX_INCLUDE_DEPTH, SpecNode, TreeSpec};
 
 impl TreeSpec {
-    /// 按注册表构建行为树；配置中出现 `include` 时返回错误。
+    /// Builds a behavior tree using the registry; returns an error if the
+    /// configuration contains `include`.
     ///
-    /// 所有叶子参数在构建期反序列化；未知 action/condition/kind、参数错误、
-    /// 版本不支持或阈值非法都会返回带路径的 [`ConfigBuildError`]。
+    /// All leaf parameters are deserialized at build time. Unknown
+    /// action/condition/kind, invalid params, an unsupported version, or an
+    /// invalid threshold all return a [`ConfigBuildError`] carrying a path.
     pub fn build<W: 'static>(
         &self,
         registry: &NodeRegistry<W>,
@@ -30,10 +32,11 @@ impl TreeSpec {
         self.build_inner(registry, None)
     }
 
-    /// 用 include 解析器构建行为树。
+    /// Builds a behavior tree with an include resolver.
     ///
-    /// resolver 负责解释 `include` 路径；引擎负责版本校验、循环检测与最大
-    /// 嵌套深度 [`MAX_INCLUDE_DEPTH`]。
+    /// The resolver interprets `include` paths; the engine handles version
+    /// validation, cycle detection, and the maximum nesting depth
+    /// [`MAX_INCLUDE_DEPTH`].
     pub fn build_with_resolver<W: 'static>(
         &self,
         registry: &NodeRegistry<W>,

@@ -1,16 +1,16 @@
-//! 配置驱动版战斗示例：JSON + NodeRegistry + typed params。
+//! Config-driven combat example: JSON + NodeRegistry + typed params.
 //!
-//! 运行：
+//! Run:
 //!
 //! ```text
 //! cargo run --example battle_ai_config --features config
 //! ```
 //!
-//! 演示：
-//! - `TreeSpec` 从 JSON 构建行为树；
-//! - action/condition 参数在构建期反序列化成具体类型；
-//! - custom 节点工厂创建带内部状态的节点；
-//! - 未知 action 的 `ConfigBuildError` 路径。
+//! Demonstrates:
+//! - building a behavior tree from JSON with `TreeSpec`;
+//! - action/condition params deserialized into concrete types at build time;
+//! - a custom node factory creating a node with internal state;
+//! - the `ConfigBuildError` path for an unknown action.
 
 use std::num::NonZeroU32;
 
@@ -19,7 +19,7 @@ use serde::Deserialize;
 use playact::config::{NodeRegistry, TreeSpec};
 use playact::prelude::*;
 
-// ==================== 业务世界（只存在于示例） ====================
+// ==================== Domain world (example only) ====================
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DuelCommand {
@@ -93,7 +93,7 @@ struct MultiStrikeParams {
     hits: NonZeroU32,
 }
 
-// ==================== 自定义带状态节点 ====================
+// ==================== Custom stateful node ====================
 
 struct MultiStrike {
     damage: f64,
@@ -122,7 +122,7 @@ impl Node<DuelWorld> for MultiStrike {
         self.remaining -= 1;
 
         if self.remaining == 0 {
-            // 终态自复位契约：返回 Success 前把自己恢复到可重新开始的状态。
+            // Terminal self-reset contract: restore a restartable state before returning Success.
             self.remaining = self.initial;
             Status::Success
         } else {
@@ -187,7 +187,7 @@ fn build_registry() -> NodeRegistry<DuelWorld> {
     registry
 }
 
-// ==================== 驱动 ====================
+// ==================== Driver ====================
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry = build_registry();
@@ -236,7 +236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         world.player_hp, world.enemy_hp, executed_ticks
     );
 
-    // 演示未知 action 的带路径错误。
+    // Demonstrate the path-carrying error for an unknown action.
     let bad = TreeSpec::from_json_str(
         r#"{"root":{"type":"sequence","children":[{"type":"action","name":"missing"}]}}"#,
     )?;

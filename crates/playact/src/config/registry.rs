@@ -1,4 +1,4 @@
-//! 构建期节点工厂注册表。
+//! Build-time registry of node factories.
 
 use std::collections::HashMap;
 
@@ -17,12 +17,12 @@ type Factory<W> =
 type BoxedTick<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Status + Send + 'static>;
 type BoxedPredicate<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static>;
 
-/// 把 typed params 变成每个节点独立 tick 闭包的工厂。
+/// Factory that turns typed params into an independent tick closure per node.
 ///
-/// 用户通常直接传闭包，不需要手动实现这个 trait。
+/// Callers usually pass a closure directly and never implement this trait manually.
 #[doc(hidden)]
 pub trait ActionFactory<W, P>: Send + Sync + 'static {
-    /// 为一个节点创建独立的 tick 闭包。
+    /// Creates an independent tick closure for one node.
     fn make(&self, params: P) -> BoxedTick<W>;
 }
 
@@ -36,12 +36,12 @@ where
     }
 }
 
-/// 把 typed params 变成每个节点独立条件闭包的工厂。
+/// Factory that turns typed params into an independent condition closure per node.
 ///
-/// 用户通常直接传闭包，不需要手动实现这个 trait。
+/// Callers usually pass a closure directly and never implement this trait manually.
 #[doc(hidden)]
 pub trait ConditionFactory<W, P>: Send + Sync + 'static {
-    /// 为一个节点创建独立的条件闭包。
+    /// Creates an independent condition closure for one node.
     fn make(&self, params: P) -> BoxedPredicate<W>;
 }
 
@@ -55,10 +55,11 @@ where
     }
 }
 
-/// 按名字注册 action / condition / custom 节点的构建期注册表。
+/// Build-time registry that maps names to action / condition / custom node factories.
 ///
-/// 注册表只在构建期使用，不会被树持有；每个节点由工厂单独创建，因此
-/// 多实例之间的闭包状态天然隔离。
+/// The registry is used only at build time and is not held by the tree; each
+/// node is created separately by its factory, so closure state is naturally
+/// isolated between instances.
 pub struct NodeRegistry<W: 'static> {
     actions: HashMap<String, Factory<W>>,
     conditions: HashMap<String, Factory<W>>,
@@ -66,7 +67,7 @@ pub struct NodeRegistry<W: 'static> {
 }
 
 impl<W: 'static> NodeRegistry<W> {
-    /// 创建空注册表。
+    /// Creates an empty registry.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -76,14 +77,16 @@ impl<W: 'static> NodeRegistry<W> {
         }
     }
 
-    /// 注册一个闭包动作。
+    /// Registers a closure action.
     ///
-    /// 外层工厂 `factory` 会在每个节点构建时被调用一次，返回该节点自己的
-    /// tick 闭包；因此闭包内部状态不会在实例之间共享。
+    /// The outer factory `factory` is called once per node build and returns
+    /// that node's own tick closure, so closure state is never shared between
+    /// instances.
     ///
-    /// 配置省略 `params` 时按 `serde_json::Value::Null` 反序列化。无参
-    /// action 用 `P = ()` 并省略 `params`；带字段的 struct 参数请显式写
-    /// `"params": {}`。
+    /// When `params` is omitted from the configuration it is deserialized from
+    /// `serde_json::Value::Null`. For parameterless actions use `P = ()` and
+    /// omit `params`; for struct params with fields, write `"params": {}`
+    /// explicitly.
     pub fn action<P>(
         &mut self,
         name: impl Into<String>,
@@ -107,10 +110,11 @@ impl<W: 'static> NodeRegistry<W> {
         insert_factory(&mut self.actions, "action", name, erased)
     }
 
-    /// 注册一个只读条件。
+    /// Registers a read-only condition.
     ///
-    /// 参数缺失规则与 [`NodeRegistry::action`] 相同：`P = ()` 可省略
-    /// `params`，带字段的 struct 请显式写 `"params": {}`。
+    /// The missing-params rules match [`NodeRegistry::action`]: `P = ()` may
+    /// omit `params`, while structs with fields must write `"params": {}`
+    /// explicitly.
     pub fn condition<P>(
         &mut self,
         name: impl Into<String>,
@@ -134,12 +138,13 @@ impl<W: 'static> NodeRegistry<W> {
         insert_factory(&mut self.conditions, "condition", name, erased)
     }
 
-    /// 注册一个自定义节点工厂。
+    /// Registers a custom node factory.
     ///
-    /// 工厂拿到 typed params 与已经递归构建好的 children，可以返回任意
-    /// `BoxedNode<W>`，用于带状态的动作或自定义组合节点。
+    /// The factory receives typed params and the already recursively built
+    /// children, and may return any `BoxedNode<W>`; use it for stateful actions
+    /// or custom composite nodes.
     ///
-    /// 参数缺失规则与 [`NodeRegistry::action`] 相同。
+    /// The missing-params rules match [`NodeRegistry::action`].
     pub fn custom<P>(
         &mut self,
         kind: impl Into<String>,

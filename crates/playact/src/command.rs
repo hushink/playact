@@ -1,19 +1,22 @@
-//! 决策层产出、执行层消费的命令缓冲区。
+//! A command buffer produced by the decision layer and consumed by the execution
+//! layer.
 //!
-//! 这是一个业务无关的轻量工具：`C` 由使用方定义，引擎不解释它。
-//! 推荐把 `CommandBuffer<C>` 放进世界或黑板的 typed slot，动作节点只
-//! `push`，驱动方在 tick 外 `drain` 后交给真正的执行器。
+//! This is a lightweight, business-agnostic utility: `C` is defined by the user
+//! and the engine never interprets it. The recommended setup is to put
+//! `CommandBuffer<C>` in the world or in a typed blackboard slot, have action
+//! nodes only `push`, and let the driver `drain` it outside the tick and hand
+//! the commands to the real executor.
 
 use alloc::vec::Vec;
 
-/// 一个简单的命令缓冲区。
+/// A simple command buffer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandBuffer<C> {
     commands: Vec<C>,
 }
 
 impl<C> CommandBuffer<C> {
-    /// 创建空缓冲区。
+    /// Create an empty buffer.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -21,7 +24,7 @@ impl<C> CommandBuffer<C> {
         }
     }
 
-    /// 预分配容量。
+    /// Preallocate capacity.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -29,12 +32,12 @@ impl<C> CommandBuffer<C> {
         }
     }
 
-    /// 追加一条命令。
+    /// Append a command.
     pub fn push(&mut self, command: C) {
         self.commands.push(command);
     }
 
-    /// 追加一批命令。
+    /// Append a batch of commands.
     pub fn extend<I>(&mut self, commands: I)
     where
         I: IntoIterator<Item = C>,
@@ -42,40 +45,40 @@ impl<C> CommandBuffer<C> {
         self.commands.extend(commands);
     }
 
-    /// 取走所有命令，保留缓冲区容量。
+    /// Take all commands, keeping the buffer's capacity.
     pub fn drain(&mut self) -> alloc::vec::Drain<'_, C> {
         self.commands.drain(..)
     }
 
-    /// 清空命令。
+    /// Clear the commands.
     pub fn clear(&mut self) {
         self.commands.clear();
     }
 
-    /// 命令数量。
+    /// Number of commands.
     #[must_use]
     pub fn len(&self) -> usize {
         self.commands.len()
     }
 
-    /// 是否为空。
+    /// Whether the buffer is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }
 
-    /// 只读迭代。
+    /// Read-only iteration.
     pub fn iter(&self) -> core::slice::Iter<'_, C> {
         self.commands.iter()
     }
 
-    /// 只读切片。
+    /// Read-only slice.
     #[must_use]
     pub fn as_slice(&self) -> &[C] {
         &self.commands
     }
 
-    /// 取出底层 `Vec`。
+    /// Take the underlying `Vec`.
     #[must_use]
     pub fn into_vec(self) -> Vec<C> {
         self.commands

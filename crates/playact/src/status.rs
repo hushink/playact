@@ -1,47 +1,49 @@
-//! 节点状态：行为树中唯一的控制流通信协议。
+//! Node status: the only control-flow communication protocol in the behavior tree.
 
 use core::fmt;
 
-/// 节点一次 tick 的执行结果。
+/// The result of a single tick of a node.
 ///
-/// `Success` / `Failure` / `Running` 是控制节点与执行节点之间的唯一协议：
-/// 组合节点只据此编排控制流，不关心具体业务。
+/// `Success` / `Failure` / `Running` is the only protocol between control nodes
+/// and execution nodes: composites orchestrate control flow solely from it and
+/// do not care about the concrete business logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Status {
-    /// 本次执行已完成并成功。
+    /// This execution completed successfully.
     Success,
-    /// 本次执行已完成并失败。
+    /// This execution completed with failure.
     Failure,
-    /// 尚未结束，下一次 tick 继续。节点应保留必要的内部状态。
+    /// Not finished; continue on the next tick. The node should keep whatever
+    /// internal state it needs.
     Running,
 }
 
 impl Status {
-    /// 将布尔判断转换为状态：`true` → `Success`，`false` → `Failure`。
+    /// Convert a boolean into a status: `true` → `Success`, `false` → `Failure`.
     #[must_use]
     pub const fn from_bool(ok: bool) -> Self {
         if ok { Self::Success } else { Self::Failure }
     }
 
-    /// 是否为成功。
+    /// Whether this is a success.
     #[must_use]
     pub const fn is_success(self) -> bool {
         matches!(self, Self::Success)
     }
 
-    /// 是否为失败。
+    /// Whether this is a failure.
     #[must_use]
     pub const fn is_failure(self) -> bool {
         matches!(self, Self::Failure)
     }
 
-    /// 是否仍在运行。
+    /// Whether this is still running.
     #[must_use]
     pub const fn is_running(self) -> bool {
         matches!(self, Self::Running)
     }
 
-    /// 是否为终态（成功或失败）。
+    /// Whether this is a terminal state (success or failure).
     #[must_use]
     pub const fn is_terminal(self) -> bool {
         !self.is_running()
