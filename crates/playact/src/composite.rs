@@ -8,6 +8,7 @@ use core::num::NonZeroUsize;
 use crate::context::Context;
 use crate::error::BuildError;
 use crate::node::{BoxedNode, Kind, Node};
+use crate::snapshot::{load_children, save_children, state};
 use crate::status::Status;
 use crate::trace::AbortReason;
 
@@ -123,6 +124,28 @@ impl<W> Node<W> for Sequence<W> {
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
     }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.current,
+            self.running,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((current, running, children)) =
+            state::decode::<(usize, bool, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if current > self.children.len() || !load_children(&mut self.children, &children) {
+            return false;
+        }
+        self.current = current;
+        self.running = running;
+        true
+    }
 }
 
 // ==================== 反应式顺序 ====================
@@ -237,6 +260,28 @@ impl<W> Node<W> for ReactiveSequence<W> {
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
     }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.last_running,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((last_running, children)) =
+            state::decode::<(Option<usize>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if last_running.is_some_and(|index| index >= self.children.len())
+            || !load_children(&mut self.children, &children)
+        {
+            return false;
+        }
+        self.last_running = last_running;
+        true
+    }
 }
 
 // ==================== 记忆式选择 ====================
@@ -328,6 +373,28 @@ impl<W> Node<W> for Selector<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.current,
+            self.running,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((current, running, children)) =
+            state::decode::<(usize, bool, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if current > self.children.len() || !load_children(&mut self.children, &children) {
+            return false;
+        }
+        self.current = current;
+        self.running = running;
+        true
     }
 }
 
@@ -442,6 +509,28 @@ impl<W> Node<W> for ReactiveSelector<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.last_running,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((last_running, children)) =
+            state::decode::<(Option<usize>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if last_running.is_some_and(|index| index >= self.children.len())
+            || !load_children(&mut self.children, &children)
+        {
+            return false;
+        }
+        self.last_running = last_running;
+        true
     }
 }
 
@@ -588,6 +677,46 @@ impl<W> Node<W> for RandomSelector<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.rng,
+            self.order.clone(),
+            self.current,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((rng, order, current, children)) =
+            state::decode::<(u64, Vec<usize>, Option<usize>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+
+        if order.len() != self.children.len()
+            || current.is_some_and(|index| index >= self.children.len())
+        {
+            return false;
+        }
+
+        let mut seen = alloc::vec![false; self.children.len()];
+        for &index in &order {
+            if index >= seen.len() || seen[index] {
+                return false;
+            }
+            seen[index] = true;
+        }
+
+        if !load_children(&mut self.children, &children) {
+            return false;
+        }
+
+        self.rng = rng;
+        self.order = order;
+        self.current = current;
+        true
     }
 }
 
@@ -800,6 +929,49 @@ impl<W> Node<W> for WeightedRandomSelector<W> {
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
     }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.rng,
+            self.order.clone(),
+            self.position,
+            self.current,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((rng, order, position, current, children)) =
+            state::decode::<(u64, Vec<usize>, usize, Option<usize>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+
+        if current.is_some_and(|index| index >= self.children.len())
+            || position > order.len()
+            || (current.is_some() && order.is_empty())
+        {
+            return false;
+        }
+
+        let mut seen = alloc::vec![false; self.children.len()];
+        for &index in &order {
+            if index >= seen.len() || seen[index] {
+                return false;
+            }
+            seen[index] = true;
+        }
+
+        if !load_children(&mut self.children, &children) {
+            return false;
+        }
+
+        self.rng = rng;
+        self.order = order;
+        self.position = position;
+        self.current = current;
+        true
+    }
 }
 
 // ==================== 效用选择 ====================
@@ -973,6 +1145,28 @@ impl<W> Node<W> for UtilitySelector<W> {
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
     }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.current,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((current, children)) =
+            state::decode::<(Option<usize>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if current.is_some_and(|index| index >= self.children.len())
+            || !load_children(&mut self.children, &children)
+        {
+            return false;
+        }
+        self.current = current;
+        true
+    }
 }
 
 // ==================== 条件分支 ====================
@@ -1066,6 +1260,28 @@ impl<W> Node<W> for IfThenElse<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.selected,
+            self.running,
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((selected, running, children)) =
+            state::decode::<(Option<bool>, bool, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if !load_children(&mut self.children, &children) {
+            return false;
+        }
+        self.selected = selected;
+        self.running = running;
+        true
     }
 }
 
@@ -1215,6 +1431,25 @@ impl<W> Node<W> for Parallel<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.running.clone(),
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((running, children)) = state::decode::<(Vec<bool>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if running.len() != self.children.len() || !load_children(&mut self.children, &children) {
+            return false;
+        }
+        self.running = running;
+        true
     }
 }
 
@@ -1374,6 +1609,43 @@ impl<W> Node<W> for MemParallel<W> {
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
     }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        let states: Vec<u8> = self
+            .states
+            .iter()
+            .map(|state| match state {
+                MemChildState::Pending => 0,
+                MemChildState::Running => 1,
+                MemChildState::Success => 2,
+                MemChildState::Failure => 3,
+            })
+            .collect();
+        Some(state::encode(&(states, save_children(&self.children))))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((states, children)) = state::decode::<(Vec<u8>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if states.len() != self.children.len() || !load_children(&mut self.children, &children) {
+            return false;
+        }
+
+        let mut converted = Vec::with_capacity(states.len());
+        for value in states {
+            converted.push(match value {
+                0 => MemChildState::Pending,
+                1 => MemChildState::Running,
+                2 => MemChildState::Success,
+                3 => MemChildState::Failure,
+                _ => return false,
+            });
+        }
+        self.states = converted;
+        true
+    }
 }
 
 // ==================== 竞速 ====================
@@ -1462,6 +1734,25 @@ impl<W> Node<W> for Race<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         &self.children
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.running.clone(),
+            save_children(&self.children),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((running, children)) = state::decode::<(Vec<bool>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if running.len() != self.children.len() || !load_children(&mut self.children, &children) {
+            return false;
+        }
+        self.running = running;
+        true
     }
 }
 

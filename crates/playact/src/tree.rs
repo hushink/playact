@@ -8,6 +8,7 @@ use core::fmt::{self, Write};
 use crate::blackboard::Blackboard;
 use crate::context::Context;
 use crate::node::{BoxedNode, Kind, Node};
+use crate::snapshot::{load_children, save_children, state};
 use crate::status::Status;
 use crate::time::Time;
 use crate::trace::{AbortReason, Tracer};
@@ -294,6 +295,31 @@ impl<W> BehaviorTree<W> {
         self.last_status == Some(Status::Running)
     }
 
+    /// 导出根节点与服务节点的状态快照。
+    ///
+    /// 快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 的任务或
+    /// `SubtreeSlot` 的动态状态；这些需要由使用方另行持久化或重新建立。
+    #[must_use]
+    pub fn snapshot(&self) -> crate::snapshot::TreeSnapshot {
+        crate::snapshot::capture(&self.root, &self.services)
+    }
+
+    /// 用快照恢复节点状态。
+    ///
+    /// 恢复前会 `reset` 根节点与服务节点；随后按快照恢复各节点状态，并清空
+    /// `last_status` 与服务状态记录。应使用与快照相同的树结构；服务数量必须
+    /// 一致。不支持状态快照的节点会被留在 reset 后的状态。恢复失败时树可能
+    /// 已部分恢复，调用方应按需重新 `reset`。
+    pub fn restore(
+        &mut self,
+        snapshot: &crate::snapshot::TreeSnapshot,
+    ) -> Result<(), crate::snapshot::RestoreError> {
+        let result = crate::snapshot::apply(&mut self.root, &mut self.services, snapshot);
+        self.last_status = None;
+        self.service_status.fill(None);
+        result
+    }
+
     /// 拆出根节点，用于把整棵树作为子树复用。
     ///
     /// 注意：会丢弃黑板、Tracer 与服务节点，但保留 root 的内部状态。若 root
@@ -362,6 +388,42 @@ impl<W> Node<W> for BehaviorTree<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         core::slice::from_ref(&self.root)
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.root.save_state(),
+            save_children(&self.services),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((root, services)) =
+            state::decode::<(Option<Vec<u8>>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if services.len() != self.services.len() {
+            return false;
+        }
+
+        self.root.reset();
+        for service in &mut self.services {
+            service.reset();
+        }
+        self.last_status = None;
+        self.service_status.fill(None);
+
+        if let Some(root) = root
+            && !self.root.load_state(&root)
+        {
+            return false;
+        }
+        if !load_children(&mut self.services, &services) {
+            return false;
+        }
+
+        true
     }
 }
 
@@ -518,6 +580,14 @@ impl<W> Node<W> for Named<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         core::slice::from_ref(&self.child)
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        self.child.save_state()
+    }
+
+    fn load_state(&mut self, state: &[u8]) -> bool {
+        self.child.load_state(state)
     }
 }
 

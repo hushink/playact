@@ -105,6 +105,7 @@ pub mod node;
 pub mod remote_config;
 #[cfg(feature = "std")]
 pub mod shared;
+pub mod snapshot;
 #[cfg(feature = "std")]
 pub mod stats;
 pub mod status;
@@ -141,6 +142,7 @@ pub use node::{BoxedNode, Kind, Node};
 pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
+pub use snapshot::{RestoreError, SNAPSHOT_VERSION, TreeSnapshot};
 #[cfg(feature = "std")]
 pub use stats::{NodeStats, StatsTracer};
 pub use status::Status;
@@ -169,10 +171,10 @@ pub mod prelude {
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
         Cooldown, Guard, IfThenElse, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK,
         MemParallel, MultiTracer, Node, Parallel, Race, RandomSelector, ReactiveSelector,
-        ReactiveSequence, Repeat, Retry, Selector, Sequence, SetValue, Status, SubtreeFactory,
-        SubtreeSlot, Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription,
-        UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild,
-        WeightedRandomSelector,
+        ReactiveSequence, Repeat, RestoreError, Retry, SNAPSHOT_VERSION, Selector, Sequence,
+        SetValue, Status, SubtreeFactory, SubtreeSlot, Threshold, Throttle, Time, Timeout,
+        TraceEvent, Tracer, TreeDescription, TreeSnapshot, UntilFailure, UntilSuccess,
+        UtilityChild, UtilitySelector, Wait, WeightedChild, WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
     pub use crate::{

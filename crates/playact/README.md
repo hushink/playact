@@ -306,6 +306,25 @@ tree.last_status(); // Option<Status>
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、`TreeAbort`，只出现在 Tracer 事件中，不进入 `Node::abort` 签名。
 
+## 状态快照
+
+`BehaviorTree::snapshot()` / `restore()` 保存和恢复内建节点的内部状态：
+
+```rust
+let snapshot = tree.snapshot();
+// snapshot.version / snapshot.root / snapshot.services 都是可持久化的数据
+
+let mut rebuilt = /* 用相同配置重建的树 */;
+rebuilt.restore(&snapshot)?;
+```
+
+- 覆盖 Sequence / Selector / 并行 / 竞速 / 效用 / 装饰器 / Wait 等内建节点，以及嵌套树的服务；
+- 不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot` 动态子树与 Tracer；
+- 自定义节点可实现 `Node::save_state` / `load_state`；组合节点需要递归编码子树状态；
+- 快照带 `SNAPSHOT_VERSION`；结构或服务数量变化会返回 `RestoreError`；
+- 时间型节点保存的是驱动方 `Time.now` 的绝对时刻；恢复时应继续同一时间轴，或先 `reset` 后重新建立；
+- 恢复会先 reset 根与服务；恢复失败时树可能处于部分恢复状态。
+
 ## 配置驱动
 
 启用 `config` feature 后，可以从 JSON/TOML/YAML/RON 构建行为树：
@@ -462,7 +481,7 @@ loop {
 playact = { version = "0.1.1", default-features = false }
 ```
 
-可用：`Node`、`BehaviorTree`（含 services）、builder、`Blackboard`（内部使用 `BTreeMap`）、组合/装饰/叶子节点、`CommandBuffer`、`SubtreeFactory`、`SubtreeSlot`、`MultiTracer`、`Tracer` 与 `describe`。
+可用：`Node`、`BehaviorTree`（含 services 与状态快照）、builder、`Blackboard`（内部使用 `BTreeMap`）、组合/装饰/叶子节点、`CommandBuffer`、`SubtreeFactory`、`SubtreeSlot`、`MultiTracer`、`Tracer` 与 `describe`。
 
 需要 `std`：`SharedBlackboard`、`AsyncAction`/`ThreadTask`/`TokioTask`、`StatsTracer`、配置层、热重载、远程配置、`TracingTracer`。
 
@@ -586,6 +605,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - `remote-config`：`RemoteTreeLoader` HTTP 拉取、间隔刷新、ETag/Last-Modified、304 不重建；
 - `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
 - `tokio`：`TokioTask` 在 Tokio runtime 上运行 async 任务，取消映射到 `JoinHandle::abort`；
+- 状态快照：`Node::save_state` / `load_state`、`BehaviorTree::snapshot` / `restore`；
 - `macros`：`bt!` proc-macro DSL，展开为 builder 调用；
 - `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板；
 - `BehaviorTree: Node`：整棵树可直接嵌套，共享外层上下文并传播 abort/reset；

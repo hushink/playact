@@ -278,6 +278,28 @@ fn same_seed_produces_same_behavior() {
 }
 
 #[test]
+fn random_tree_snapshots_restore() {
+    for seed in 0..32_u64 {
+        let mut original = random_tree(seed, 3, 32);
+        let mut world = World::default();
+        for frame in 0..30_u64 {
+            let _ = original.tick(&mut world, Time::from_millis(frame * 16, 16));
+        }
+
+        let snapshot = original.snapshot();
+        let mut restored = random_tree(seed, 3, 32);
+        restored
+            .restore(&snapshot)
+            .expect("restore random snapshot");
+
+        let mut restored_world = World::default();
+        for frame in 30..50_u64 {
+            let _ = restored.tick(&mut restored_world, Time::from_millis(frame * 16, 16));
+        }
+    }
+}
+
+#[test]
 fn random_tree_can_tick_on_another_thread() {
     let tree = random_tree(0xC0FFEE, 5, 64);
 

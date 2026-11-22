@@ -2,12 +2,14 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::time::Duration;
 
 use crate::blackboard::Key;
 use crate::context::Context;
 use crate::node::{Kind, Node};
+use crate::snapshot::state;
 use crate::status::Status;
 
 type TickFn<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Status + Send>;
@@ -192,6 +194,18 @@ impl<W> Node<W> for Wait<W> {
 
     fn kind(&self) -> Kind {
         Kind::Wait
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.start))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(start) = state::decode::<Option<Duration>>(bytes) else {
+            return false;
+        };
+        self.start = start;
+        true
     }
 }
 

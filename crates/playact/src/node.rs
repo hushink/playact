@@ -1,6 +1,7 @@
 //! 节点契约与节点类型标签。
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::context::Context;
@@ -167,6 +168,19 @@ pub trait Node<W>: Send {
     /// 直接子节点；默认空。用于 `describe()` 与自定义工具遍历。
     fn children(&self) -> &[BoxedNode<W>] {
         &[]
+    }
+
+    /// 导出节点内部状态；默认不支持，返回 `None`。
+    ///
+    /// 组合/装饰节点应把子树状态一起编码（内建节点已实现）；叶子可以返回
+    /// `None`。状态字节的格式由节点自己定义，引擎只负责保存/恢复。
+    fn save_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// 载入 [`Node::save_state`] 产生的状态；返回 `false` 表示拒绝。
+    fn load_state(&mut self, _state: &[u8]) -> bool {
+        false
     }
 }
 
