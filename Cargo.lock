@@ -828,7 +828,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "playact"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "notify",
  "playact-macros",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "playact-macros"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
