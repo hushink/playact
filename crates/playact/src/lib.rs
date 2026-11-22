@@ -86,6 +86,7 @@ pub mod leaf;
 pub mod node;
 #[cfg(feature = "remote-config")]
 pub mod remote_config;
+pub mod shared;
 pub mod status;
 pub mod subtree;
 pub mod time;
@@ -114,6 +115,7 @@ pub use leaf::{Action, Condition, Wait};
 pub use node::{BoxedNode, Kind, Node};
 #[cfg(feature = "remote-config")]
 pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
+pub use shared::SharedBlackboard;
 pub use status::Status;
 pub use subtree::SubtreeFactory;
 pub use time::Time;
@@ -138,9 +140,9 @@ pub mod prelude {
         BehaviorTreeBuilder, Blackboard, BoxedNode, BranchBuilder, BuildError, CancellationToken,
         CommandBuffer, Condition, Context, Cooldown, Inverter, Key, Kind, Limiter,
         MAX_REPEAT_STEPS_PER_TICK, MemParallel, Node, Parallel, RandomSelector, ReactiveSelector,
-        ReactiveSequence, Repeat, Retry, Selector, Sequence, Status, SubtreeFactory, ThreadTask,
-        Threshold, Time, Timeout, TraceEvent, Tracer, TreeDescription, UntilFailure, UntilSuccess,
-        Wait,
+        ReactiveSequence, Repeat, Retry, Selector, Sequence, SharedBlackboard, Status,
+        SubtreeFactory, ThreadTask, Threshold, Time, Timeout, TraceEvent, Tracer, TreeDescription,
+        UntilFailure, UntilSuccess, Wait,
     };
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};

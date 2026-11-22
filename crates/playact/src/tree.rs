@@ -75,6 +75,31 @@ impl<W> BehaviorTree<W> {
         status
     }
 
+    /// 用外部黑板 tick；用于 [`crate::SharedBlackboard`] 或自定义共享状态。
+    ///
+    /// 本次 tick 不使用树自带的黑板；树自带的黑板保持不变。Tracer 仍然生效。
+    /// 不要在 Running 中途切换黑板来源：节点可能已缓存黑板数据；需要切换时
+    /// 应先 `abort` 并 `reset` 整棵树。
+    pub fn tick_with_blackboard(
+        &mut self,
+        world: &mut W,
+        time: Time,
+        blackboard: &mut Blackboard,
+    ) -> Status {
+        let status = {
+            let Self { root, tracer, .. } = self;
+            let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
+                Some(tracer) => Some(&mut **tracer),
+                None => None,
+            };
+            let mut ctx = Context::with_tracer(world, blackboard, time, tracer_ref);
+            ctx.tick_root(root)
+        };
+
+        self.last_status = Some(status);
+        status
+    }
+
     /// 只复位节点内部状态，不清空黑板，也不会触发 `abort`。用于角色复活、
     /// 战斗重开。若当前是 Running 且需要外部清理，应先调用 [`BehaviorTree::abort`]。
     pub fn reset(&mut self) {
@@ -98,6 +123,31 @@ impl<W> BehaviorTree<W> {
                 tracer,
                 ..
             } = self;
+            let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
+                Some(tracer) => Some(&mut **tracer),
+                None => None,
+            };
+            let mut ctx = Context::with_tracer(world, blackboard, time, tracer_ref);
+            ctx.abort_root(root, AbortReason::TreeAbort);
+        }
+
+        self.last_status = None;
+    }
+
+    /// 用外部黑板放弃整棵树；语义与 [`BehaviorTree::abort`] 相同。
+    pub fn abort_with_blackboard(
+        &mut self,
+        world: &mut W,
+        time: Time,
+        blackboard: &mut Blackboard,
+    ) {
+        if self.last_status != Some(Status::Running) {
+            self.last_status = None;
+            return;
+        }
+
+        {
+            let Self { root, tracer, .. } = self;
             let tracer_ref: Option<&mut (dyn Tracer + Send)> = match tracer.as_mut() {
                 Some(tracer) => Some(&mut **tracer),
                 None => None,

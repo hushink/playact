@@ -158,6 +158,43 @@ let commands: Vec<_> = tree
 
 动作只读世界、只写命令，主循环再交给执行器，这就是“决策/执行分离”。引擎本身不解释 `BattleCommand`。
 
+## 共享黑板
+
+默认每棵树持有自己的 `Blackboard`；需要多个 AI / 多棵树共享 typed 数据时用 `SharedBlackboard`（`Arc<Mutex<Blackboard>>`，核心功能，无需 feature）：
+
+```rust
+use playact::prelude::*;
+
+static TARGET: Key<usize> = playact::key!("target");
+
+let shared = SharedBlackboard::new();
+
+// 树 A 写入目标
+let mut scout = BehaviorTree::new(Box::new(Action::<World>::new("scout", |ctx| {
+    ctx.blackboard().set(&TARGET, 3);
+    Status::Success
+})));
+
+// 树 B 读取同一个目标
+let mut attack = BehaviorTree::new(Box::new(Condition::<World>::new("has_target", |ctx| {
+    ctx.blackboard_ref().contains(&TARGET)
+})));
+
+// world / time 由驱动方提供
+shared.tick(&mut scout, &mut world, time);
+shared.tick(&mut attack, &mut world, time);
+
+// 树外读写
+shared.with(|board| board.get(&TARGET).copied());
+shared.with_mut(|board| board.set(&TARGET, 7));
+```
+
+- `tick`/`abort` 在整个树 tick 期间持锁，多个树/线程的 tick 会被串行化；
+- 节点内部直接用 `ctx.blackboard()` / `ctx.blackboard_ref()`，**不要**在动作里再 lock 同一个 `SharedBlackboard`，否则会死锁；
+- 使用共享黑板时树自带的私有黑板不参与本次 tick，但 Tracer 与节点内部状态仍正常；
+- `lock()` 返回 `MutexGuard`，锁中毒会取回内部数据继续使用；`into_inner()` 在引用唯一时取回 `Blackboard`；
+- 共享黑板只共享数据，不共享 world：每次 tick 仍借用各自的 `&mut W`。
+
 ## Context 与时间
 
 ```rust
@@ -345,6 +382,7 @@ loop {
 - `AsyncAction` 在 tick 线程 poll；`ThreadTask` 的工作线程只用 channel 回报，取消是协作式的；
 - 黑板值要求 `Send + 'static`；
 - 每个 AI 持有自己的树和黑板，多 AI 用工厂函数分别构建；共享世界由驱动方顺序 tick 或自行同步。
+- `SharedBlackboard` 可跨树/线程共享黑板；`tick` 的锁覆盖整棵树，因此多线程 tick 会被串行化。
 - `BehaviorTree::into_root()` 会丢弃黑板与 Tracer，但保留 root 的内部状态；如果 Running 子树依赖黑板数据，挂到新树前要重新准备。
 
 ### 子树复用
@@ -391,9 +429,10 @@ cargo doc --workspace --all-features --no-deps
 - `hot-reload`：`TreeWatcher` 文件监听、去抖重载、黑板保留、失败回退旧树；
 - `remote-config`：`RemoteTreeLoader` HTTP 拉取、间隔刷新、ETag/Last-Modified、304 不重建；
 - `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
-- `macros`：`bt!` proc-macro DSL，展开为 builder 调用。
+- `macros`：`bt!` proc-macro DSL，展开为 builder 调用；
+- `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板。
 
-仍未实现：共享黑板、`BehaviorTree: Node`、bench/fuzz、`no_std`。
+仍未实现：`BehaviorTree: Node`、bench/fuzz、`no_std`。
 
 ## License
 
