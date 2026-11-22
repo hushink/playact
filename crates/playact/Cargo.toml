@@ -54,3 +54,7 @@ name = "battle_ai"
 [[example]]
 name = "battle_ai_config"
 required-features = ["config"]
+
+[[bench]]
+name = "engine"
+harness = false

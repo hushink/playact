@@ -427,10 +427,14 @@ cargo run --example battle_ai_config --features config
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo bench -p playact
 cargo doc --workspace --all-features --no-deps
 ```
 
 包含模块单测、公共 API 集成测试、doctest 和 `compile_fail` doctest（验证根/装饰器子节点数量、黑板 key 类型错误）。CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows。
+
+- `benches/engine.rs` 是零第三方依赖的微基准，覆盖 sequence / selector / reactive 抢占 / parallel / mem_parallel / 嵌套树 tick、黑板读写、构建与 describe；输出延迟与吞吐，适合观察回归。
+- `tests/stress.rs` 用固定 seed 随机生成组合、装饰、叶子与嵌套树，验证 tick / abort / reset / describe / Send，并检查同 seed 的行为可复现；无需 nightly 或 cargo-fuzz（它不是覆盖率引导的 fuzzer）。
 
 ## 0.2 开发线
 
@@ -444,9 +448,10 @@ cargo doc --workspace --all-features --no-deps
 - `AsyncAction` / `AsyncTask` / `ThreadTask`：运行时无关异步动作、线程任务与协作取消；
 - `macros`：`bt!` proc-macro DSL，展开为 builder 调用；
 - `SharedBlackboard`：基于 `Arc<Mutex<Blackboard>>` 的跨树/跨线程共享黑板；
-- `BehaviorTree: Node`：整棵树可直接嵌套，共享外层上下文并传播 abort/reset。
+- `BehaviorTree: Node`：整棵树可直接嵌套，共享外层上下文并传播 abort/reset；
+- bench/fuzz：零依赖微基准与确定性随机压力测试（非覆盖率引导的 fuzzing）。
 
-仍未实现：bench/fuzz、`no_std`。
+仍未实现：`no_std`。
 
 ## License
 
