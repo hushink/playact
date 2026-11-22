@@ -12,10 +12,10 @@ name: Release-plz
 #   Merge the release PR opened by the release-pr job. The next push publishes
 #   the versions committed by that PR.
 #
-# The release jobs use CARGO_REGISTRY_TOKEN because crates.io trusted
-# publishing cannot bootstrap a crate that does not exist yet. After the first
-# publish, trusted publishing can be configured on crates.io and used by
-# removing the token environment variable and granting id-token: write.
+# The initial-release job uses CARGO_REGISTRY_TOKEN because crates.io trusted
+# publishing cannot bootstrap a crate that does not exist yet. Later releases
+# use crates.io trusted publishing through the OIDC id-token permission.
+# Configure trusted publishing for both crates in their crates.io settings.
 
 on:
   push:
@@ -79,6 +79,7 @@ jobs:
           version: "0.4.3"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Bootstrap only: trusted publishing cannot create a new crate.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Remind to leave first-release mode
@@ -92,13 +93,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:
-    name: Publish release
+    name: Publish release (trusted publishing)
     runs-on: ubuntu-latest
     needs: preflight
     if: github.repository_owner == 'hushink' && github.ref == 'refs/heads/main' && vars.FIRST_RELEASE != 'true' && needs.preflight.outputs.has_release == 'true'
     permissions:
       contents: write
       pull-requests: read
+      id-token: write # crates.io trusted publishing
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,8 +117,8 @@ jobs:
           command: release
           version: "0.4.3"
         env:
+          # No CARGO_REGISTRY_TOKEN: release-plz uses trusted publishing.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   release-pr:
     name: Open release PR
