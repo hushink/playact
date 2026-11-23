@@ -46,7 +46,7 @@ modules and methods:
 | Feature | What it adds |
 |---|---|
 | default (`std`) | `std` integration; core is pure `std` with no third-party dependencies |
-| `config` | `TreeSpec`, `NodeRegistry`, JSON, includes, validation, and schema |
+| `config` | `TreeSpec`, `NodeRegistry`, JSON, includes, version migrations, validation, and schema |
 | `toml` / `yaml` / `ron` | Parsers for those formats |
 | `schema` | `TreeSpec::json_schema()` JSON Schema export |
 | `hot-reload` | `TreeWatcher` (depends on `notify`) |
@@ -885,8 +885,10 @@ newer entries; `oldest_revision` tells it when eviction may have skipped data.
 ## 13. Configuration
 
 The config layer is pure data plus a build-time registry. Configuration never
-contains closures; parameters are deserialized into concrete types once. See
-the [configuration reference](config.md) for every node and field.
+contains closures; parameters are deserialized into concrete types once.
+Application-supplied version migrations upgrade legacy raw documents before
+deserialization. See the [configuration reference](config.md) for every node and
+field.
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};
@@ -1047,6 +1049,41 @@ The `json`/`toml`/`yaml`/`ron` constructors force one parser. It confines paths
 to its base directory and rejects `..`, absolute paths, and symlink escapes.
 Depth and cycles are guarded. It also records resolved files for hot reload;
 custom resolvers can implement `watched_paths()` / `reset_watched_paths()`.
+
+### Version migration
+
+Old configurations can be upgraded before `TreeSpec` deserialization:
+
+```rust
+use serde_json::Value;
+use playact::config::{ConfigError, ConfigFormat, ConfigMigrator, FsIncludeResolver};
+use playact::hot_reload::TreeWatcher;
+
+let migrator = ConfigMigrator::new().with_migration(0, |mut document: Value| {
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::new("legacy document must be an object"))?;
+    let tree = object
+        .remove("tree")
+        .ok_or_else(|| ConfigError::with_path("tree", "missing tree"))?;
+    object.insert(String::from("root"), tree);
+    Ok(document)
+})?;
+
+let spec = migrator.parse_json_str(legacy)?;
+let resolver = FsIncludeResolver::auto_with_migrator("config/", migrator.clone())?;
+let mut tree = spec.build_with_resolver(&registry, &resolver)?;
+
+let watcher =
+    TreeWatcher::with_migrator(path, registry, migrator, ConfigFormat::Json)?;
+```
+
+Each closure upgrades version `N` to `N + 1` and returns a JSON object; the
+pipeline stamps the next version. Missing steps, future or malformed versions,
+non-object results, and final `TreeSpec` failures all report configuration paths.
+A missing top-level `version` defaults to `CURRENT_VERSION`, so legacy documents
+must declare it. `FsIncludeResolver` migrates every included file;
+`RemoteTreeLoader::with_migrator` offers the same pipeline for remote refreshes.
 
 ### Validation and schema
 
@@ -1267,7 +1304,7 @@ state is application-specific and must be saved separately. See
 | `trace` / `stats` / `diff` | `Tracer`, `TraceEvent`, `StatsTracer`, `TreeDiff`, `DiffHistory` |
 | `reload` | `ReloadReport` |
 | `inspector` | `Inspector`, `InspectorServer` |
-| `config` | `TreeSpec`, `NodeRegistry`, `FsIncludeResolver`, `ValidationLimits` |
+| `config` | `TreeSpec`, `NodeRegistry`, `FsIncludeResolver`, `ConfigMigrator`, `ValidationLimits` |
 | `hot_reload` / `remote_config` | `TreeWatcher`, `RemoteTreeLoader` |
 
 For exhaustive signatures and error variants, use

@@ -25,6 +25,7 @@
 //!   [`RemoteTreeLoader::tree_mut`] after a refresh.
 
 use std::io::Read;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use reqwest;
@@ -33,8 +34,8 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderMap, IF_MODIFIED_SINCE, IF_NONE_MATCH};
 
 use crate::config::{
-    ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
-    ValidationLimits,
+    ConfigBuildError, ConfigError, ConfigFormat, ConfigMigrator, IncludeResolver, NodeRegistry,
+    TreeParser, TreeSpec, ValidationLimits,
 };
 use crate::diff::{DiffHistory, TreeDiff};
 use crate::reload::ReloadReport;
@@ -128,12 +129,14 @@ impl From<ConfigBuildError> for RemoteConfigError {
 
 type Fetched<W> = Option<(BehaviorTree<W>, Option<String>, Option<String>)>;
 
+type TextParser = Arc<dyn Fn(&str) -> Result<TreeSpec, ConfigError> + Send + Sync>;
+
 /// Remote configuration loader.
 pub struct RemoteTreeLoader<W: 'static> {
     url: String,
     client: Client,
     registry: NodeRegistry<W>,
-    parser: TreeParser,
+    parser: TextParser,
     resolver: Option<Box<dyn IncludeResolver>>,
     verifier: Option<Box<dyn ResponseVerifier>>,
     tree: BehaviorTree<W>,
@@ -155,7 +158,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_parser_impl(url, registry, parser, None, None)
+        Self::with_parser_impl(url, registry, Arc::new(parser), None, None)
     }
 
     /// Creates a loader with a custom parser and include resolver.
@@ -169,7 +172,44 @@ impl<W: 'static> RemoteTreeLoader<W> {
         parser: TreeParser,
         resolver: impl IncludeResolver + 'static,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_parser_impl(url, registry, parser, Some(Box::new(resolver)), None)
+        Self::with_parser_impl(
+            url,
+            registry,
+            Arc::new(parser),
+            Some(Box::new(resolver)),
+            None,
+        )
+    }
+
+    /// Creates a loader with a version migration pipeline.
+    ///
+    /// Use [`FsIncludeResolver::auto_with_migrator`](crate::config::FsIncludeResolver::auto_with_migrator)
+    /// together with [`RemoteTreeLoader::with_migrator_and_resolver`] to migrate
+    /// included files as well.
+    pub fn with_migrator(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_impl(url, registry, Arc::new(migrator.parser(format)), None, None)
+    }
+
+    /// Creates a loader with a version migration pipeline and include resolver.
+    pub fn with_migrator_and_resolver(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_impl(
+            url,
+            registry,
+            Arc::new(migrator.parser(format)),
+            Some(Box::new(resolver)),
+            None,
+        )
     }
 
     /// Creates a loader with a response verifier.
@@ -181,13 +221,19 @@ impl<W: 'static> RemoteTreeLoader<W> {
         parser: TreeParser,
         verifier: impl ResponseVerifier + 'static,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_parser_impl(url, registry, parser, None, Some(Box::new(verifier)))
+        Self::with_parser_impl(
+            url,
+            registry,
+            Arc::new(parser),
+            None,
+            Some(Box::new(verifier)),
+        )
     }
 
     fn with_parser_impl(
         url: impl Into<String>,
         registry: NodeRegistry<W>,
-        parser: TreeParser,
+        parser: TextParser,
         resolver: Option<Box<dyn IncludeResolver>>,
         verifier: Option<Box<dyn ResponseVerifier>>,
     ) -> Result<Self, RemoteConfigError> {
@@ -203,7 +249,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_client_impl(client, url, registry, parser, None, None)
+        Self::with_client_impl(client, url, registry, Arc::new(parser), None, None)
     }
 
     /// Creates a loader with a custom `Client` and include resolver.
@@ -218,7 +264,46 @@ impl<W: 'static> RemoteTreeLoader<W> {
             client,
             url,
             registry,
-            parser,
+            Arc::new(parser),
+            Some(Box::new(resolver)),
+            None,
+        )
+    }
+
+    /// Creates a loader with a custom `Client` and a version migration
+    /// pipeline.
+    pub fn with_client_and_migrator(
+        client: Client,
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_client_impl(
+            client,
+            url,
+            registry,
+            Arc::new(migrator.parser(format)),
+            None,
+            None,
+        )
+    }
+
+    /// Creates a loader with a custom `Client`, version migration pipeline, and
+    /// include resolver.
+    pub fn with_client_and_migrator_and_resolver(
+        client: Client,
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_client_impl(
+            client,
+            url,
+            registry,
+            Arc::new(migrator.parser(format)),
             Some(Box::new(resolver)),
             None,
         )
@@ -236,7 +321,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             client,
             url,
             registry,
-            parser,
+            Arc::new(parser),
             None,
             Some(Box::new(verifier)),
         )
@@ -246,7 +331,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         client: Client,
         url: impl Into<String>,
         registry: NodeRegistry<W>,
-        parser: TreeParser,
+        parser: TextParser,
         resolver: Option<Box<dyn IncludeResolver>>,
         verifier: Option<Box<dyn ResponseVerifier>>,
     ) -> Result<Self, RemoteConfigError> {
@@ -254,7 +339,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         let Some((tree, etag, last_modified)) = fetch(FetchRequest {
             client: &client,
             url: &url,
-            parser,
+            parser: parser.as_ref(),
             registry: &registry,
             resolver: resolver.as_deref(),
             verifier: verifier.as_deref(),
@@ -483,7 +568,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         let Some((mut new_tree, etag, last_modified)) = fetch(FetchRequest {
             client: &self.client,
             url: &self.url,
-            parser: self.parser,
+            parser: self.parser.as_ref(),
             registry: &self.registry,
             resolver: self.resolver.as_deref(),
             verifier: self.verifier.as_deref(),
@@ -538,7 +623,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
 struct FetchRequest<'a, W: 'static> {
     client: &'a Client,
     url: &'a str,
-    parser: TreeParser,
+    parser: &'a (dyn Fn(&str) -> Result<TreeSpec, ConfigError> + Send + Sync),
     registry: &'a NodeRegistry<W>,
     resolver: Option<&'a dyn IncludeResolver>,
     verifier: Option<&'a dyn ResponseVerifier>,
@@ -676,6 +761,25 @@ mod tests {
         format!(r#"{{"root":{{"type":"action","name":"{action}"}}}}"#)
     }
 
+    fn legacy_body(action: &str) -> String {
+        format!(r#"{{"version":0,"tree":{{"type":"action","name":"{action}"}}}}"#)
+    }
+
+    fn legacy_migrator() -> ConfigMigrator {
+        ConfigMigrator::new()
+            .with_migration(0, |mut document: serde_json::Value| {
+                let object = document
+                    .as_object_mut()
+                    .ok_or_else(|| ConfigError::new("migration input must be an object"))?;
+                let root = object
+                    .remove("tree")
+                    .ok_or_else(|| ConfigError::with_path("tree", "missing legacy tree field"))?;
+                object.insert(String::from("root"), root);
+                Ok(document)
+            })
+            .expect("register migration")
+    }
+
     fn limiter_body(action: &str) -> String {
         limiter_body_with_max(2, action)
     }
@@ -732,6 +836,32 @@ mod tests {
 
         assert!(loader.refresh_now().expect("refresh"));
         assert_eq!(loader.tree().blackboard().get(&MARKER), Some(&42));
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["new"]);
+    }
+
+    #[test]
+    fn loads_and_refreshes_with_version_migrations() {
+        let url = serve_sequence(vec![legacy_body("old"), legacy_body("new")]);
+        let mut loader = RemoteTreeLoader::<()>::with_migrator(
+            url,
+            registry(),
+            legacy_migrator(),
+            ConfigFormat::Json,
+        )
+        .expect("remote loader");
+
+        let mut world = ();
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["old"]);
+
+        assert!(loader.refresh_now().expect("refresh"));
         assert_eq!(
             loader.tree_mut().tick(&mut world, Time::ZERO),
             Status::Success

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::{ConfigError, TreeParser, TreeSpec};
+use super::{ConfigError, ConfigFormat, ConfigMigrator, TreeParser, TreeSpec};
 
 /// Resolves an include path into a [`TreeSpec`].
 ///
@@ -43,10 +43,13 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
 enum ParserMode {
     Fixed(TreeParser),
     Auto,
+    Migrating {
+        migrator: ConfigMigrator,
+        format: Option<ConfigFormat>,
+    },
 }
 
 /// Resolver that reads include files from a base directory.
@@ -74,6 +77,45 @@ impl FsIncludeResolver {
     /// supported extension are rejected.
     pub fn auto(base: impl Into<PathBuf>) -> Result<Self, ConfigError> {
         Self::with_parser(base, ParserMode::Auto)
+    }
+
+    /// Reads includes in a fixed format and applies a version migration
+    /// pipeline.
+    ///
+    /// The included documents are upgraded to [`CURRENT_VERSION`](super::CURRENT_VERSION)
+    /// before they are returned.
+    pub fn with_migrator(
+        base: impl Into<PathBuf>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+    ) -> Result<Self, ConfigError> {
+        Self::with_parser(
+            base,
+            ParserMode::Migrating {
+                migrator,
+                format: Some(format),
+            },
+        )
+    }
+
+    /// Reads includes, choosing the parser from each file's extension and
+    /// applying a version migration pipeline.
+    ///
+    /// Supported extensions are `.json`, `.toml`, `.yaml`/`.yml`, and `.ron`;
+    /// the optional parsers require their matching features. The included
+    /// documents are upgraded to [`CURRENT_VERSION`](super::CURRENT_VERSION)
+    /// before they are returned.
+    pub fn auto_with_migrator(
+        base: impl Into<PathBuf>,
+        migrator: ConfigMigrator,
+    ) -> Result<Self, ConfigError> {
+        Self::with_parser(
+            base,
+            ParserMode::Migrating {
+                migrator,
+                format: None,
+            },
+        )
     }
 
     fn with_parser(base: impl Into<PathBuf>, parser: ParserMode) -> Result<Self, ConfigError> {
@@ -152,9 +194,13 @@ impl IncludeResolver for FsIncludeResolver {
 
         let text = fs::read_to_string(&canonical)
             .map_err(|error| ConfigError::with_path(path, format!("read include: {error}")))?;
-        let spec = match self.parser {
+        let spec = match &self.parser {
             ParserMode::Fixed(parser) => parser(&text),
             ParserMode::Auto => parse_auto(&canonical, &text),
+            ParserMode::Migrating { migrator, format } => match format {
+                Some(format) => migrator.parse_str(*format, &text),
+                None => migrator.parse_path(&canonical, &text),
+            },
         }
         .map_err(|error| ConfigError::with_path(path, format!("parse include: {error}")))?;
         Ok(spec)
@@ -346,6 +392,57 @@ mod tests {
         );
         let error = resolver.resolve("noext").expect_err("missing extension");
         assert!(error.to_string().contains("no extension"), "{error}");
+
+        fs::remove_dir_all(&base).expect("cleanup");
+    }
+
+    fn legacy_migrator() -> ConfigMigrator {
+        ConfigMigrator::new()
+            .with_migration(0, |mut document| {
+                let object = document
+                    .as_object_mut()
+                    .ok_or_else(|| ConfigError::new("migration input must be an object"))?;
+                let root = object
+                    .remove("tree")
+                    .ok_or_else(|| ConfigError::with_path("tree", "missing legacy tree field"))?;
+                object.insert(String::from("root"), root);
+                Ok(document)
+            })
+            .expect("register migration")
+    }
+
+    #[test]
+    fn migrating_auto_applies_migrations_to_includes() {
+        let base = temp_dir("migrate-auto");
+        fs::write(
+            base.join("sub.json"),
+            r#"{"version":0,"tree":{"type":"action","name":"ok"}}"#,
+        )
+        .expect("write legacy include");
+
+        let resolver =
+            FsIncludeResolver::auto_with_migrator(&base, legacy_migrator()).expect("resolver");
+        let spec = resolver.resolve("sub.json").expect("resolve");
+        assert_eq!(spec.version, super::super::CURRENT_VERSION);
+        assert!(matches!(spec.root, super::super::SpecNode::Action { .. }));
+
+        fs::remove_dir_all(&base).expect("cleanup");
+    }
+
+    #[test]
+    fn migrating_fixed_format_ignores_the_include_extension() {
+        let base = temp_dir("migrate-fixed");
+        fs::write(
+            base.join("sub.txt"),
+            r#"{"version":0,"tree":{"type":"action","name":"ok"}}"#,
+        )
+        .expect("write legacy include");
+
+        let resolver =
+            FsIncludeResolver::with_migrator(&base, legacy_migrator(), ConfigFormat::Json)
+                .expect("resolver");
+        let spec = resolver.resolve("sub.txt").expect("resolve");
+        assert_eq!(spec.version, super::super::CURRENT_VERSION);
 
         fs::remove_dir_all(&base).expect("cleanup");
     }

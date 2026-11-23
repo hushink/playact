@@ -107,7 +107,7 @@ fn main() -> Result<(), BuildError> {
 | Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, live status tree, error events, `last_status`, ASCII/DOT/Mermaid `describe`, structural `TreeDiff`, HTML inspector |
 | Persistence | Versioned structural and ID-keyed node snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |
-| Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, registry-aware JSON Schema with descriptions, params, and key values, Markdown node catalogs, validation, hot reload, remote loading |
+| Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, application-supplied version migrations, registry-aware JSON Schema with descriptions, params, and key values, Markdown node catalogs, validation, hot reload, remote loading |
 | Async | Runtime-agnostic `AsyncTask`, `ThreadTask`, optional `TokioTask` |
 | Portability | `no_std + alloc` core; optional integrations gated by features |
 | Developer experience | `bt!` DSL, `BtNode` derive, two complete battle AI examples, benchmarks, deterministic stress tests |
@@ -129,6 +129,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
+cargo run -p playact --example config_migration --features config
 cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- crates/playact/examples/battle_ai.json
 ```
 
@@ -152,6 +153,8 @@ cargo run -p playact --example config_lint --features config,schema,toml,yaml,ro
   action, condition, predicate, key, custom, and subtree names, with optional
   descriptions, derived parameter schemas, typed key values, and a Markdown
   node catalog.
+- `config_migration`: registers a v0 -> v1 migration, upgrades a root document
+  and its include, builds the migrated tree, and ticks it through completion.
 - `config_lint`: validates JSON, TOML, YAML, or RON configurations against the
   registry schema and then builds them, reporting field paths, accepting
   multiple files, and emitting a JSON report with `--json`. Exits nonzero when
@@ -223,7 +226,7 @@ supports `--json` for review tooling.
 |---|---|
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
-| `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
+| `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes, version migrations (requires `std`) |
 | `schema` | JSON Schema generation for `TreeSpec` and a populated `NodeRegistry`, with optional descriptions, params schemas, key value schemas, and Markdown node catalogs (requires `config`) |
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |

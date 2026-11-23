@@ -1,7 +1,7 @@
 # playact 配置参考
 
 可选 `config` feature 的完整参考：`TreeSpec`、所有 `SpecNode` 类型、字段与默认值、
-对应的 `NodeRegistry` 注册方式，以及 include、校验与 schema。任务式用法见
+对应的 `NodeRegistry` 注册方式，以及 include、版本迁移、校验与 schema。任务式用法见
 [API 指南](api.zh-CN.md)，项目概览见 [README](../README.zh-CN.md)。
 
 - JSON、TOML、YAML、RON 结构一致；下文示例使用 JSON。
@@ -58,6 +58,64 @@ let mut tree = spec.build(&registry)?;
 
 `ValidationLimits` 默认 `max_depth: 64`、`max_nodes: 10_000`；`validate` 把 include
 计为一个节点，不展开。
+
+## 版本迁移
+
+`TreeSpec` 只接受 `CURRENT_VERSION`（当前为 1），但应用可以注册迁移，在反序列化前
+升级旧版原始文档。迁移处理 `serde_json::Value`，与源格式无关；引擎不会解释任何业务
+字段。
+
+```rust
+use serde_json::Value;
+use playact::config::{ConfigError, ConfigMigrator, FsIncludeResolver};
+
+let migrator = ConfigMigrator::new().with_migration(0, |mut document: Value| {
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::new("legacy document must be an object"))?;
+    let tree = object
+        .remove("tree")
+        .ok_or_else(|| ConfigError::with_path("tree", "missing tree"))?;
+    object.insert(String::from("root"), tree);
+    Ok(document)
+})?;
+
+let spec = migrator.parse_json_str(legacy_json)?;
+let resolver = FsIncludeResolver::auto_with_migrator("config/", migrator)?;
+let mut tree = spec.build_with_resolver(&registry, &resolver)?;
+```
+
+| API | 用途 |
+|---|---|
+| `ConfigMigrator::new()` | 空迁移链 |
+| `register(from, migration)` / `with_migration(from, migration)` | 注册 `from -> from + 1`；每个版本一个步骤 |
+| `upgrade(Value)` | 执行迁移链并写入结果 `version`；当前版本文档原样返回 |
+| `parse_json_str` / `parse_json_slice` / `parse_toml_str` / `parse_yaml_str` / `parse_ron_str` | 解析指定格式、迁移、再反序列化（TOML/YAML/RON 方法需要对应 feature） |
+| `parse_str(format, text)` / `parse_path(path, text)` | 指定格式或按扩展名选择格式 |
+| `parse_value(Value)` | 迁移并反序列化已解析文档 |
+| `parser(format)` | 供自定义加载器使用的自有闭包 |
+| `FsIncludeResolver::with_migrator(base, migrator, format)` / `auto_with_migrator(base, migrator)` | 迁移每个被包含文件 |
+| `TreeWatcher::with_migrator` / `with_migrator_and_resolver` | 初次加载与每次热重载时迁移（`hot-reload`） |
+| `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver`（以及 `with_client_*` 变体） | 初次加载与每次刷新时迁移（`remote-config`） |
+
+规则与错误：
+
+- 顶层 `version` 缺失时默认为 `CURRENT_VERSION`，与 `TreeSpec` 一致；旧版文档必须
+  显式声明版本。
+- 高于 `CURRENT_VERSION` 的版本、非整数与负数会在迁移前以 `version` 路径拒绝。
+- 缺少步骤（例如版本 `0` 没有 `0 -> 1` 迁移）会报错。
+- 每个迁移必须返回 JSON 对象；成功后管线会把 `version` 覆盖为下一版本。迁移错误
+  保留内部配置路径，并附带源版本与目标版本上下文。
+- 最终文档按当前 `TreeSpec` 解析，因此未知字段、非法参数与未注册名称仍会以原有
+  路径失败。
+- include 文件分别迁移，因此 include 图中的每个文件都可以处于任意版本，只要有到
+  当前版本的注册路径。
+
+[`examples/config_migration.rs`](../examples/config_migration.rs) 会迁移 v0 根配置与
+include，然后构建并 tick。
+
+`playact` CLI 校验当前 `TreeSpec` 结构，无法执行应用提供的迁移。请在应用中运行
+`ConfigMigrator`，或只对已达到 `CURRENT_VERSION` 的文件使用 lint/convert。
 
 ## 名称、参数与 ID
 

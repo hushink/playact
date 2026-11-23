@@ -751,6 +751,50 @@ are rebuilt with the tree on hot reload and remote refresh, and
   ```
 - See [`examples/battle_ai.json`](examples/battle_ai.json) for a complete tree.
 
+### Version migration
+
+Legacy documents can be upgraded before `TreeSpec` deserialization. Migrations
+are application-supplied closures over raw `serde_json::Value`; each upgrades
+version `N` to `N + 1`, and the pipeline stamps the next `version`:
+
+```rust
+use serde_json::Value;
+use playact::config::{ConfigError, ConfigFormat, ConfigMigrator, FsIncludeResolver};
+use playact::hot_reload::TreeWatcher;
+
+let migrator = ConfigMigrator::new().with_migration(0, |mut document: Value| {
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::new("legacy document must be an object"))?;
+    let tree = object
+        .remove("tree")
+        .ok_or_else(|| ConfigError::with_path("tree", "missing tree"))?;
+    object.insert(String::from("root"), tree);
+    Ok(document)
+})?;
+
+let spec = migrator.parse_json_str(legacy_json)?;
+let resolver = FsIncludeResolver::auto_with_migrator("ai/", migrator.clone())?;
+let mut tree = spec.build_with_resolver(&registry, &resolver)?;
+
+let watcher =
+    TreeWatcher::with_migrator("ai.json", registry, migrator.clone(), ConfigFormat::Json)?;
+```
+- `parse_json_str`, `parse_json_slice`, `parse_toml_str`, `parse_yaml_str`, and
+  `parse_ron_str` parse, migrate, and deserialize in one call. `parse_str`,
+  `parse_path`, and `parse_value` cover explicit formats, extensions, and
+  already parsed documents.
+- A missing `version` defaults to `CURRENT_VERSION`, so legacy documents must
+  declare it. Future or malformed versions, missing migration steps, non-object
+  results, and final `TreeSpec` errors all report configuration paths.
+- Includes are migrated independently through
+  `FsIncludeResolver::with_migrator` / `auto_with_migrator`.
+- `TreeWatcher::with_migrator` / `with_migrator_and_resolver` and
+  `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` re-run the
+  pipeline on every reload or refresh.
+- See [`examples/config_migration.rs`](examples/config_migration.rs) for a v0
+  root and include that are migrated, built, and ticked.
+
 ### Includes
 
 Split large configurations with `include`:
@@ -769,7 +813,9 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 `FsIncludeResolver` confines paths to its base directory and rejects `..`, absolute
 paths, and symlink escapes. `auto` selects JSON/TOML/YAML/RON from each file's
 extension (JSON always; TOML/YAML/RON need their features); the `json`/`toml`/
-`yaml`/`ron` constructors keep one parser for every include. Cycles and excessive
+`yaml`/`ron` constructors keep one parser for every include.
+`with_migrator` / `auto_with_migrator` apply a version migration pipeline to
+each included file. Cycles and excessive
 nesting are detected during build, and the resolver records every resolved file
 so hot reload can watch it. A closure
 `Fn(&str) -> Result<TreeSpec, ConfigError>` also implements `IncludeResolver` for custom
@@ -803,7 +849,8 @@ timestamp, restored count, and restore error into one `ReloadReport`.
 and renamed nodes by `NodeId` and `NodePath`; `with_diff_history(n)` keeps recent diffs
 in `diff_history()`. Parse/build failures keep the old tree and return an error. Edits are
 debounced (200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver`
-for includes.
+for includes, and `with_migrator` / `with_migrator_and_resolver` for version
+migrations.
 
 The watcher polls both the root file and the include paths reported by the resolver, so
 editing an included file on its own triggers a reload. `FsIncludeResolver` records every
@@ -836,7 +883,8 @@ also restores node state by stable `NodeId`, matching the hot-reload behavior.
 metadata as a `ReloadReport`; `with_diff_history(n)` keeps a bounded history. Requests
 happen on the calling thread;
 use a worker thread or a custom `Client` timeout in high-latency environments. Includes
-are available through `json_with_resolver` / `with_client_and_resolver`.
+are available through `json_with_resolver` / `with_client_and_resolver`; version
+migrations use `with_migrator` / `with_migrator_and_resolver`.
 
 Response bodies are limited to `MAX_REMOTE_CONFIG_BYTES` (1 MiB), must be UTF-8, and
 are checked with `TreeSpec::validate` using `ValidationLimits::default()` before build.
@@ -991,7 +1039,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 |---|---|
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
-| `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
+| `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes, version migrations (requires `std`) |
 | `schema` | `TreeSpec::json_schema()`, `NodeRegistry::json_schema()`, and `NodeRegistry::markdown_catalog()`, plus descriptions, params, and key value metadata (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
@@ -1033,6 +1081,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
+cargo run -p playact --example config_migration --features config
 cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- crates/playact/examples/battle_ai.json
 ```
 
@@ -1056,6 +1105,8 @@ cargo run -p playact --example config_lint --features config,schema,toml,yaml,ro
   action, condition, predicate, key, custom, and subtree names, with optional
   descriptions, derived parameter schemas, typed key values, and a Markdown
   node catalog.
+- `config_migration`: registers a v0 -> v1 migration, upgrades a root document
+  and its include, builds the migrated tree, and ticks it through completion.
 - `config_lint`: validates JSON, TOML, YAML, or RON configurations against the
   registry schema and then builds them, reporting field paths, accepting
   multiple files, and emitting a JSON report with `--json`. Exits nonzero when

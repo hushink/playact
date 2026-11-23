@@ -5,6 +5,10 @@
 //! utility scores, and typed key references are registered by name at build time
 //! by the caller. Parameters are deserialized into concrete types at build time,
 //! so ticks no longer involve `serde_json::Value` or `Any`.
+//!
+//! [`ConfigMigrator`] upgrades application-defined legacy document versions in
+//! raw form before the current [`TreeSpec`] is deserialized. The same pipeline
+//! can be attached to filesystem includes, hot reload, and remote loading.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,10 +20,12 @@ mod build;
 mod catalog;
 pub mod error;
 mod include;
+mod migrate;
 pub mod registry;
 
 pub use error::{ConfigBuildError, ConfigBuildErrorKind, ConfigError, RegistryError};
 pub use include::{FsIncludeResolver, IncludeResolver};
+pub use migrate::{ConfigFormat, ConfigMigrator};
 #[cfg(feature = "schema")]
 pub use registry::NodeCategory;
 pub use registry::NodeRegistry;

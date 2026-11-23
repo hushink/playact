@@ -1,0 +1,7 @@
+{
+  "version": 0,
+  "tree": {
+    "type": "wait",
+    "duration_ms": 250
+  }
+}

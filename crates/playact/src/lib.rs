@@ -151,7 +151,7 @@ pub use composite::{
     WeightedRandomSelector,
 };
 #[cfg(feature = "config")]
-pub use config::{TreeParser, ValidationLimits};
+pub use config::{ConfigFormat, ConfigMigrator, TreeParser, ValidationLimits};
 pub use context::Context;
 pub use contract::{KeySpec, SubtreeContract};
 pub use decorator::{
@@ -234,6 +234,8 @@ pub mod prelude {
     pub use crate::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
     #[cfg(feature = "macros")]
     pub use crate::{BtNode, bt};
+    #[cfg(feature = "config")]
+    pub use crate::{ConfigFormat, ConfigMigrator, TreeParser, ValidationLimits};
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]
@@ -242,6 +244,4 @@ pub mod prelude {
     };
     #[cfg(feature = "trace-record")]
     pub use crate::{TraceDiff, TraceRecord, TraceRecorder};
-    #[cfg(feature = "config")]
-    pub use crate::{TreeParser, ValidationLimits};
 }

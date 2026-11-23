@@ -1,0 +1,11 @@
+{
+  "version": 0,
+  "name": "legacy-migration",
+  "tree": {
+    "type": "sequence",
+    "children": [
+      {"type": "include", "path": "shared.json"},
+      {"type": "wait", "duration_ms": 750}
+    ]
+  }
+}

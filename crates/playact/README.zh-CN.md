@@ -715,6 +715,49 @@ let mut tree = spec.build(&registry)?;
   ```
 - 完整树示例见 [`examples/battle_ai.json`](examples/battle_ai.json)。
 
+### 版本迁移
+
+旧版文档可在 `TreeSpec` 反序列化前升级。迁移是应用提供、处理原始
+`serde_json::Value` 的闭包；每个闭包把版本 `N` 升级到 `N + 1`，管线会写入下一版本：
+
+```rust
+use serde_json::Value;
+use playact::config::{ConfigError, ConfigFormat, ConfigMigrator, FsIncludeResolver};
+use playact::hot_reload::TreeWatcher;
+
+let migrator = ConfigMigrator::new().with_migration(0, |mut document: Value| {
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::new("legacy document must be an object"))?;
+    let tree = object
+        .remove("tree")
+        .ok_or_else(|| ConfigError::with_path("tree", "missing tree"))?;
+    object.insert(String::from("root"), tree);
+    Ok(document)
+})?;
+
+let spec = migrator.parse_json_str(legacy_json)?;
+let resolver = FsIncludeResolver::auto_with_migrator("ai/", migrator.clone())?;
+let mut tree = spec.build_with_resolver(&registry, &resolver)?;
+
+let watcher =
+    TreeWatcher::with_migrator("ai.json", registry, migrator.clone(), ConfigFormat::Json)?;
+```
+
+- `parse_json_str`、`parse_json_slice`、`parse_toml_str`、`parse_yaml_str` 与
+  `parse_ron_str` 一次完成解析、迁移与反序列化；`parse_str`、`parse_path` 与
+  `parse_value` 分别覆盖显式格式、扩展名选择与已解析文档。
+- 顶层 `version` 缺失时默认为 `CURRENT_VERSION`，因此旧版文档必须显式声明版本。
+  未来或格式错误的版本、缺少迁移步骤、非对象返回值以及最终 `TreeSpec` 错误都会带
+  配置路径报告。
+- include 文件通过 `FsIncludeResolver::with_migrator` / `auto_with_migrator` 分别
+  迁移。
+- `TreeWatcher::with_migrator` / `with_migrator_and_resolver` 与
+  `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` 会在每次重载或
+  刷新时重新执行迁移。
+- 完整示例见 [`examples/config_migration.rs`](examples/config_migration.rs)：迁移
+  v0 根配置与 include，构建并 tick。
+
 ### Include
 
 `include` 用于拆分大型配置：
@@ -733,6 +776,7 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 `FsIncludeResolver` 把路径限制在基准目录内，拒绝 `..`、绝对路径与符号链接逃逸；
 `auto` 按每个文件的扩展名选择 JSON/TOML/YAML/RON（JSON 始终可用，TOML/YAML/RON
 需要对应 feature）；`json`/`toml`/`yaml`/`ron` 构造器则对所有 include 使用同一解析器。
+`with_migrator` / `auto_with_migrator` 会对每个被包含文件应用版本迁移。
 构建期检测循环与过深嵌套；并记录解析过的文件，供热重载监视。闭包
 `Fn(&str) -> Result<TreeSpec, ConfigError>` 也自动实现 `IncludeResolver`，可接
 文件、HTTP 或内存来源；需要热重载时可手动实现 `watched_paths()`。
@@ -761,7 +805,8 @@ reset）。`last_reload()` 用 `ReloadReport` 一次返回 diff、revision、时
 节点数与恢复错误。`last_diff()` 按 `NodeId` 与 `NodePath` 报告新增、
 删除、移动和改名的节点；`with_diff_history(n)` 可通过 `diff_history()` 保留最近多次
 差异。解析/构建失败保留旧树并返回错误。默认 200ms
-去抖。include 使用 `json_with_resolver` / `with_parser_and_resolver`。
+去抖。include 使用 `json_with_resolver` / `with_parser_and_resolver`；版本迁移使用
+`with_migrator` / `with_migrator_and_resolver`。
 
 监听器同时轮询根文件与 resolver 报告的 include 路径，因此被 include 的文件单独
 变化也会触发重载。`FsIncludeResolver` 会记录它解析过的每个文件；自定义 resolver
@@ -791,7 +836,8 @@ loader.tree_mut().tick(&mut world, time);
 `last_restore_error()` 报告被拒绝的恢复；`last_reload()` 以 `ReloadReport` 返回
 同样的元数据；`with_diff_history(n)` 可保留有界历史。请求在调用线程同步执行；高延迟
 环境请放到工作线程或设置 Client 超时。include 使用 `json_with_resolver` /
-`with_client_and_resolver`。
+`with_client_and_resolver`；版本迁移使用 `with_migrator` /
+`with_migrator_and_resolver`。
 
 响应体限制为 `MAX_REMOTE_CONFIG_BYTES`（1 MiB），必须是 UTF-8，并在构建前通过
 `TreeSpec::validate`（默认 `ValidationLimits`）校验；过大或结构过深的配置会被拒绝。
@@ -941,7 +987,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 |---|---|
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
-| `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
+| `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include、版本迁移（依赖 `std`） |
 | `schema` | `TreeSpec::json_schema()`、`NodeRegistry::json_schema()` 与 `NodeRegistry::markdown_catalog()`，以及描述、参数与 key 值元数据（依赖 `config`） |
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
@@ -981,6 +1027,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
+cargo run -p playact --example config_migration --features config
 cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- crates/playact/examples/battle_ai.json
 ```
 
@@ -1001,6 +1048,8 @@ cargo run -p playact --example config_lint --features config,schema,toml,yaml,ro
 - `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
   predicate、key、custom 与 subtree 名称，并演示描述、派生参数 schema、key 值类型与
   Markdown 节点目录。
+- `config_migration`：注册 v0 -> v1 迁移，升级根配置及其 include，构建迁移后的树并
+  tick 至完成。
 - `config_lint`：先用注册表 schema 校验 JSON/TOML/YAML/RON 配置，再构建树；错误带
   字段路径，支持多文件与 `--json` 报告，任一文件失败时非零退出。
 

@@ -41,7 +41,7 @@ impl Default for World {
 | Feature | 提供内容 |
 |---|---|
 | 默认（`std`） | `std` 集成；纯标准库、零第三方依赖 |
-| `config` | `TreeSpec`、`NodeRegistry`、JSON、include、校验与 schema |
+| `config` | `TreeSpec`、`NodeRegistry`、JSON、include、版本迁移、校验与 schema |
 | `toml` / `yaml` / `ron` | 对应格式解析器 |
 | `schema` | `TreeSpec::json_schema()` JSON Schema 导出 |
 | `hot-reload` | `TreeWatcher`（依赖 `notify`） |
@@ -852,7 +852,8 @@ let latest = history.latest_entry();
 ## 13. 配置
 
 配置层是纯数据 + 构建期注册表。配置中不包含闭包；参数只在构建时反序列化为具体类型。
-所有节点与字段见[配置参考](config.zh-CN.md)。
+应用提供的版本迁移会在反序列化前升级旧版原始文档。所有节点与字段见
+[配置参考](config.zh-CN.md)。
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};
@@ -1010,6 +1011,40 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 `json`/`toml`/`yaml`/`ron` 强制单一解析器。它把路径限制在基准目录内，拒绝 `..`、
 绝对路径与符号链接逃逸；构建期检测深度与循环；同时记录解析过的文件供热重载监视。
 自定义 resolver 可实现 `watched_paths()` / `reset_watched_paths()`。
+
+### 版本迁移
+
+旧版配置可在 `TreeSpec` 反序列化前升级：
+
+```rust
+use serde_json::Value;
+use playact::config::{ConfigError, ConfigFormat, ConfigMigrator, FsIncludeResolver};
+use playact::hot_reload::TreeWatcher;
+
+let migrator = ConfigMigrator::new().with_migration(0, |mut document: Value| {
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::new("legacy document must be an object"))?;
+    let tree = object
+        .remove("tree")
+        .ok_or_else(|| ConfigError::with_path("tree", "missing tree"))?;
+    object.insert(String::from("root"), tree);
+    Ok(document)
+})?;
+
+let spec = migrator.parse_json_str(legacy)?;
+let resolver = FsIncludeResolver::auto_with_migrator("config/", migrator.clone())?;
+let mut tree = spec.build_with_resolver(&registry, &resolver)?;
+
+let watcher =
+    TreeWatcher::with_migrator(path, registry, migrator, ConfigFormat::Json)?;
+```
+
+每个闭包把版本 `N` 升级到 `N + 1` 并返回 JSON 对象；管线会写入下一版本。缺少步骤、
+未来版本或格式错误的版本、非对象返回值以及最终 `TreeSpec` 失败都会带配置路径报告。
+顶层 `version` 缺失时默认为 `CURRENT_VERSION`，因此旧版文档必须显式声明版本。
+`FsIncludeResolver` 会迁移每个被包含文件；`RemoteTreeLoader::with_migrator` 为远程
+刷新提供同样的管线。
 
 ### 校验与 schema
 
@@ -1214,7 +1249,7 @@ shared.tick(&mut goblin_b, &mut world, time);
 | `trace` / `stats` / `diff` | `Tracer`、`TraceEvent`、`StatsTracer`、`TreeDiff`、`DiffHistory` |
 | `reload` | `ReloadReport` |
 | `inspector` | `Inspector`、`InspectorServer` |
-| `config` | `TreeSpec`、`NodeRegistry`、`FsIncludeResolver`、`ValidationLimits` |
+| `config` | `TreeSpec`、`NodeRegistry`、`FsIncludeResolver`、`ConfigMigrator`、`ValidationLimits` |
 | `hot_reload` / `remote_config` | `TreeWatcher`、`RemoteTreeLoader` |
 
 完整签名与错误枚举见 [docs.rs/playact](https://docs.rs/playact)。

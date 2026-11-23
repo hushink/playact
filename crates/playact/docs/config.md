@@ -2,8 +2,8 @@
 
 Reference for the optional `config` feature: `TreeSpec`, every `SpecNode` type,
 its fields and defaults, the matching `NodeRegistry` registration, and include,
-validation, and schema behavior. For task-oriented usage see the
-[API guide](api.md); for the big picture see the [README](../README.md).
+version migration, validation, and schema behavior. For task-oriented usage see
+the [API guide](api.md); for the big picture see the [README](../README.md).
 
 - JSON, TOML, YAML, and RON use the same structure; examples below are JSON.
 - Unknown fields are rejected. Errors carry paths such as `root.children[0]`.
@@ -61,6 +61,68 @@ let mut tree = spec.build(&registry)?;
 
 `ValidationLimits` defaults to `max_depth: 64` and `max_nodes: 10_000`; includes
 count as one node and are not expanded by `validate`.
+
+## Version migration
+
+`TreeSpec` accepts only `CURRENT_VERSION` (currently 1), but applications can
+register migrations that upgrade legacy raw documents before they are
+deserialized. Migrations operate on `serde_json::Value`, whatever the source
+format, and the engine never interprets business fields.
+
+```rust
+use serde_json::Value;
+use playact::config::{ConfigError, ConfigMigrator, FsIncludeResolver};
+
+let migrator = ConfigMigrator::new().with_migration(0, |mut document: Value| {
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::new("legacy document must be an object"))?;
+    let tree = object
+        .remove("tree")
+        .ok_or_else(|| ConfigError::with_path("tree", "missing tree"))?;
+    object.insert(String::from("root"), tree);
+    Ok(document)
+})?;
+
+let spec = migrator.parse_json_str(legacy_json)?;
+let resolver = FsIncludeResolver::auto_with_migrator("config/", migrator)?;
+let mut tree = spec.build_with_resolver(&registry, &resolver)?;
+```
+
+| API | Purpose |
+|---|---|
+| `ConfigMigrator::new()` | empty pipeline |
+| `register(from, migration)` / `with_migration(from, migration)` | register the step `from -> from + 1`; one step per version |
+| `upgrade(Value)` | run the chain and stamp the resulting `version`; leaves current documents unchanged |
+| `parse_json_str` / `parse_json_slice` / `parse_toml_str` / `parse_yaml_str` / `parse_ron_str` | parse a format, migrate, then deserialize (TOML/YAML/RON methods require their features) |
+| `parse_str(format, text)` / `parse_path(path, text)` | explicit format or extension-selected format |
+| `parse_value(Value)` | migrate and deserialize an already parsed document |
+| `parser(format)` | owned closure for custom loaders |
+| `FsIncludeResolver::with_migrator(base, migrator, format)` / `auto_with_migrator(base, migrator)` | migrate every included file |
+| `TreeWatcher::with_migrator` / `with_migrator_and_resolver` | migrate on initial load and every hot reload (`hot-reload`) |
+| `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` (and `with_client_*` variants) | migrate on initial load and every refresh (`remote-config`) |
+
+Rules and errors:
+
+- A missing top-level `version` defaults to `CURRENT_VERSION`, matching
+  `TreeSpec`; legacy documents must declare their version explicitly.
+- Versions above `CURRENT_VERSION`, non-integers, and negative values are
+  rejected at path `version` before any migration runs.
+- A missing step, such as version `0` with no `0 -> 1` migration, is an error.
+- Each migration must return a JSON object; the pipeline overwrites its
+  `version` with the next version after success. Migration errors keep their
+  inner configuration path and gain the source and target version context.
+- The final document is parsed as the current `TreeSpec`, so unknown fields,
+  invalid parameters, and unsupported names still fail with their usual paths.
+- Includes are migrated independently, so every file in an include graph may be
+  at any version with a registered path to the current version.
+
+[`examples/config_migration.rs`](../examples/config_migration.rs) migrates a v0
+root and include, then builds and ticks the result.
+
+The `playact` CLI validates the current `TreeSpec` shape and cannot run
+application-supplied migrations. Apply a `ConfigMigrator` in the application,
+or lint/convert files that are already at `CURRENT_VERSION`.
 
 ## Name, parameters, and IDs
 

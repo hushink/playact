@@ -102,7 +102,7 @@ fn main() -> Result<(), BuildError> {
 | 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe`、结构化 `TreeDiff`、HTML inspector |
 | 持久化 | 带版本的结构快照与按 `NodeId` 的快照，以及可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
-| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、注册表感知 JSON Schema（含描述、参数与 key 值）、Markdown 节点目录、校验、热重载、远程加载 |
+| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、应用提供的版本迁移、注册表感知 JSON Schema（含描述、参数与 key 值）、Markdown 节点目录、校验、热重载、远程加载 |
 | 异步 | 运行时无关 `AsyncTask`、`ThreadTask`、可选 `TokioTask` |
 | 可移植性 | `no_std + alloc` 核心；可选集成按 feature 门控 |
 | 开发体验 | `bt!` DSL、`BtNode` derive、两个完整战斗 AI 示例、基准与确定性压力测试 |
@@ -123,6 +123,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
+cargo run -p playact --example config_migration --features config
 cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- crates/playact/examples/battle_ai.json
 ```
 
@@ -143,6 +144,8 @@ cargo run -p playact --example config_lint --features config,schema,toml,yaml,ro
 - `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
   predicate、key、custom 与 subtree 名称，并演示描述、派生参数 schema、key 值类型与
   Markdown 节点目录。
+- `config_migration`：注册 v0 -> v1 迁移，升级根配置及其 include，构建迁移后的树并
+  tick 至完成。
 - `config_lint`：先用注册表 schema 校验 JSON/TOML/YAML/RON 配置，再构建树；错误带
   字段路径，支持多文件与 `--json` 报告，任一文件失败时非零退出。
 
@@ -200,7 +203,7 @@ lint 错误、无法格式化或需要格式化的文件时非零退出；`--jso
 |---|---|
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
-| `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
+| `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include、版本迁移（依赖 `std`） |
 | `schema` | `TreeSpec` 与已填充 `NodeRegistry` 的 JSON Schema 生成，支持可选描述、参数 schema、key 值 schema 与 Markdown 节点目录（依赖 `config`） |
 | `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |

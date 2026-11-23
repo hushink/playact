@@ -29,13 +29,15 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant, SystemTime};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::config::{
-    ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
+    ConfigBuildError, ConfigError, ConfigFormat, ConfigMigrator, IncludeResolver, NodeRegistry,
+    TreeParser, TreeSpec,
 };
 use crate::diff::{DiffHistory, TreeDiff};
 use crate::reload::ReloadReport;
@@ -135,6 +137,8 @@ fn collect_watched_includes(resolver: &dyn IncludeResolver) -> Vec<WatchedInclud
         .collect()
 }
 
+type TextParser = Arc<dyn Fn(&str) -> Result<TreeSpec, ConfigError> + Send + Sync>;
+
 /// Watches a configuration file and maintains its behavior tree.
 ///
 /// It watches the directory containing the configuration file (filtering events
@@ -144,7 +148,7 @@ fn collect_watched_includes(resolver: &dyn IncludeResolver) -> Vec<WatchedInclud
 pub struct TreeWatcher<W: 'static> {
     path: PathBuf,
     registry: NodeRegistry<W>,
-    parser: TreeParser,
+    parser: TextParser,
     tree: BehaviorTree<W>,
     resolver: Option<Box<dyn IncludeResolver>>,
     watched_includes: Vec<WatchedInclude>,
@@ -166,7 +170,7 @@ impl<W: 'static> TreeWatcher<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, HotReloadError> {
-        Self::with_parser_impl(path, registry, parser, None)
+        Self::with_text_parser_impl(path, registry, Arc::new(parser), None)
     }
 
     /// Creates a watcher with a custom parser and include resolver.
@@ -182,7 +186,37 @@ impl<W: 'static> TreeWatcher<W> {
         parser: TreeParser,
         resolver: impl IncludeResolver + 'static,
     ) -> Result<Self, HotReloadError> {
-        Self::with_parser_impl(path, registry, parser, Some(Box::new(resolver)))
+        Self::with_text_parser_impl(path, registry, Arc::new(parser), Some(Box::new(resolver)))
+    }
+
+    /// Creates a watcher with a version migration pipeline.
+    ///
+    /// Use [`FsIncludeResolver::auto_with_migrator`](crate::config::FsIncludeResolver::auto_with_migrator)
+    /// together with [`TreeWatcher::with_migrator_and_resolver`] to migrate
+    /// included files as well.
+    pub fn with_migrator(
+        path: impl Into<PathBuf>,
+        registry: NodeRegistry<W>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+    ) -> Result<Self, HotReloadError> {
+        Self::with_text_parser_impl(path, registry, Arc::new(migrator.parser(format)), None)
+    }
+
+    /// Creates a watcher with a version migration pipeline and include resolver.
+    pub fn with_migrator_and_resolver(
+        path: impl Into<PathBuf>,
+        registry: NodeRegistry<W>,
+        migrator: ConfigMigrator,
+        format: ConfigFormat,
+        resolver: impl IncludeResolver + 'static,
+    ) -> Result<Self, HotReloadError> {
+        Self::with_text_parser_impl(
+            path,
+            registry,
+            Arc::new(migrator.parser(format)),
+            Some(Box::new(resolver)),
+        )
     }
 
     /// Creates a watcher with a JSON configuration and an include resolver.
@@ -194,15 +228,15 @@ impl<W: 'static> TreeWatcher<W> {
         Self::with_parser_and_resolver(path, registry, TreeSpec::from_json_str, resolver)
     }
 
-    fn with_parser_impl(
+    fn with_text_parser_impl(
         path: impl Into<PathBuf>,
         registry: NodeRegistry<W>,
-        parser: TreeParser,
+        parser: TextParser,
         resolver: Option<Box<dyn IncludeResolver>>,
     ) -> Result<Self, HotReloadError> {
         let path = path.into();
         let text = fs::read_to_string(&path)?;
-        let spec = parser(&text)?;
+        let spec = parser.as_ref()(&text)?;
         let tree = match resolver.as_deref() {
             Some(resolver) => {
                 resolver.reset_watched_paths();
@@ -477,7 +511,7 @@ impl<W: 'static> TreeWatcher<W> {
 
     fn reload_inner(&mut self) -> Result<(), HotReloadError> {
         let text = fs::read_to_string(&self.path)?;
-        let spec = (self.parser)(&text)?;
+        let spec = self.parser.as_ref()(&text)?;
         let mut new_tree = match self.resolver.as_deref() {
             Some(resolver) => {
                 resolver.reset_watched_paths();
@@ -601,6 +635,21 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn legacy_migrator() -> ConfigMigrator {
+        ConfigMigrator::new()
+            .with_migration(0, |mut document: serde_json::Value| {
+                let object = document
+                    .as_object_mut()
+                    .ok_or_else(|| ConfigError::new("migration input must be an object"))?;
+                let root = object
+                    .remove("tree")
+                    .ok_or_else(|| ConfigError::with_path("tree", "missing legacy tree field"))?;
+                object.insert(String::from("root"), root);
+                Ok(document)
+            })
+            .expect("register migration")
+    }
+
     fn write_limiter_config(path: &Path, action: &str) {
         write_limiter_config_with_max(path, 2, action);
     }
@@ -642,6 +691,45 @@ mod tests {
 
         // The old tree remains usable after a failure.
         assert_eq!(watcher.tree().blackboard().get(&MARKER), Some(&42));
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn migrations_apply_on_initial_load_and_reload() {
+        let path = temp_path();
+        fs::write(
+            &path,
+            r#"{"version":0,"tree":{"type":"action","name":"old"}}"#,
+        )
+        .expect("write initial");
+
+        let mut watcher = TreeWatcher::<()>::with_migrator(
+            &path,
+            registry(),
+            legacy_migrator(),
+            ConfigFormat::Json,
+        )
+        .expect("watcher");
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+
+        fs::write(
+            &path,
+            r#"{"version":0,"tree":{"type":"action","name":"new"}}"#,
+        )
+        .expect("write new");
+        watcher.reload_now().expect("reload");
         assert_eq!(
             watcher.tree_mut().tick(&mut world, Time::ZERO),
             Status::Success
