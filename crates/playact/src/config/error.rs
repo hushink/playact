@@ -154,6 +154,16 @@ pub enum ConfigBuildErrorKind {
         /// Score name.
         name: String,
     },
+    /// Unregistered fallible action name.
+    UnknownTryAction {
+        /// Action name.
+        name: String,
+    },
+    /// Unregistered async action name.
+    UnknownAsyncAction {
+        /// Action name.
+        name: String,
+    },
     /// Unregistered custom kind.
     UnknownCustom {
         /// Custom kind.
@@ -199,6 +209,8 @@ impl fmt::Display for ConfigBuildErrorKind {
             Self::UnknownSetValueKey { key } => write!(f, "unknown set-value key `{key}`"),
             Self::UnknownEventKey { key } => write!(f, "unknown event key `{key}`"),
             Self::UnknownScore { name } => write!(f, "unknown utility score `{name}`"),
+            Self::UnknownTryAction { name } => write!(f, "unknown fallible action `{name}`"),
+            Self::UnknownAsyncAction { name } => write!(f, "unknown async action `{name}`"),
             Self::UnknownCustom { kind } => write!(f, "unknown custom kind `{kind}`"),
             Self::InvalidParams { message } => write!(f, "invalid params: {message}"),
             Self::InvalidThreshold(error) => error.fmt(f),

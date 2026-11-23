@@ -6,11 +6,12 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::async_action::{AsyncAction, AsyncTask};
 use crate::blackboard::Key;
 use crate::composite::Switch;
 use crate::context::Context;
 use crate::event::EventKey;
-use crate::leaf::{Action, Condition, SetValue, WaitForEvent};
+use crate::leaf::{Action, Condition, SetValue, TryAction, WaitForEvent};
 use crate::node::BoxedNode;
 use crate::status::Status;
 
@@ -30,8 +31,16 @@ type SetValueFactory<W> =
 type EventFactory<W> = Box<dyn Fn(Option<&str>) -> BoxedNode<W> + Send + Sync>;
 type BoxedScore<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> f32 + Send + 'static>;
 type ScoreFactory<W> = Box<dyn Fn(&Value) -> Result<BoxedScore<W>, ConfigBuildError> + Send + Sync>;
+type ErasedTryActionFactory<W> =
+    Box<dyn Fn(&Value) -> Result<BoxedNode<W>, ConfigBuildError> + Send + Sync>;
+type ErasedAsyncActionFactory<W> =
+    Box<dyn Fn(&Value) -> Result<BoxedNode<W>, ConfigBuildError> + Send + Sync>;
 type BoxedTick<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Status + Send + 'static>;
+type BoxedTryTick<W, E> =
+    Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Result<Status, E> + Send + 'static>;
 type BoxedPredicate<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static>;
+type BoxedStart<W> =
+    Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send + 'static>;
 
 /// Factory that turns typed params into an independent tick closure per node.
 ///
@@ -90,6 +99,45 @@ where
     }
 }
 
+/// Factory that turns typed params into an independent fallible tick closure.
+///
+/// Callers usually pass a closure directly and never implement this trait manually.
+#[doc(hidden)]
+pub trait TryActionFactory<W, P, E>: Send + Sync + 'static {
+    /// Creates an independent fallible tick closure for one node.
+    fn make(&self, params: P) -> BoxedTryTick<W, E>;
+}
+
+impl<W, P, E, F, A> TryActionFactory<W, P, E> for F
+where
+    F: Fn(P) -> A + Send + Sync + 'static,
+    A: for<'a> FnMut(&mut Context<'a, W>) -> Result<Status, E> + Send + 'static,
+    E: core::fmt::Display + Send + 'static,
+{
+    fn make(&self, params: P) -> BoxedTryTick<W, E> {
+        Box::new(self(params))
+    }
+}
+
+/// Factory that turns typed params into an independent async task starter.
+///
+/// Callers usually pass a closure directly and never implement this trait manually.
+#[doc(hidden)]
+pub trait AsyncActionFactory<W, P>: Send + Sync + 'static {
+    /// Creates an independent task starter for one node.
+    fn make(&self, params: P) -> BoxedStart<W>;
+}
+
+impl<W, P, F, S> AsyncActionFactory<W, P> for F
+where
+    F: Fn(P) -> S + Send + Sync + 'static,
+    S: for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send + 'static,
+{
+    fn make(&self, params: P) -> BoxedStart<W> {
+        Box::new(self(params))
+    }
+}
+
 /// Build-time registry for actions, conditions, predicates, utility scores,
 /// typed key references, and custom node factories.
 ///
@@ -104,6 +152,8 @@ pub struct NodeRegistry<W: 'static> {
     set_value_keys: HashMap<String, SetValueFactory<W>>,
     event_keys: HashMap<String, EventFactory<W>>,
     scores: HashMap<String, ScoreFactory<W>>,
+    try_actions: HashMap<String, ErasedTryActionFactory<W>>,
+    async_actions: HashMap<String, ErasedAsyncActionFactory<W>>,
     custom: HashMap<String, Factory<W>>,
 }
 
@@ -119,6 +169,8 @@ impl<W: 'static> NodeRegistry<W> {
             set_value_keys: HashMap::new(),
             event_keys: HashMap::new(),
             scores: HashMap::new(),
+            try_actions: HashMap::new(),
+            async_actions: HashMap::new(),
             custom: HashMap::new(),
         }
     }
@@ -327,6 +379,55 @@ impl<W: 'static> NodeRegistry<W> {
         Ok(())
     }
 
+    /// Registers a fallible action.
+    ///
+    /// On `Err`, the node reports the error through the installed tracer and
+    /// returns `Failure`, like [`TryAction`].
+    pub fn try_action<P, E>(
+        &mut self,
+        name: impl Into<String>,
+        factory: impl TryActionFactory<W, P, E>,
+    ) -> Result<(), RegistryError>
+    where
+        P: DeserializeOwned + Send + 'static,
+        E: core::fmt::Display + Send + 'static,
+    {
+        let name = name.into();
+        ensure_name_available(&self.try_actions, "try action", &name)?;
+        let display_name = name.clone();
+        let erased: ErasedTryActionFactory<W> = Box::new(move |params| {
+            let params: P = parse_params(params)?;
+            let tick = factory.make(params);
+            Ok(Box::new(TryAction::<W, E>::new(display_name.clone(), tick)))
+        });
+        self.try_actions.insert(name, erased);
+        Ok(())
+    }
+
+    /// Registers an async/remote action.
+    ///
+    /// The factory receives typed params once per node and returns the task
+    /// starter consumed by [`AsyncAction`].
+    pub fn async_action<P>(
+        &mut self,
+        name: impl Into<String>,
+        factory: impl AsyncActionFactory<W, P>,
+    ) -> Result<(), RegistryError>
+    where
+        P: DeserializeOwned + Send + 'static,
+    {
+        let name = name.into();
+        ensure_name_available(&self.async_actions, "async action", &name)?;
+        let display_name = name.clone();
+        let erased: ErasedAsyncActionFactory<W> = Box::new(move |params| {
+            let params: P = parse_params(params)?;
+            let start = factory.make(params);
+            Ok(Box::new(AsyncAction::<W>::new(display_name.clone(), start)))
+        });
+        self.async_actions.insert(name, erased);
+        Ok(())
+    }
+
     /// Registers a custom node factory.
     ///
     /// The factory receives typed params and the already recursively built
@@ -456,6 +557,36 @@ impl<W: 'static> NodeRegistry<W> {
             None => Err(ConfigBuildError::new(ConfigBuildErrorKind::UnknownScore {
                 name: name.to_string(),
             })),
+        }
+    }
+
+    pub(crate) fn build_try_action(
+        &self,
+        name: &str,
+        params: &Value,
+    ) -> Result<BoxedNode<W>, ConfigBuildError> {
+        match self.try_actions.get(name) {
+            Some(factory) => factory(params),
+            None => Err(ConfigBuildError::new(
+                ConfigBuildErrorKind::UnknownTryAction {
+                    name: name.to_string(),
+                },
+            )),
+        }
+    }
+
+    pub(crate) fn build_async_action(
+        &self,
+        name: &str,
+        params: &Value,
+    ) -> Result<BoxedNode<W>, ConfigBuildError> {
+        match self.async_actions.get(name) {
+            Some(factory) => factory(params),
+            None => Err(ConfigBuildError::new(
+                ConfigBuildErrorKind::UnknownAsyncAction {
+                    name: name.to_string(),
+                },
+            )),
         }
     }
 

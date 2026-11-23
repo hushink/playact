@@ -610,7 +610,11 @@ let mut tree = spec.build(&registry)?;
 - Supported node types include sequences, selectors, random/weighted/utility selection,
   race, parallel, mem-parallel, `switch`, `if_then_else`, decorators (including
   `guard`, `while`, throttle, and probability), waits, `wait_until`,
-  `wait_for_event`, `set_value`, actions, conditions, and custom factories.
+  `wait_for_event`, `set_value`, actions, conditions, `try_action`, `async_action`,
+  and custom factories.
+- `try_action` registrations return fallible tick closures; errors are reported
+  through the tracer and become `Failure`. `async_action` registrations return
+  `AsyncTask` starters for thread, Tokio, or custom remote tasks.
 - `condition` registrations also provide predicates for `guard`, `while`,
   `if_then_else`, and `wait_until`; use `registry.predicate` for predicates that are
   not condition leaves. Predicate parameters are typed like action parameters.

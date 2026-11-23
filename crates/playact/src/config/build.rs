@@ -369,6 +369,14 @@ fn build_node<W: 'static>(
             .registry
             .build_condition(name, params, Vec::new())
             .map_err(|error| error.at(path)),
+        SpecNode::TryAction { name, params } => ctx
+            .registry
+            .build_try_action(name, params)
+            .map_err(|error| error.at(path)),
+        SpecNode::AsyncAction { name, params } => ctx
+            .registry
+            .build_async_action(name, params)
+            .map_err(|error| error.at(path)),
         SpecNode::Custom {
             kind,
             name,

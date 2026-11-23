@@ -587,8 +587,10 @@ let mut tree = spec.build(&registry)?;
 - 配置拒绝未知字段；错误路径形如 `root.children[0]`。
 - 支持 sequence、selector、随机/加权/效用选择、race、parallel、mem_parallel、
   `switch`、`if_then_else`、装饰器（含 `guard`、`while`、throttle 与 probability）、
-  wait、`wait_until`、`wait_for_event`、`set_value`、action、condition 与 custom
-  工厂。
+  wait、`wait_until`、`wait_for_event`、`set_value`、action、condition、
+  `try_action`、`async_action` 与 custom 工厂。
+- `try_action` 注册返回可失败的 tick 闭包；错误通过 tracer 上报并转为 `Failure`。
+  `async_action` 注册返回 `AsyncTask` 启动器，可接线程、Tokio 或自定义远程任务。
 - `condition` 注册同时提供 `guard`、`while`、`if_then_else`、`wait_until` 可用的
   谓词；如果谓词不需要作为 condition 叶子出现，可用 `registry.predicate` 注册。
   谓词参数与 action 参数一样在构建期反序列化为具体类型。

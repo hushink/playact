@@ -1,10 +1,10 @@
 //! Optional configuration layer: a pure-data `TreeSpec` plus a build-time `NodeRegistry`.
 //!
 //! The configuration only describes tree structure and leaf parameters; business
-//! actions, conditions, predicates, utility scores, and typed key references are
-//! registered by name at build time by the caller. Parameters are deserialized
-//! into concrete types at build time, so ticks no longer involve
-//! `serde_json::Value` or `Any`.
+//! actions (including fallible and async actions), conditions, predicates,
+//! utility scores, and typed key references are registered by name at build time
+//! by the caller. Parameters are deserialized into concrete types at build time,
+//! so ticks no longer involve `serde_json::Value` or `Any`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -82,6 +82,7 @@ pub struct TreeSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[non_exhaustive]
 pub enum SpecNode {
     /// Memory sequence.
     Sequence {
@@ -420,6 +421,22 @@ pub enum SpecNode {
         #[serde(default)]
         params: Value,
     },
+    /// A registered fallible action.
+    TryAction {
+        /// Action name in the registry, also used as the display name.
+        name: String,
+        /// Parameters.
+        #[serde(default)]
+        params: Value,
+    },
+    /// A registered async/remote action.
+    AsyncAction {
+        /// Action name in the registry, also used as the display name.
+        name: String,
+        /// Parameters.
+        #[serde(default)]
+        params: Value,
+    },
     /// Includes another configuration; requires [`TreeSpec::build_with_resolver`].
     Include {
         /// Path interpreted by the resolver.
@@ -540,6 +557,8 @@ impl SpecNode {
             | Self::SetValue { .. }
             | Self::Action { .. }
             | Self::Condition { .. }
+            | Self::TryAction { .. }
+            | Self::AsyncAction { .. }
             | Self::Include { .. } => Vec::new(),
         }
     }
@@ -1116,6 +1135,85 @@ mod tests {
     }
 
     #[test]
+    fn builds_try_action_from_json() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .try_action::<(), &'static str>("risky", |_| |_: &mut Context<'_, ()>| Err("boom"))
+            .expect("register try action");
+
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"try_action","name":"risky"}}"#)
+            .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::TryAction);
+
+        let stats = crate::stats::StatsTracer::new();
+        tree.set_tracer(Some(Box::new(stats.clone())));
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+        assert_eq!(stats.node(&[]).expect("root stats").errors, 1);
+    }
+
+    #[test]
+    fn try_action_config_rejects_unknown_name() {
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"try_action","name":"missing"}}"#)
+            .expect("valid spec");
+        let error = spec
+            .build(&NodeRegistry::<()>::new())
+            .err()
+            .expect("unknown try action");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownTryAction { name } if name == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+    }
+
+    #[test]
+    fn builds_async_action_from_json() {
+        struct ImmediateTask;
+
+        impl crate::async_action::AsyncTask for ImmediateTask {
+            fn poll(&mut self) -> Status {
+                Status::Success
+            }
+
+            fn cancel(&mut self) {}
+        }
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .async_action::<()>("remote", |_| {
+                |_: &mut Context<'_, ()>| -> Box<dyn crate::async_action::AsyncTask> {
+                    Box::new(ImmediateTask)
+                }
+            })
+            .expect("register async action");
+
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"async_action","name":"remote"}}"#)
+            .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::AsyncAction);
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn async_action_config_rejects_unknown_name() {
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"async_action","name":"missing"}}"#)
+            .expect("valid spec");
+        let error = spec
+            .build(&NodeRegistry::<()>::new())
+            .err()
+            .expect("unknown async action");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownAsyncAction { name } if name == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+    }
+
+    #[test]
     fn wait_for_event_config_rejects_unknown_key() {
         let spec =
             TreeSpec::from_json_str(r#"{"root":{"type":"wait_for_event","event":"missing"}}"#)
@@ -1425,6 +1523,8 @@ mod tests {
         assert!(text.contains("\"set_value\""));
         assert!(text.contains("\"wait_until\""));
         assert!(text.contains("\"wait_for_event\""));
+        assert!(text.contains("\"try_action\""));
+        assert!(text.contains("\"async_action\""));
     }
 
     #[test]
