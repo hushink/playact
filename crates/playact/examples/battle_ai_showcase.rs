@@ -15,7 +15,8 @@
 //! - `wait_for_event` consuming service-published events;
 //! - a `scoped` service wrapping a `contract` subtree, showing input/output keys
 //!   and private state isolation;
-//! - state-preserving hot reload with stable `NodeId`s;
+//! - state-preserving hot reload with stable `NodeId`s, reporting the reload
+//!   revision, timestamp, and restored node count;
 //! - a structural `TreeDiff` after the reload.
 
 use serde::Deserialize;
@@ -256,6 +257,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 watcher.tree().name(),
                 service_names(watcher.tree())
             );
+            if let Some(entry) = watcher.diff_history().latest_entry() {
+                println!(
+                    "reload revision {} at {} ms (restored {} nodes)",
+                    entry.revision,
+                    entry
+                        .timestamp
+                        .map_or_else(|| String::from("unknown"), |ms| ms.to_string()),
+                    watcher.last_restored().unwrap_or(0)
+                );
+            }
             if let Some(diff) = watcher.last_diff() {
                 println!("structural diff:\n{diff}");
             }

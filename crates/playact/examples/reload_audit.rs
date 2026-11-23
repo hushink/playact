@@ -8,8 +8,10 @@
 //!
 //! The example creates a temporary configuration with two nested include files,
 //! edits the innermost file, and reports how the watcher, diff history, and
-//! inspector endpoints observe the change. With `PLAYACT_AUDIT_SERVE=1`, it then
-//! keeps serving the inspector so you can edit the printed file path yourself.
+//! inspector endpoints observe the change. A stateful `limiter` keeps its ID
+//! across reloads, so each report also shows how many nodes restored state.
+//! With `PLAYACT_AUDIT_SERVE=1`, it then keeps serving the inspector so you can
+//! edit the printed file path yourself.
 //!
 //! The inspector has no authentication. Use it for local debugging only.
 
@@ -52,11 +54,27 @@ fn registry() -> NodeRegistry<World> {
 }
 
 fn write_combat(dir: &Path, action: &str) -> io::Result<()> {
+    // `attack_limit` is stateful and keeps its progress across reloads;
+    // `attack_action` gives the renamed leaf a stable identity in the diff.
+    let template = r#"{
+        "root": {
+            "type": "sequence",
+            "children": [
+                {"type": "identified", "id": "attack_limit", "child": {
+                    "type": "limiter",
+                    "max": 1000,
+                    "child": {
+                        "type": "identified",
+                        "id": "attack_action",
+                        "child": {"type": "action", "name": "__ACTION__"}
+                    }
+                }}
+            ]
+        }
+    }"#;
     fs::write(
         dir.join("combat.json"),
-        format!(
-            r#"{{"root":{{"type":"identified","id":"attack_action","child":{{"type":"action","name":"{action}"}}}}}}"#
-        ),
+        template.replace("__ACTION__", action),
     )
 }
 
@@ -174,8 +192,10 @@ fn print_reload(watcher: &TreeWatcher<World>) {
         .timestamp
         .map_or_else(|| String::from("unknown"), |unix_ms| unix_ms.to_string());
     println!(
-        "reload revision {} (timestamp_ms={}):",
-        entry.revision, timestamp
+        "reload revision {} (timestamp_ms={}, restored={}):",
+        entry.revision,
+        timestamp,
+        watcher.last_restored().unwrap_or(0)
     );
     print!("{}", entry.diff);
 }
