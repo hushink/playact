@@ -1162,6 +1162,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "playact-cli"
+version = "0.1.2"
+dependencies = [
+ "jsonschema",
+ "playact",
+ "ron",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "toml",
+]
+
+[[package]]
 name = "playact-macros"
 version = "0.1.2"
 dependencies = [

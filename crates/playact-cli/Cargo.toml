@@ -1,0 +1,28 @@
+[package]
+name = "playact-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Schema, catalog, and lint tools for playact behavior trees"
+publish = false
+
+[lib]
+name = "playact_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "playact"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+playact = { version = "0.1.2", path = "../playact", features = ["config", "schema", "toml", "yaml", "ron"] }
+jsonschema = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+toml = { workspace = true }

@@ -95,3 +95,13 @@ jobs:
           cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron --quiet -- crates/playact/examples/battle_ai.json
           cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron --quiet -- --json crates/playact/examples/battle_ai.json > target/config-lint.json
           grep -q '"valid": true' target/config-lint.json
+
+      - name: CLI smoke
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: |
+          cargo run -p playact-cli --quiet -- schema > target/cli-schema.json
+          grep -q '"sequence"' target/cli-schema.json
+          cargo run -p playact-cli --quiet -- catalog --schema target/playact-schema.json > target/cli-catalog.md
+          grep -Fq '`action.name`' target/cli-catalog.md
+          grep -Fq '`patrol`' target/cli-catalog.md
+          cargo run -p playact-cli --quiet -- lint crates/playact/examples/battle_ai.json

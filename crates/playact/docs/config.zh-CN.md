@@ -359,3 +359,19 @@ cargo run -p playact --example config_lint --features config,schema,toml,yaml,ro
 schema 校验会逐节点深入，错误会指向具体字段；构建错误会带精确的配置路径。`--json`
 输出包含 `source`、`path` 与 `message` 的机器可读报告。任一文件无效时以非零状态退出，
 可作为部署或配置发布流程的门禁。
+
+### CLI
+
+工作区 `playact-cli` crate 提供 `playact` 二进制，包含 `schema`、`catalog` 与
+`lint` 命令：
+
+```text
+cargo run -p playact-cli -- schema > schema.json
+cargo run -p playact-cli -- catalog --schema schema.json
+cargo run -p playact-cli -- lint --schema schema.json config/a.toml config/b.yaml
+```
+
+`schema` 输出基础 `TreeSpec` schema。`catalog` 与 `lint` 接受
+`NodeRegistry::json_schema()` 生成的注册表感知 schema；通过 `--schema` 传入即可包含
+注册名称、描述与参数 schema；未传入时使用基础 schema。`lint` 会解析并校验限制，但
+没有应用注册表，因此不会构建树；需要应用内构建预检时使用 `config_lint` 示例。

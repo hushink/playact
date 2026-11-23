@@ -706,7 +706,8 @@ let mut tree = spec.build(&registry)?;
   渲染为 Markdown 节点目录。测试套件会用注册表生成的 schema 校验仓库示例配置。
 - [`examples/schema_export.rs`](examples/schema_export.rs) 可把该 schema 写到
   `target/playact-schema.json`；[配置参考](docs/config.zh-CN.md#编辑器补全) 给出
-  VS Code 映射示例。
+  VS Code 映射示例。工作区 `playact-cli` crate 还提供 `schema`、`catalog` 与
+  `lint` 命令，可读取注册表感知的 schema 文件。
 - 用 `identified` 包装配置节点可指定稳定 `NodeId`：
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
