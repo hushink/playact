@@ -489,6 +489,9 @@ Built-in stateful nodes implement `save_own_state` / `load_own_state` and
 Custom nodes must implement the same methods to participate. Dynamic `SubtreeSlot`
 children and nested-tree services are not traversed by ID snapshots.
 
+If the new tree may rename or remove IDs, use `restore_by_id_matching`: it applies
+entries whose IDs exist, ignores the rest, and returns the number of nodes restored.
+
 > Node snapshots do not include the world, blackboard values, closure captures,
 > `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those
 > separately. Time-based nodes store absolute `Time.now` values, so restore on the same
@@ -624,6 +627,8 @@ if watcher.poll()? {
 ```
 
 A successful rebuild replaces the tree, preserves blackboard data, and resets node
+state. Enable `with_state_preservation(true)` to also restore own state by stable
+`NodeId` for nodes that still exist; renamed or removed IDs start from their reset
 state. Parse/build failures keep the old tree and return an error. Edits are debounced
 (200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver` for includes.
 
@@ -646,9 +651,11 @@ loader.tree_mut().tick(&mut world, time);
 ```
 
 `RemoteTreeLoader` uses `reqwest::blocking`, supports ETag / Last-Modified, and keeps
-the old tree on refresh errors. Requests happen on the calling thread; use a worker
-thread or a custom `Client` timeout in high-latency environments. Includes are
-available through `json_with_resolver` / `with_client_and_resolver`.
+the old tree on refresh errors. A successful refresh preserves the blackboard and
+resets node state; `with_state_preservation(true)` also restores node state by stable
+`NodeId`, matching the hot-reload behavior. Requests happen on the calling thread; use
+a worker thread or a custom `Client` timeout in high-latency environments. Includes
+are available through `json_with_resolver` / `with_client_and_resolver`.
 
 Response bodies are limited to `MAX_REMOTE_CONFIG_BYTES` (1 MiB), must be UTF-8, and
 are checked with `TreeSpec::validate` using `ValidationLimits::default()` before build.

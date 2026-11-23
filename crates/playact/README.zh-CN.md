@@ -474,6 +474,9 @@ rebuilt.restore_by_id(&snapshot)?;
 因此即使子节点重排，也会按 ID 恢复自身进度。自定义节点需要实现相同方法才能参与。
 ID 快照不会遍历 `SubtreeSlot` 的动态子节点或嵌套树的 services。
 
+如果新树可能改名或删除 ID，使用 `restore_by_id_matching`：它只应用仍存在 ID 的
+条目，忽略其余条目，并返回恢复的节点数量。
+
 > 节点快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot`
 > 动态子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，
 > 应在同一时间轴上恢复，或 reset 后重新建立。
@@ -601,7 +604,9 @@ if watcher.poll()? {
 }
 ```
 
-成功重建会替换旧树、保留黑板数据并重置节点状态；解析/构建失败保留旧树并返回
+成功重建会替换旧树、保留黑板数据并重置节点状态。启用
+`with_state_preservation(true)` 后，还会按稳定的 `NodeId` 为仍然存在的节点恢复
+自身状态；被改名或删除的 ID 从 reset 状态开始。解析/构建失败保留旧树并返回
 错误。默认 200ms 去抖。include 使用 `json_with_resolver` /
 `with_parser_and_resolver`。
 
@@ -624,8 +629,10 @@ loader.tree_mut().tick(&mut world, time);
 ```
 
 `RemoteTreeLoader` 使用 `reqwest::blocking`，支持 ETag / Last-Modified，刷新失败
-保留旧树。请求在调用线程同步执行；高延迟环境请放到工作线程或设置 Client 超时。
-include 使用 `json_with_resolver` / `with_client_and_resolver`。
+保留旧树。成功刷新会保留黑板并重置节点状态；`with_state_preservation(true)` 还会
+按稳定 `NodeId` 恢复仍存在节点的状态，与热重载行为一致。请求在调用线程同步执行；
+高延迟环境请放到工作线程或设置 Client 超时。include 使用
+`json_with_resolver` / `with_client_and_resolver`。
 
 响应体限制为 `MAX_REMOTE_CONFIG_BYTES`（1 MiB），必须是 UTF-8，并在构建前通过
 `TreeSpec::validate`（默认 `ValidationLimits`）校验；过大或结构过深的配置会被拒绝。

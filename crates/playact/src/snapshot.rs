@@ -250,6 +250,23 @@ pub(crate) fn apply_by_id<W>(
     services: &mut [BoxedNode<W>],
     snapshot: &NodeIdSnapshot,
 ) -> Result<(), NodeIdSnapshotError> {
+    apply_by_id_with_policy(root, services, snapshot, true).map(|_| ())
+}
+
+pub(crate) fn apply_by_id_matching<W>(
+    root: &mut BoxedNode<W>,
+    services: &mut [BoxedNode<W>],
+    snapshot: &NodeIdSnapshot,
+) -> Result<usize, NodeIdSnapshotError> {
+    apply_by_id_with_policy(root, services, snapshot, false)
+}
+
+fn apply_by_id_with_policy<W>(
+    root: &mut BoxedNode<W>,
+    services: &mut [BoxedNode<W>],
+    snapshot: &NodeIdSnapshot,
+    deny_unknown: bool,
+) -> Result<usize, NodeIdSnapshotError> {
     if snapshot.version != NODE_ID_SNAPSHOT_VERSION {
         return Err(NodeIdSnapshotError::UnsupportedVersion {
             found: snapshot.version,
@@ -263,40 +280,45 @@ pub(crate) fn apply_by_id<W>(
     }
 
     let mut seen = BTreeSet::new();
-    restore_node_by_id(root.as_mut(), snapshot, &mut seen)?;
+    let mut restored = 0;
+    restore_node_by_id(root.as_mut(), snapshot, &mut seen, &mut restored)?;
     for service in services.iter_mut() {
-        restore_node_by_id(service.as_mut(), snapshot, &mut seen)?;
+        restore_node_by_id(service.as_mut(), snapshot, &mut seen, &mut restored)?;
     }
 
-    for id in snapshot.nodes.keys() {
-        if !seen.contains(id) {
-            return Err(NodeIdSnapshotError::UnknownId(String::from(id.as_str())));
+    if deny_unknown {
+        for id in snapshot.nodes.keys() {
+            if !seen.contains(id) {
+                return Err(NodeIdSnapshotError::UnknownId(String::from(id.as_str())));
+            }
         }
     }
 
-    Ok(())
+    Ok(restored)
 }
 
 fn restore_node_by_id<W>(
     node: &mut (dyn Node<W> + Send),
     snapshot: &NodeIdSnapshot,
     seen: &mut BTreeSet<NodeId>,
+    restored: &mut usize,
 ) -> Result<(), NodeIdSnapshotError> {
     if let Some(id) = node.id().cloned() {
         if !seen.insert(id.clone()) {
             return Err(NodeIdSnapshotError::DuplicateId(String::from(id.as_str())));
         }
-        if let Some(state) = snapshot.nodes.get(&id)
-            && !node.load_own_state(state)
-        {
-            return Err(NodeIdSnapshotError::InvalidState {
-                id: String::from(id.as_str()),
-            });
+        if let Some(state) = snapshot.nodes.get(&id) {
+            if !node.load_own_state(state) {
+                return Err(NodeIdSnapshotError::InvalidState {
+                    id: String::from(id.as_str()),
+                });
+            }
+            *restored += 1;
         }
     }
 
     for child in node.children_mut() {
-        restore_node_by_id(child.as_mut(), snapshot, seen)?;
+        restore_node_by_id(child.as_mut(), snapshot, seen, restored)?;
     }
 
     Ok(())
@@ -709,6 +731,55 @@ mod tests {
             original.restore_by_id(&corrupt),
             Err(NodeIdSnapshotError::InvalidState { id }) if id == "a"
         ));
+    }
+
+    #[test]
+    fn id_snapshot_matching_ignores_unknown_ids() {
+        let mut original = BehaviorTreeBuilder::<()>::new("original")
+            .wait(Duration::from_millis(100))
+            .id("a")
+            .build()
+            .expect("tree");
+        let mut world = ();
+        assert_eq!(
+            original.tick(&mut world, Time::from_millis(20, 20)),
+            Status::Running
+        );
+        let snapshot = original.snapshot_by_id().expect("snapshot");
+
+        let mut renamed = BehaviorTreeBuilder::<()>::new("renamed")
+            .wait(Duration::from_millis(100))
+            .id("b")
+            .build()
+            .expect("tree");
+        assert!(matches!(
+            renamed.restore_by_id(&snapshot),
+            Err(NodeIdSnapshotError::UnknownId(id)) if id == "a"
+        ));
+        assert_eq!(
+            renamed.restore_by_id_matching(&snapshot).expect("matching"),
+            0
+        );
+
+        let mut matching = BehaviorTreeBuilder::<()>::new("matching")
+            .wait(Duration::from_millis(100))
+            .id("a")
+            .build()
+            .expect("tree");
+        assert_eq!(
+            matching
+                .restore_by_id_matching(&snapshot)
+                .expect("matching"),
+            1
+        );
+        assert_eq!(
+            matching.tick(&mut world, Time::from_millis(100, 80)),
+            Status::Running
+        );
+        assert_eq!(
+            matching.tick(&mut world, Time::from_millis(120, 20)),
+            Status::Success
+        );
     }
 
     #[test]

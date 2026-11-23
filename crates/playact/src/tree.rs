@@ -360,6 +360,25 @@ impl<W> BehaviorTree<W> {
         result
     }
 
+    /// Restores state from an ID-keyed snapshot for IDs that exist in this tree.
+    ///
+    /// Snapshot entries without a matching ID are ignored, which makes this
+    /// suitable for applying a snapshot after a configuration change that
+    /// renames or removes nodes. The tree is reset first; duplicate IDs in the
+    /// tree and rejected state still return an error, and a failed restore may
+    /// leave the tree partially restored. Returns the number of nodes that
+    /// loaded state.
+    pub fn restore_by_id_matching(
+        &mut self,
+        snapshot: &crate::snapshot::NodeIdSnapshot,
+    ) -> Result<usize, crate::snapshot::NodeIdSnapshotError> {
+        let result =
+            crate::snapshot::apply_by_id_matching(&mut self.root, &mut self.services, snapshot);
+        self.last_status = None;
+        self.service_status.fill(None);
+        result
+    }
+
     /// Extracts the root node so the tree can be reused as a subtree.
     ///
     /// Note: this discards the blackboard, tracer, and service nodes, but keeps

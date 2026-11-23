@@ -8,7 +8,10 @@
 //!
 //! Refresh semantics match hot reload:
 //! - Once a new configuration builds successfully it replaces the old tree,
-//!   blackboard data is preserved, and node-internal state is reset;
+//!   blackboard data is preserved, and node-internal state is reset by default;
+//! - With [`RemoteTreeLoader::with_state_preservation`] enabled, node state is
+//!   also restored by stable `NodeId` for nodes that still exist; renamed or
+//!   removed IDs start from their reset state;
 //! - On parse/build/network failure the old tree stays untouched and the error
 //!   is returned;
 //! - ETag / Last-Modified conditional requests are supported, and a 304 skips
@@ -131,6 +134,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     last_refresh: Instant,
     etag: Option<String>,
     last_modified: Option<String>,
+    preserve_state: bool,
 }
 
 impl<W: 'static> RemoteTreeLoader<W> {
@@ -263,6 +267,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             last_refresh: Instant::now(),
             etag,
             last_modified,
+            preserve_state: false,
         })
     }
 
@@ -326,6 +331,19 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self
     }
 
+    /// Enables or disables node-state preservation across refreshes.
+    ///
+    /// When enabled, the loader captures an ID-keyed snapshot before rebuilding
+    /// and restores state for nodes whose `NodeId` still exists in the new
+    /// configuration. Nodes without an ID, nodes whose ID was renamed or
+    /// removed, and nodes that do not support own-state snapshots start from
+    /// their reset state. The blackboard is preserved regardless of this option.
+    #[must_use]
+    pub fn with_state_preservation(mut self, preserve: bool) -> Self {
+        self.preserve_state = preserve;
+        self
+    }
+
     /// Remote configuration URL.
     #[must_use]
     pub fn url(&self) -> &str {
@@ -386,8 +404,21 @@ impl<W: 'static> RemoteTreeLoader<W> {
             return Ok(false);
         };
 
+        let snapshot = if self.preserve_state {
+            self.tree.snapshot_by_id().ok()
+        } else {
+            None
+        };
+
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
+
+        if let Some(snapshot) = &snapshot
+            && new_tree.restore_by_id_matching(snapshot).is_err()
+        {
+            new_tree.reset();
+        }
+
         self.tree = new_tree;
         self.etag = etag;
         self.last_modified = last_modified;
@@ -546,6 +577,12 @@ mod tests {
         format!(r#"{{"root":{{"type":"action","name":"{action}"}}}}"#)
     }
 
+    fn limiter_body(action: &str) -> String {
+        format!(
+            r#"{{"root":{{"type":"identified","id":"limit","child":{{"type":"limiter","max":2,"child":{{"type":"action","name":"{action}"}}}}}}}}"#
+        )
+    }
+
     fn serve_sequence(bodies: Vec<String>) -> String {
         serve_sequence_with_headers(bodies, "")
     }
@@ -591,6 +628,32 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut loader), vec!["new"]);
+    }
+
+    #[test]
+    fn refresh_can_preserve_node_state_by_id() {
+        let url = serve_sequence(vec![limiter_body("old"), limiter_body("new")]);
+        let mut loader = RemoteTreeLoader::<()>::json(url, registry())
+            .expect("remote loader")
+            .with_state_preservation(true);
+
+        let mut world = ();
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["old"]);
+
+        assert!(loader.refresh_now().expect("refresh"));
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["new"]);
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Failure
+        );
     }
 
     #[test]

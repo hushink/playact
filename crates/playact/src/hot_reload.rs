@@ -7,7 +7,11 @@
 //!
 //! Reload semantics:
 //! - New configuration parses/builds successfully: the new tree replaces the old
-//!   one and **blackboard data is preserved**; node-internal state is reset;
+//!   one and **blackboard data is preserved**; node-internal state is reset by
+//!   default;
+//! - With [`TreeWatcher::with_state_preservation`] enabled, node state is also
+//!   restored by stable `NodeId` for nodes that still exist in the new tree;
+//!   renamed or removed IDs start from their reset state;
 //! - Parse/build failure: the old tree stays untouched and the error is returned
 //!   to the caller;
 //! - Tracers are not preserved; reinstall them through [`TreeWatcher::tree_mut`]
@@ -105,6 +109,7 @@ pub struct TreeWatcher<W: 'static> {
     events: Receiver<notify::Result<Event>>,
     debounce: Duration,
     pending_since: Option<Instant>,
+    preserve_state: bool,
 }
 
 impl<W: 'static> TreeWatcher<W> {
@@ -177,6 +182,7 @@ impl<W: 'static> TreeWatcher<W> {
             events,
             debounce: Duration::from_millis(200),
             pending_since: None,
+            preserve_state: false,
         })
     }
 
@@ -219,6 +225,19 @@ impl<W: 'static> TreeWatcher<W> {
     #[must_use]
     pub fn with_debounce(mut self, debounce: Duration) -> Self {
         self.debounce = debounce;
+        self
+    }
+
+    /// Enables or disables node-state preservation across reloads.
+    ///
+    /// When enabled, the watcher captures an ID-keyed snapshot before rebuilding
+    /// and restores state for nodes whose `NodeId` still exists in the new
+    /// configuration. Nodes without an ID, nodes whose ID was renamed or
+    /// removed, and nodes that do not support own-state snapshots start from
+    /// their reset state. The blackboard is preserved regardless of this option.
+    #[must_use]
+    pub fn with_state_preservation(mut self, preserve: bool) -> Self {
+        self.preserve_state = preserve;
         self
     }
 
@@ -306,8 +325,21 @@ impl<W: 'static> TreeWatcher<W> {
             None => spec.build(&self.registry)?,
         };
 
+        let snapshot = if self.preserve_state {
+            self.tree.snapshot_by_id().ok()
+        } else {
+            None
+        };
+
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
+
+        if let Some(snapshot) = &snapshot
+            && new_tree.restore_by_id_matching(snapshot).is_err()
+        {
+            new_tree.reset();
+        }
+
         self.tree = new_tree;
 
         Ok(())
@@ -393,6 +425,13 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn write_limiter_config(path: &Path, action: &str) {
+        let config = format!(
+            r#"{{"root":{{"type":"identified","id":"limit","child":{{"type":"limiter","max":2,"child":{{"type":"action","name":"{action}"}}}}}}}}"#
+        );
+        fs::write(path, config).expect("write limiter config");
+    }
+
     #[test]
     fn reload_rebuilds_and_preserves_blackboard() {
         let path = temp_path();
@@ -428,6 +467,75 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut watcher), vec!["new"]);
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_resets_node_state_by_default() {
+        let path = temp_path();
+        write_limiter_config(&path, "old");
+
+        let mut watcher = TreeWatcher::<()>::json(&path, registry()).expect("watcher");
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+
+        write_limiter_config(&path, "new");
+        watcher.reload_now().expect("reload");
+
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Failure
+        );
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_can_preserve_node_state_by_id() {
+        let path = temp_path();
+        write_limiter_config(&path, "old");
+
+        let mut watcher = TreeWatcher::<()>::json(&path, registry())
+            .expect("watcher")
+            .with_state_preservation(true);
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+
+        write_limiter_config(&path, "new");
+        watcher.reload_now().expect("reload");
+
+        // The limiter already consumed one of its two runs before the reload.
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Failure
+        );
+        assert!(drain(&mut watcher).is_empty());
 
         drop(watcher);
         let _ = fs::remove_file(path);
