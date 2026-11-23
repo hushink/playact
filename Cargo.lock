@@ -1168,6 +1168,7 @@ dependencies = [
  "jsonschema",
  "playact",
  "ron",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml_ng",

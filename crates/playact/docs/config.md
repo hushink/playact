@@ -145,6 +145,26 @@ TOML, YAML, and RON work:
 }
 ```
 
+Generate the manifest schema and a starter manifest:
+
+```text
+cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --init migrations.json
+```
+
+`--init` chooses JSON, TOML, YAML, or RON from the extension and refuses to
+overwrite an existing file; the starter contains a `0 -> 1` step with no
+operations. Associate `migrations.schema.json` with manifest files in the editor,
+for example in VS Code:
+
+```json
+{
+  "json.schemas": [
+    {"fileMatch": ["migrations.json"], "url": "./migrations.schema.json"}
+  ]
+}
+```
+
 - `version` is the manifest format version (`1`), not the configuration version.
 - `from` is the source configuration version. Rules use the same chain and
   stamping semantics as `ConfigMigrator`: versions run until `CURRENT_VERSION`.
@@ -530,6 +550,8 @@ cargo run -p playact-cli -- fmt --recursive --schema schema.json config/root.jso
 cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
+cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
@@ -574,8 +596,9 @@ formatting status. `migrate` applies a declarative manifest to every root and
 included file, validates the migrated graph, and writes in place only when all
 files are valid; `--check` reports pending migrations without writing, `--diff`
 prints field-level changes, `--patch` prints unified diffs, `--output DIR` stages
-the complete graph, and `--json` reports per-root results with changes. RON
-formatting serializes the parsed spec
+the complete graph, and `--json` reports per-root results with changes.
+`--manifest-schema` prints the manifest JSON Schema, and `--init PATH` writes a
+starter manifest. RON formatting serializes the parsed spec
 because RON's generic map syntax does not deserialize as a `TreeSpec`; other
 formats preserve the original field presence. `diff` validates both inputs, then
 reports

@@ -124,6 +124,8 @@ file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
 usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] CONFIG...
+       playact migrate --manifest-schema
+       playact migrate --init PATH
 
 Applies versioned declarative operations from a manifest to each configuration
 and its include graph, then validates every result. Operations are
@@ -134,7 +136,11 @@ written in place only when the whole graph is valid, or into a new/empty
 root, cannot be combined with --check, and stages the complete include graph.
 --check reports files that would change without writing; --diff prints
 field-level changes; --patch prints unified diffs; --json prints per-root reports
-including changes. --patch and --json are mutually exclusive.";
+including changes. --patch and --json are mutually exclusive.
+
+--manifest-schema prints the manifest JSON Schema. --init PATH writes a starter
+manifest, choosing JSON/TOML/YAML/RON from the extension and refusing to
+overwrite an existing file.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -854,6 +860,8 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut json_output = false;
     let mut diff_output = false;
     let mut patch_output = false;
+    let mut show_manifest_schema = false;
+    let mut init_manifest = None;
     let mut options_done = false;
     let mut files = Vec::new();
     let mut arguments = arguments.into_iter();
@@ -864,6 +872,14 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 Some("-h" | "--help") => {
                     println!("{MIGRATE_USAGE}");
                     return Ok(Outcome::Success);
+                }
+                Some("--manifest-schema") => {
+                    show_manifest_schema = true;
+                    continue;
+                }
+                Some("--init") => {
+                    init_manifest = Some(next_path(&mut arguments, "--init")?);
+                    continue;
                 }
                 Some("--check") => {
                     check = true;
@@ -908,6 +924,49 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             }
         }
         files.push(PathBuf::from(argument));
+    }
+    if show_manifest_schema || init_manifest.is_some() {
+        if show_manifest_schema && init_manifest.is_some() {
+            return Err(String::from("--manifest-schema cannot be combined with --init").into());
+        }
+        if !files.is_empty()
+            || manifest_path.is_some()
+            || schema_path.is_some()
+            || include_base.is_some()
+            || output.is_some()
+            || check
+            || json_output
+            || diff_output
+            || patch_output
+        {
+            return Err(String::from(
+                "manifest generation options cannot be combined with other options or paths",
+            )
+            .into());
+        }
+        if show_manifest_schema {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&migrate::manifest_schema())?
+            );
+            return Ok(Outcome::Success);
+        }
+        let init_manifest = init_manifest.expect("checked above");
+        if init_manifest.exists() {
+            return Err(format!(
+                "refusing to overwrite `{}`",
+                lint::display_path(&init_manifest)
+            )
+            .into());
+        }
+        let format = format::Format::from_path(&init_manifest)?;
+        let bytes = format.serialize_document(&migrate::manifest_template())?;
+        write_output(Some(&init_manifest), &bytes)?;
+        println!(
+            "wrote migration manifest {}",
+            lint::display_path(&init_manifest)
+        );
+        return Ok(Outcome::Success);
     }
     if files.is_empty() {
         return Err(String::from("migrate requires at least one configuration path").into());

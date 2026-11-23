@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use playact::config::{NodeCategory, NodeRegistry};
 use playact::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 struct TempFile {
     path: PathBuf,
@@ -1613,6 +1613,129 @@ fn migrate_output_requires_exactly_one_root() {
     let stderr = String::from_utf8_lossy(&migrated.stderr);
     assert!(stderr.contains("exactly one"), "{stderr}");
     assert!(!output.exists());
+}
+
+#[test]
+fn migrate_manifest_schema_and_init_template() {
+    let directory = TempDir::new();
+    let schema_output = run(&["migrate", "--manifest-schema"]);
+    assert!(schema_output.status.success(), "{schema_output:?}");
+    let schema: Value =
+        serde_json::from_slice(&schema_output.stdout).expect("manifest schema JSON");
+    assert_eq!(
+        schema["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    let operations = schema
+        .pointer("/$defs/Operation/oneOf")
+        .and_then(Value::as_array)
+        .expect("operation variants");
+    assert!(
+        operations
+            .iter()
+            .any(|variant| variant.pointer("/properties/op/const") == Some(&json!("map_values"))),
+        "{schema}"
+    );
+    let validator = jsonschema::validator_for(&schema).expect("valid manifest schema");
+    validator
+        .validate(&serde_json::json!({
+            "version": 1,
+            "migrations": [{
+                "from": 0,
+                "operations": [{
+                    "op": "map_values",
+                    "field": "type",
+                    "map": {"legacy_wait": "wait"}
+                }]
+            }]
+        }))
+        .expect("valid manifest");
+    assert!(
+        validator
+            .validate(&serde_json::json!({
+                "version": 1,
+                "migrations": [{"from": 0, "operations": [{"op": "unknown"}]}]
+            }))
+            .is_err(),
+        "unknown operations must be rejected"
+    );
+
+    let template_path = directory.path.join("migrations.json");
+    let init = run(&[
+        "migrate",
+        "--init",
+        template_path.to_str().expect("template path"),
+    ]);
+    assert!(init.status.success(), "{init:?}");
+    let template: Value =
+        serde_json::from_str(&fs::read_to_string(&template_path).expect("template"))
+            .expect("template JSON");
+    validator
+        .validate(&template)
+        .expect("template follows schema");
+    assert_eq!(template["migrations"][0]["from"], 0);
+    assert_eq!(
+        template["migrations"][0]["operations"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        template_path.to_str().expect("template path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let value: Value =
+        serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
+    assert_eq!(value["version"], 1);
+
+    let original = fs::read_to_string(&template_path).expect("template");
+    let repeated = run(&[
+        "migrate",
+        "--init",
+        template_path.to_str().expect("template path"),
+    ]);
+    assert!(!repeated.status.success(), "{repeated:?}");
+    let stderr = String::from_utf8_lossy(&repeated.stderr);
+    assert!(stderr.contains("refusing to overwrite"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&template_path).expect("template"),
+        original
+    );
+}
+
+#[test]
+fn migrate_init_supports_yaml_manifests() {
+    let directory = TempDir::new();
+    let template_path = directory.path.join("migrations.yaml");
+    let init = run(&[
+        "migrate",
+        "--init",
+        template_path.to_str().expect("template path"),
+    ]);
+    assert!(init.status.success(), "{init:?}");
+
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        template_path.to_str().expect("template path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let value: Value =
+        serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
+    assert_eq!(value["version"], 1);
 }
 
 #[test]

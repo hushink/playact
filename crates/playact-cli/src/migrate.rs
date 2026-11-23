@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use playact::config::{ConfigError, ConfigMigrator, MAX_INCLUDE_DEPTH, TreeSpec};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -17,79 +18,119 @@ use crate::lint::{self, LintIssue, collect_includes, display_path, resolve_base,
 
 const MANIFEST_VERSION: u32 = 1;
 
-#[derive(Debug, Deserialize)]
+/// Declarative migration manifest.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
+    /// Manifest format version. Only `1` is supported.
     #[serde(default = "default_manifest_version")]
     version: u32,
+    /// Ordered list of versioned migration steps.
     migrations: Vec<MigrationStep>,
 }
 
-#[derive(Debug, Deserialize)]
+/// One versioned migration step.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct MigrationStep {
+    /// Source configuration version; the step upgrades it to `from + 1`.
     from: u32,
+    /// Operations applied in order to the raw document.
     operations: Vec<Operation>,
 }
 
-#[derive(Debug, Deserialize)]
+/// One declarative migration operation.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "op", deny_unknown_fields)]
 enum Operation {
+    /// Rename an object field.
     #[serde(rename = "rename_field")]
     Rename {
+        /// Optional JSON Pointer targeting one object. Mutually exclusive with `where`.
         #[serde(default)]
         at: Option<String>,
+        /// Recursively apply to objects whose listed fields equal these values.
         #[serde(default, rename = "where")]
         r#where: Option<BTreeMap<String, Value>>,
+        /// Existing field name.
         from: String,
+        /// New field name.
         to: String,
     },
+    /// Remove an object field.
     #[serde(rename = "remove_field")]
     Remove {
+        /// Optional JSON Pointer targeting one object. Mutually exclusive with `where`.
         #[serde(default)]
         at: Option<String>,
+        /// Recursively apply to objects whose listed fields equal these values.
         #[serde(default, rename = "where")]
         r#where: Option<BTreeMap<String, Value>>,
+        /// Field to remove.
         field: String,
     },
+    /// Insert a field when missing, or overwrite it when `overwrite` is true.
     #[serde(rename = "set_field")]
     Set {
+        /// Optional JSON Pointer targeting one object. Mutually exclusive with `where`.
         #[serde(default)]
         at: Option<String>,
+        /// Recursively apply to objects whose listed fields equal these values.
         #[serde(default, rename = "where")]
         r#where: Option<BTreeMap<String, Value>>,
+        /// Field to insert.
         field: String,
+        /// Value to insert.
         value: Value,
+        /// Replace an existing field instead of keeping it.
         #[serde(default)]
         overwrite: bool,
     },
+    /// Replace one field value when it equals `from`.
     #[serde(rename = "rename_value")]
     RenameValue {
+        /// Optional JSON Pointer targeting one object. Mutually exclusive with `where`.
         #[serde(default)]
         at: Option<String>,
+        /// Recursively apply to objects whose listed fields equal these values.
         #[serde(default, rename = "where")]
         r#where: Option<BTreeMap<String, Value>>,
+        /// Field whose value is matched.
         field: String,
+        /// Value to replace.
         from: Value,
+        /// Replacement value.
         to: Value,
     },
+    /// Map several string values of one field.
     #[serde(rename = "map_values")]
     MapValues {
+        /// Optional JSON Pointer targeting one object. Mutually exclusive with `where`.
         #[serde(default)]
         at: Option<String>,
+        /// Recursively apply to objects whose listed fields equal these values.
+        /// When neither `at` nor `where` is set, every object is visited.
         #[serde(default, rename = "where")]
         r#where: Option<BTreeMap<String, Value>>,
+        /// Field whose value is mapped.
         field: String,
+        /// String value to replacement JSON value.
         map: BTreeMap<String, Value>,
     },
+    /// Multiply and optionally offset a numeric field.
     #[serde(rename = "scale")]
     Scale {
+        /// Optional JSON Pointer targeting one object. Mutually exclusive with `where`.
         #[serde(default)]
         at: Option<String>,
+        /// Recursively apply to objects whose listed fields equal these values.
         #[serde(default, rename = "where")]
         r#where: Option<BTreeMap<String, Value>>,
+        /// Numeric field to scale.
         field: String,
+        /// Multiplication factor.
         multiply: f64,
+        /// Additive offset applied after multiplication.
         #[serde(default)]
         add: f64,
     },
@@ -481,6 +522,30 @@ pub(crate) struct MigrationReport {
 pub(crate) struct MigrationOutcome {
     pub reports: Vec<MigrationReport>,
     pub writes: Vec<PendingWrite>,
+}
+
+/// JSON Schema for declarative migration manifests.
+pub(crate) fn manifest_schema() -> Value {
+    let mut schema = serde_json::to_value(schemars::schema_for!(Manifest))
+        .expect("manifest schema serialization cannot fail");
+    if let Some(version) = schema.pointer_mut("/properties/version") {
+        version["const"] = Value::from(MANIFEST_VERSION);
+        version["default"] = Value::from(MANIFEST_VERSION);
+    }
+    schema
+}
+
+/// Starter manifest written by `migrate --init`.
+pub(crate) fn manifest_template() -> Value {
+    serde_json::json!({
+        "version": MANIFEST_VERSION,
+        "migrations": [
+            {
+                "from": 0,
+                "operations": []
+            }
+        ]
+    })
 }
 
 /// Result of staging a migrated include graph into a directory.

@@ -22,6 +22,7 @@ doc = false
 playact = { version = "0.1.2", path = "../playact", features = ["config", "schema", "toml", "yaml", "ron"] }
 jsonschema = { workspace = true }
 ron = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml_ng = { workspace = true }

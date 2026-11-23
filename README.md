@@ -181,6 +181,8 @@ cargo run -p playact-cli -- fmt --recursive config/root.json
 cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json config/root.json
+cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
@@ -221,8 +223,11 @@ defaults, and numeric scaling to each configuration and its include graph,
 validates the migrated result, then writes changed files in place or stages the
 complete graph with `--output DIR`. `--check` reports changes without writing,
 `--diff` prints field-level changes, `--patch` prints unified diffs, and `--json`
-reports per-root results including changes. Declarative rules cannot express
-arbitrary Rust migrations; use `ConfigMigrator` in the application for those. `diff` validates two configurations, then reports path-based node,
+reports per-root results including changes. `--manifest-schema` prints the
+manifest JSON Schema for editor completion, and `--init PATH` writes a starter
+manifest in the format selected by the extension. Declarative rules cannot
+express arbitrary Rust migrations; use `ConfigMigrator` in the application for
+those. `diff` validates two configurations, then reports path-based node,
 parameter, and include-file set changes; child nodes are matched by type and
 name/kind/key, so insertions and reorders report moves rather than changing every
 later index. Included files with matching relative paths are compared

@@ -125,6 +125,10 @@ jobs:
           printf '%s\n' '{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}' > "$migrate_dir/root.json"
           printf '%s\n' '{"version":0,"tree":{"type":"action","name":"anything"}}' > "$migrate_dir/shared.json"
           printf '%s\n' '{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"tree","to":"root"}]}]}' > "$migrate_dir/migrations.json"
+          cargo run -p playact-cli --quiet -- migrate --manifest-schema > target/migrations.schema.json
+          grep -q '"rename_field"' target/migrations.schema.json
+          cargo run -p playact-cli --quiet -- migrate --init "$migrate_dir/init.json"
+          grep -q '"migrations"' "$migrate_dir/init.json"
           if cargo run -p playact-cli --quiet -- migrate --check --diff --patch --manifest "$migrate_dir/migrations.json" "$migrate_dir/root.json"; then
             echo "migrate --check should report pending migrations"
             exit 1

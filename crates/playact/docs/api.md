@@ -1087,7 +1087,8 @@ must declare it. `FsIncludeResolver` migrates every included file;
 For simple field renames, removals, defaults, value mappings, and numeric
 scaling, `playact migrate --manifest` can upgrade roots and includes without
 application code; `--diff` previews field-level changes, `--patch` prints unified
-diffs, and `--output DIR` stages the complete include graph.
+diffs, and `--output DIR` stages the complete include graph. `--manifest-schema`
+and `--init PATH` provide editor completion and a starter manifest.
 
 ### Validation and schema
 
