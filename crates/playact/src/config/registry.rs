@@ -20,6 +20,8 @@ use crate::scope::ScopedKeySpec;
 use crate::status::Status;
 use crate::subtree::SubtreeFactory;
 
+#[cfg(feature = "schema")]
+use super::catalog::{self, CatalogEntry};
 use super::error::{ConfigBuildError, ConfigBuildErrorKind, RegistryError};
 
 type Factory<W> =
@@ -742,6 +744,61 @@ impl<W: 'static> NodeRegistry<W> {
         schema
     }
 
+    /// Renders registered names and metadata as a Markdown node catalog.
+    ///
+    /// Requires the `schema` feature. Entries are grouped by category and sorted
+    /// by name, so the output is deterministic. The parameter column summarizes
+    /// the schemas attached with [`NodeRegistry::describe_params`],
+    /// [`NodeRegistry::describe_switch_key`], and
+    /// [`NodeRegistry::describe_set_value_key`].
+    #[cfg(feature = "schema")]
+    #[must_use]
+    pub fn markdown_catalog(&self) -> String {
+        const SECTIONS: &[(&str, &str, NodeCategory)] = &[
+            ("Actions", "Parameters", NodeCategory::Action),
+            ("Fallible actions", "Parameters", NodeCategory::TryAction),
+            ("Async actions", "Parameters", NodeCategory::AsyncAction),
+            ("Conditions", "Parameters", NodeCategory::Condition),
+            ("Predicates", "Parameters", NodeCategory::Predicate),
+            ("Utility scores", "Parameters", NodeCategory::Score),
+            ("Custom nodes", "Parameters", NodeCategory::Custom),
+            ("Subtree templates", "Parameters", NodeCategory::Subtree),
+            ("Switch keys", "Value", NodeCategory::SwitchKey),
+            ("Set-value keys", "Value", NodeCategory::SetValueKey),
+            ("Event keys", "Details", NodeCategory::EventKey),
+            ("Scoped keys", "Details", NodeCategory::ScopedKey),
+            ("Contract keys", "Details", NodeCategory::ContractKey),
+        ];
+
+        let mut sections = Vec::new();
+        for &(title, column, category) in SECTIONS {
+            let entries: Vec<CatalogEntry> = self
+                .names_for(category)
+                .into_iter()
+                .map(|name| {
+                    let doc = self
+                        .docs
+                        .get(&category)
+                        .and_then(|entries| entries.get(&name));
+                    CatalogEntry {
+                        description: doc.and_then(|doc| doc.description.clone()),
+                        schema: doc
+                            .and_then(|doc| doc.params.clone().or_else(|| doc.value.clone())),
+                        name,
+                    }
+                })
+                .collect();
+            if !entries.is_empty() {
+                sections.push(catalog::CatalogSection {
+                    title,
+                    column,
+                    entries,
+                });
+            }
+        }
+        catalog::render(&sections)
+    }
+
     /// Registers a parameterized code-built subtree template.
     ///
     /// The configured `params` value is deserialized into `P` once per
@@ -925,6 +982,34 @@ impl<W: 'static> NodeRegistry<W> {
             NodeCategory::EventKey => self.event_keys.contains_key(name),
             NodeCategory::ScopedKey => self.scoped_keys.contains_key(name),
             NodeCategory::ContractKey => self.contract_keys.contains_key(name),
+        }
+    }
+
+    #[cfg(feature = "schema")]
+    fn names_for(&self, category: NodeCategory) -> Vec<String> {
+        match category {
+            NodeCategory::Action => sorted_names(&self.actions),
+            NodeCategory::TryAction => sorted_names(&self.try_actions),
+            NodeCategory::AsyncAction => sorted_names(&self.async_actions),
+            NodeCategory::Condition => sorted_names(&self.conditions),
+            NodeCategory::Predicate => {
+                let mut names: Vec<String> = self
+                    .predicates
+                    .keys()
+                    .filter(|name| !self.conditions.contains_key(*name))
+                    .cloned()
+                    .collect();
+                names.sort();
+                names
+            }
+            NodeCategory::Score => sorted_names(&self.scores),
+            NodeCategory::Custom => sorted_names(&self.custom),
+            NodeCategory::Subtree => sorted_names(&self.subtrees),
+            NodeCategory::SwitchKey => sorted_names(&self.switch_keys),
+            NodeCategory::SetValueKey => sorted_names(&self.set_value_keys),
+            NodeCategory::EventKey => sorted_names(&self.event_keys),
+            NodeCategory::ScopedKey => sorted_names(&self.scoped_keys),
+            NodeCategory::ContractKey => sorted_names(&self.contract_keys),
         }
     }
 

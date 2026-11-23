@@ -87,3 +87,4 @@ jobs:
           grep -q '"patrol"' target/playact-schema.json
           grep -q '"waypoints"' target/playact-schema.json
           grep -q '"Morale written to the blackboard."' target/playact-schema.json
+          grep -Fq '`waypoints` (integer, required)' target/playact-catalog.md

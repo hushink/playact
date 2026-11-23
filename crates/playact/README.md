@@ -736,7 +736,8 @@ are rebuilt with the tree on hot reload and remote refresh, and
   `NodeRegistry::describe` adds hover descriptions, and
   `NodeRegistry::describe_params::<P>` adds a derived params schema with field
   descriptions and validation keywords. `describe_switch_key` and
-  `describe_set_value_key` also type key values.
+  `describe_set_value_key` also type key values, and `markdown_catalog()`
+  renders the metadata as a Markdown node catalog.
 - [`examples/schema_export.rs`](examples/schema_export.rs) writes that schema to
   `target/playact-schema.json`; the
   [configuration reference](docs/config.md#editor-completion) shows a VS Code mapping.
@@ -984,7 +985,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
-| `schema` | `TreeSpec::json_schema()` and `NodeRegistry::json_schema()` JSON Schema generation, plus descriptions, params, and key value metadata (requires `config`) |
+| `schema` | `TreeSpec::json_schema()`, `NodeRegistry::json_schema()`, and `NodeRegistry::markdown_catalog()`, plus descriptions, params, and key value metadata (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
@@ -1045,7 +1046,8 @@ cargo run -p playact --example schema_export --features config,schema
   completed step.
 - `schema_export`: writes a registry-aware JSON Schema for editor completion of
   action, condition, predicate, key, custom, and subtree names, with optional
-  descriptions, derived parameter schemas, and typed key values.
+  descriptions, derived parameter schemas, typed key values, and a Markdown
+  node catalog.
 
 ## Testing and benchmarks
 

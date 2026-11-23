@@ -341,3 +341,22 @@ description is injected.
 Regenerate the file whenever the registry changes, for example as a build or
 pre-commit step. If the schema is committed, relative `url` values resolve
 against the workspace folder.
+
+## Node catalog
+
+`NodeRegistry::markdown_catalog()` (feature `schema`) renders the same metadata
+as Markdown for team documentation:
+
+```rust
+std::fs::write("docs/node-catalog.md", registry.markdown_catalog())?;
+```
+
+Entries are grouped by category and sorted by name, so the output is
+deterministic and can be generated in CI or reviewed in diffs. Each row contains
+the registered name, its `describe` text, and a compact parameter or key-value
+summary from `describe_params`, `describe_switch_key`, and
+`describe_set_value_key`. Conditions are listed under Conditions only; they
+remain usable as predicates without being repeated under Predicates.
+
+[`examples/schema_export.rs`](../examples/schema_export.rs) writes both the
+schema and the catalog.

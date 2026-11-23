@@ -325,3 +325,20 @@ registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
 
 注册表变化后重新生成即可，例如放入构建或 pre-commit 步骤。若把 schema 提交到仓库，
 相对 `url` 会按工作区目录解析。
+
+## 节点目录
+
+`NodeRegistry::markdown_catalog()`（`schema` feature）把相同元数据渲染为 Markdown，
+便于团队配置文档：
+
+```rust
+std::fs::write("docs/node-catalog.md", registry.markdown_catalog())?;
+```
+
+条目按分类分组、按名称排序，因此输出确定，可在 CI 中生成或在 diff 中审阅。每行包含
+注册名称、`describe` 描述，以及来自 `describe_params`、`describe_switch_key` 与
+`describe_set_value_key` 的紧凑参数或 key 值摘要。condition 只出现在 Conditions
+分类中；它仍可作为 predicate 使用，但不会在 Predicates 中重复。
+
+[`examples/schema_export.rs`](../examples/schema_export.rs) 会同时写出 schema 与
+节点目录。

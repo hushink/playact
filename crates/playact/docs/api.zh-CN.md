@@ -1048,8 +1048,13 @@ registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
 ```
 
 `describe_switch_key` 为 `switch.values` 元素提供类型，`describe_set_value_key`
-为 `set_value.value` 提供类型。完整编辑器配置见
-[配置参考](config.zh-CN.md#编辑器补全)。
+为 `set_value.value` 提供类型。相同元数据还可渲染为团队文档：
+
+```rust
+let catalog = registry.markdown_catalog(); // Markdown 节点目录
+```
+
+完整编辑器配置见[配置参考](config.zh-CN.md#编辑器补全)。
 
 ### 热重载
 

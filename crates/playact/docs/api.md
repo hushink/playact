@@ -1087,9 +1087,15 @@ registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
 ```
 
 `describe_switch_key` types `switch.values` items and `describe_set_value_key`
-types `set_value.value`. See the
-[configuration reference](config.md#editor-completion) for a complete editor
-setup.
+types `set_value.value`. The same metadata can be rendered as team
+documentation:
+
+```rust
+let catalog = registry.markdown_catalog(); // Markdown node catalog
+```
+
+See the [configuration reference](config.md#editor-completion) for a complete
+editor setup.
 
 ### Hot reload
 

@@ -12,6 +12,8 @@ use serde_json::Value;
 use crate::composite::Threshold;
 
 mod build;
+#[cfg(feature = "schema")]
+mod catalog;
 pub mod error;
 mod include;
 pub mod registry;
@@ -846,6 +848,18 @@ mod tests {
                     == Some(name)
             })
             .unwrap_or_else(|| panic!("missing schema clause `{name}`"))
+    }
+
+    #[cfg(feature = "schema")]
+    fn catalog_section<'a>(catalog: &'a str, title: &str) -> &'a str {
+        let heading = format!("## {title}\n");
+        let start = catalog
+            .find(&heading)
+            .unwrap_or_else(|| panic!("missing catalog section `{title}`"))
+            + heading.len();
+        let rest = &catalog[start..];
+        let end = rest.find("\n## ").unwrap_or(rest.len());
+        &rest[..end]
     }
 
     #[cfg(feature = "schema")]
@@ -2476,6 +2490,95 @@ mod tests {
 
     #[cfg(feature = "schema")]
     #[test]
+    fn markdown_catalog_renders_registry_metadata() {
+        static MODE: Key<String> = Key::new("test.config.catalog.mode");
+        static SIGNAL: EventKey<()> = EventKey::new("test.config.catalog.signal");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<PatrolParams>("patrol", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .action::<()>("attack", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .condition::<()>("always", |_| |_: &Context<'_, ()>| true)
+            .unwrap();
+        registry
+            .predicate::<()>("flag", |_| |_: &Context<'_, ()>| true)
+            .unwrap();
+        registry.switch_key(MODE).unwrap();
+        registry.event_key(SIGNAL).unwrap();
+
+        registry
+            .describe_params::<PatrolParams>(
+                NodeCategory::Action,
+                "patrol",
+                "Walk the patrol route.",
+            )
+            .unwrap();
+        registry
+            .describe(NodeCategory::Action, "attack", "Strike | dodge the target.")
+            .unwrap();
+        registry
+            .describe(NodeCategory::Condition, "always", "Always true.")
+            .unwrap();
+        registry
+            .describe(NodeCategory::Predicate, "flag", "A flag is set.")
+            .unwrap();
+        registry
+            .describe_switch_key::<String>(MODE, "Game mode.")
+            .unwrap();
+        registry
+            .describe(
+                NodeCategory::EventKey,
+                "test.config.catalog.signal",
+                "Alarm signal.",
+            )
+            .unwrap();
+
+        let catalog = registry.markdown_catalog();
+
+        assert!(catalog.starts_with("# Node catalog\n"));
+        assert!(!catalog.contains("No nodes are registered."));
+        assert!(catalog.contains("## Actions"));
+        assert!(catalog.contains("## Conditions"));
+        assert!(catalog.contains("## Predicates"));
+        assert!(catalog.contains("## Switch keys"));
+        assert!(catalog.contains("## Event keys"));
+        assert!(!catalog.contains("## Custom nodes"));
+
+        let actions = catalog_section(&catalog, "Actions");
+        let attack = actions.find("| `attack` |").expect("attack row");
+        let patrol = actions.find("| `patrol` |").expect("patrol row");
+        assert!(attack < patrol, "names are sorted");
+        assert!(actions.contains("| `attack` | Strike \\| dodge the target. | — |"));
+        assert!(
+            actions.contains("`waypoints` (integer, required) — Number of waypoints to visit.")
+        );
+        assert!(actions.contains("`speed` (number, required) — Movement speed multiplier."));
+
+        let predicates = catalog_section(&catalog, "Predicates");
+        assert!(predicates.contains("| `flag` | A flag is set. | — |"));
+        assert!(!predicates.contains("`always`"));
+
+        let switch_keys = catalog_section(&catalog, "Switch keys");
+        assert!(switch_keys.contains("| `test.config.catalog.mode` | Game mode. | string |"));
+
+        let event_keys = catalog_section(&catalog, "Event keys");
+        assert!(event_keys.contains("| `test.config.catalog.signal` | Alarm signal. | — |"));
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn markdown_catalog_handles_empty_registry() {
+        let catalog = NodeRegistry::<()>::new().markdown_catalog();
+        assert!(catalog.contains("No nodes are registered."));
+        assert!(!catalog.contains("## "));
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
     fn registry_schema_documents_keys_and_values() {
         static MODE: Key<String> = Key::new("test.config.schema.mode");
         static HP: Key<u32> = Key::new("test.config.schema.hp");
@@ -2662,6 +2765,9 @@ mod tests {
                 .pointer("/properties/depth")
                 .is_some()
         );
+
+        let catalog = registry.markdown_catalog();
+        assert!(catalog.contains("`children` (array<object>, required)"));
     }
 
     #[cfg(feature = "schema")]

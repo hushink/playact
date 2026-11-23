@@ -4,21 +4,24 @@
 //!
 //! ```text
 //! cargo run --example schema_export --features config,schema
-//! cargo run --example schema_export --features config,schema -- config/schema.json
+//! cargo run --example schema_export --features config,schema -- config/schema.json docs/catalog.md
 //! ```
 //!
-//! The optional argument is the output path; the default is
-//! `target/playact-schema.json`. Point your editor at the generated file so
-//! that action, condition, predicate, score, key, custom, and subtree fields
-//! complete from this registry instead of from free-form strings. Descriptions,
-//! parameter schemas, and key value schemas added with `describe`,
-//! `describe_params`, and `describe_*_key` become hover text and validation
-//! constraints.
+//! The first argument is the schema path; the default is
+//! `target/playact-schema.json`. The second argument is the Markdown catalog
+//! path; the default is `target/playact-catalog.md`.
+//!
+//! Point your editor at the schema so action, condition, predicate, score, key,
+//! custom, and subtree fields complete from this registry instead of from
+//! free-form strings. Descriptions, parameter schemas, and key value schemas
+//! added with `describe`, `describe_params`, and `describe_*_key` become hover
+//! text and validation constraints. The catalog renders the same metadata for
+//! team documentation.
 
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -113,14 +116,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         || PathBuf::from("target/playact-schema.json"),
         PathBuf::from,
     );
-    if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)?;
-    }
+    let catalog_output = env::args_os()
+        .nth(2)
+        .map_or_else(|| PathBuf::from("target/playact-catalog.md"), PathBuf::from);
 
     let schema = registry.json_schema();
-    fs::write(&output, serde_json::to_vec_pretty(&schema)?)?;
+    write(&output, &serde_json::to_vec_pretty(&schema)?)?;
+    write(&catalog_output, registry.markdown_catalog().as_bytes())?;
 
     println!("wrote {}", output.display());
+    println!("wrote {}", catalog_output.display());
     println!("registered names, descriptions, params, and key values are available for editors");
+    Ok(())
+}
+
+fn write(path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)?;
     Ok(())
 }
