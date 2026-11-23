@@ -669,7 +669,7 @@ let mut tree = spec.build(&registry)?;
   race, parallel, mem-parallel, `switch`, `if_then_else`, decorators (including
   `guard`, `while`, throttle, and probability), waits, `wait_until`,
   `wait_for_event`, `set_value`, actions, conditions, `try_action`, `async_action`,
-  and custom factories.
+  `custom` factories, and `scoped` / `contract` subtree boundaries.
 - `try_action` registrations return fallible tick closures; errors are reported
   through the tracer and become `Failure`. `async_action` registrations return
   `AsyncTask` starters for thread, Tokio, or custom remote tasks.
@@ -679,6 +679,10 @@ let mut tree = spec.build(&registry)?;
 - `switch`, `set_value`, and `wait_for_event` configurations reference typed keys
   registered with `registry.switch_key` / `set_value_key` / `event_key`; configured
   values deserialize into the key's value or event type at build time.
+- `contract` and `scoped` configurations reference keys registered with
+  `registry.contract_key` / `registry.scoped_key`. Contract keys require
+  `Send + 'static`; scoped keys also require the value to be `Clone`. Key names in
+  the config are resolved at build time, and unknown names report a path.
 - `utility_selector` branches reference score functions registered with
   `registry.score`; scores receive typed parameters and are re-evaluated every tick.
 - A duplicate `NodeId` across the built root and services is rejected at build time;

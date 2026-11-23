@@ -920,6 +920,7 @@ let mut tree = spec.build(&registry)?;
 | `async_action::<P>(...)` | async action returning a task |
 | `custom::<P>(kind, factory)` | arbitrary node factory with typed params and children |
 | `switch_key(key)` / `set_value_key(key)` / `event_key(key)` | typed keys referenced by config |
+| `contract_key(key)` / `scoped_key(key)` | typed keys for `contract` / `scoped` boundaries; scoped values must be `Clone` |
 
 Factory shape: `Fn(P) -> TickClosure`. The outer factory runs once per node, so
 closure state is isolated between instances. When `params` is omitted it is
@@ -938,7 +939,7 @@ Decorators: `inverter`, `always_succeed`, `always_fail`, `repeat`, `retry`,
 Leaves: `wait`, `wait_until`, `wait_for_event`, `set_value`, `action`,
 `condition`, `try_action`, `async_action`.
 
-Structure: `include`, `custom`, `identified`.
+Structure: `include`, `custom`, `identified`, `scoped`, `contract`.
 
 Examples:
 
@@ -979,6 +980,25 @@ Examples:
   "condition": "low_hp",
   "then": {"type": "action", "name": "heal"},
   "else": {"type": "include", "path": "combat.json"}
+}
+```
+
+```json
+{
+  "type": "scoped",
+  "name": "sandbox",
+  "inputs": ["combat.target"],
+  "outputs": ["combat.plan"],
+  "child": {"type": "action", "name": "plan"}
+}
+```
+
+```json
+{
+  "type": "contract",
+  "required": ["combat.target"],
+  "provided": ["combat.plan"],
+  "child": {"type": "action", "name": "plan"}
 }
 ```
 

@@ -441,6 +441,42 @@ pub enum SpecNode {
         #[serde(default)]
         params: Value,
     },
+    /// A subtree with a private blackboard.
+    ///
+    /// Inputs are copied from the parent on activation; outputs are copied back
+    /// on terminal status. Key names must be registered with
+    /// [`NodeRegistry::scoped_key`].
+    Scoped {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Keys copied from the parent blackboard.
+        #[serde(default)]
+        inputs: Vec<String>,
+        /// Keys copied back to the parent blackboard.
+        #[serde(default)]
+        outputs: Vec<String>,
+        /// Child node.
+        child: Box<SpecNode>,
+    },
+    /// A subtree contract with required and provided keys.
+    ///
+    /// Required keys must exist on activation; provided keys are cleared on
+    /// activation and abort. Key names must be registered with
+    /// [`NodeRegistry::contract_key`].
+    Contract {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Keys that must exist before the child runs.
+        #[serde(default)]
+        required: Vec<String>,
+        /// Keys cleared on activation and abort.
+        #[serde(default)]
+        provided: Vec<String>,
+        /// Child node.
+        child: Box<SpecNode>,
+    },
     /// Includes another configuration; requires [`TreeSpec::build_with_resolver`].
     Include {
         /// Path interpreted by the resolver.
@@ -554,7 +590,9 @@ impl SpecNode {
             | Self::Limiter { child, .. }
             | Self::Throttle { child, .. }
             | Self::Probability { child, .. }
-            | Self::Identified { child, .. } => vec![(String::from("child"), child.as_ref())],
+            | Self::Identified { child, .. }
+            | Self::Scoped { child, .. }
+            | Self::Contract { child, .. } => vec![(String::from("child"), child.as_ref())],
             Self::Wait { .. }
             | Self::WaitUntil { .. }
             | Self::WaitForEvent { .. }
@@ -691,6 +729,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::blackboard::Key;
     use crate::context::Context;
     use crate::node::{BoxedNode, Kind, Node};
     use crate::status::Status;
@@ -998,6 +1037,132 @@ mod tests {
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
         world = true;
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_contract_from_json() {
+        static REQUIRED: Key<u32> = Key::new("test.config.contract.required");
+        static OUTPUT: Key<u32> = Key::new("test.config.contract.output");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.contract_key(&REQUIRED).expect("register required");
+        registry.contract_key(&OUTPUT).expect("register output");
+        registry
+            .action::<()>("fill", |_| {
+                |ctx: &mut Context<'_, ()>| {
+                    ctx.blackboard().set(&OUTPUT, 7);
+                    Status::Success
+                }
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"contract","name":"guarded",
+                "required":["test.config.contract.required"],
+                "provided":["test.config.contract.output"],
+                "child":{"type":"action","name":"fill"}}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::Contract);
+
+        let mut world = ();
+        // A missing required key fails without ticking the child.
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+        assert!(tree.blackboard().get(&OUTPUT).is_none());
+
+        tree.blackboard_mut().set(&REQUIRED, 1);
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.blackboard().get(&OUTPUT), Some(&7));
+    }
+
+    #[test]
+    fn builds_scoped_from_json() {
+        static INPUT: Key<u32> = Key::new("test.config.scope.input");
+        static OUTPUT: Key<u32> = Key::new("test.config.scope.output");
+        static PRIVATE: Key<u32> = Key::new("test.config.scope.private");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.scoped_key(&INPUT).expect("register input");
+        registry.scoped_key(&OUTPUT).expect("register output");
+        registry
+            .action::<()>("work", |_| {
+                |ctx: &mut Context<'_, ()>| {
+                    let seen = ctx.blackboard_ref().get(&INPUT).copied().unwrap_or(0);
+                    ctx.blackboard().set(&PRIVATE, seen + 1);
+                    ctx.blackboard().set(&OUTPUT, seen + 10);
+                    Status::Success
+                }
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"scoped","name":"sandbox",
+                "inputs":["test.config.scope.input"],
+                "outputs":["test.config.scope.output"],
+                "child":{"type":"action","name":"work"}}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::ScopedSubtree);
+
+        let mut world = ();
+        tree.blackboard_mut().set(&INPUT, 5);
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.blackboard().get(&INPUT), Some(&5));
+        assert_eq!(tree.blackboard().get(&OUTPUT), Some(&15));
+        assert!(tree.blackboard().get(&PRIVATE).is_none());
+    }
+
+    #[test]
+    fn unknown_boundary_keys_report_paths() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"contract","required":["missing"],
+                "child":{"type":"action","name":"ok"}}}"#,
+        )
+        .expect("valid spec");
+        let error = spec
+            .build(&action_registry())
+            .err()
+            .expect("unknown contract key");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownContractKey { key } if key == "missing"
+        ));
+        assert_eq!(error.path(), Some("root.required[0]"));
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"scoped","outputs":["missing"],
+                "child":{"type":"action","name":"ok"}}}"#,
+        )
+        .expect("valid spec");
+        let error = spec
+            .build(&action_registry())
+            .err()
+            .expect("unknown scoped key");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownScopedKey { key } if key == "missing"
+        ));
+        assert_eq!(error.path(), Some("root.outputs[0]"));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_boundary_keys() {
+        static SHARED: Key<u32> = Key::new("test.config.boundary.shared");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.contract_key(&SHARED).expect("register contract");
+        assert!(matches!(
+            registry.contract_key(&SHARED),
+            Err(RegistryError::Duplicate { category, .. }) if category == "contract key"
+        ));
+
+        registry.scoped_key(&SHARED).expect("register scoped");
+        assert!(matches!(
+            registry.scoped_key(&SHARED),
+            Err(RegistryError::Duplicate { category, .. }) if category == "scoped key"
+        ));
     }
 
     #[test]
@@ -1646,6 +1811,8 @@ mod tests {
         assert!(text.contains("\"sequence\""));
         assert!(text.contains("\"wait\""));
         assert!(text.contains("\"identified\""));
+        assert!(text.contains("\"scoped\""));
+        assert!(text.contains("\"contract\""));
         assert!(text.contains("\"if_then_else\""));
         assert!(text.contains("\"then\""));
         assert!(text.contains("\"else\""));

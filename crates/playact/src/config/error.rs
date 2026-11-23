@@ -149,6 +149,16 @@ pub enum ConfigBuildErrorKind {
         /// Event key name.
         key: String,
     },
+    /// Unregistered subtree-contract key name.
+    UnknownContractKey {
+        /// Contract key name.
+        key: String,
+    },
+    /// Unregistered scoped-subtree key name.
+    UnknownScopedKey {
+        /// Scoped key name.
+        key: String,
+    },
     /// Unregistered utility score name.
     UnknownScore {
         /// Score name.
@@ -215,6 +225,8 @@ impl fmt::Display for ConfigBuildErrorKind {
             Self::UnknownSwitchKey { key } => write!(f, "unknown switch key `{key}`"),
             Self::UnknownSetValueKey { key } => write!(f, "unknown set-value key `{key}`"),
             Self::UnknownEventKey { key } => write!(f, "unknown event key `{key}`"),
+            Self::UnknownContractKey { key } => write!(f, "unknown contract key `{key}`"),
+            Self::UnknownScopedKey { key } => write!(f, "unknown scoped key `{key}`"),
             Self::UnknownScore { name } => write!(f, "unknown utility score `{name}`"),
             Self::UnknownTryAction { name } => write!(f, "unknown fallible action `{name}`"),
             Self::UnknownAsyncAction { name } => write!(f, "unknown async action `{name}`"),

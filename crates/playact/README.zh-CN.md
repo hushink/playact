@@ -640,7 +640,7 @@ let mut tree = spec.build(&registry)?;
 - 支持 sequence、selector、随机/加权/效用选择、race、parallel、mem_parallel、
   `switch`、`if_then_else`、装饰器（含 `guard`、`while`、throttle 与 probability）、
   wait、`wait_until`、`wait_for_event`、`set_value`、action、condition、
-  `try_action`、`async_action` 与 custom 工厂。
+  `try_action`、`async_action`、custom 工厂，以及 `scoped` / `contract` 子树边界。
 - `try_action` 注册返回可失败的 tick 闭包；错误通过 tracer 上报并转为 `Failure`。
   `async_action` 注册返回 `AsyncTask` 启动器，可接线程、Tokio 或自定义远程任务。
 - `condition` 注册同时提供 `guard`、`while`、`if_then_else`、`wait_until` 可用的
@@ -649,6 +649,9 @@ let mut tree = spec.build(&registry)?;
 - `switch`、`set_value`、`wait_for_event` 配置引用
   `registry.switch_key` / `set_value_key` / `event_key` 注册的 typed key；配置值在
   构建期反序列化为 key 的 value 或 event 类型。
+- `contract` 与 `scoped` 配置引用 `registry.contract_key` /
+  `registry.scoped_key` 注册的 key。Contract key 要求 `Send + 'static`；scoped key
+  还要求值类型实现 `Clone`。配置中的 key 名称在构建期解析，未知名称会报告路径。
 - `utility_selector` 的分支引用 `registry.score` 注册的评分函数；评分函数接收
   类型化参数，并在每个 tick 重新计算。
 - 构建出的根节点与服务中存在重复 `NodeId` 时，构建会直接失败，并给出第二次出现的

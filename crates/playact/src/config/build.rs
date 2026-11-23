@@ -10,12 +10,14 @@ use crate::composite::{
     Selector, Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild,
     WeightedRandomSelector,
 };
+use crate::contract::SubtreeContract;
 use crate::decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, Probability, Repeat, Retry,
     Throttle, Timeout, UntilFailure, UntilSuccess, While,
 };
 use crate::leaf::{Wait, WaitUntil};
 use crate::node::{BoxedNode, IdentifiedNode};
+use crate::scope::ScopedSubtree;
 use crate::tree::{BehaviorTree, Named};
 
 use super::error::{ConfigBuildError, ConfigBuildErrorKind};
@@ -415,6 +417,60 @@ fn build_node<W: 'static>(
                 Some(name) => Ok(Box::new(Named::new(name.clone(), node))),
                 None => Ok(node),
             }
+        }
+        SpecNode::Scoped {
+            name,
+            inputs,
+            outputs,
+            child,
+        } => {
+            let child = build_node(child, ctx, &child_path(path))?;
+            let mut node = ScopedSubtree::new(
+                name.clone().unwrap_or_else(|| String::from("Scoped")),
+                child,
+            );
+            for (index, key) in inputs.iter().enumerate() {
+                let key = ctx
+                    .registry
+                    .resolve_scoped_key(key)
+                    .map_err(|error| error.at(format!("{path}.inputs[{index}]")))?;
+                node = node.input(key);
+            }
+            for (index, key) in outputs.iter().enumerate() {
+                let key = ctx
+                    .registry
+                    .resolve_scoped_key(key)
+                    .map_err(|error| error.at(format!("{path}.outputs[{index}]")))?;
+                node = node.output(key);
+            }
+            Ok(Box::new(node))
+        }
+        SpecNode::Contract {
+            name,
+            required,
+            provided,
+            child,
+        } => {
+            let child = build_node(child, ctx, &child_path(path))?;
+            let mut node = SubtreeContract::new(
+                name.clone().unwrap_or_else(|| String::from("Contract")),
+                child,
+            );
+            for (index, key) in required.iter().enumerate() {
+                let key = ctx
+                    .registry
+                    .resolve_contract_key(key)
+                    .map_err(|error| error.at(format!("{path}.required[{index}]")))?;
+                node = node.require(key);
+            }
+            for (index, key) in provided.iter().enumerate() {
+                let key = ctx
+                    .registry
+                    .resolve_contract_key(key)
+                    .map_err(|error| error.at(format!("{path}.provided[{index}]")))?;
+                node = node.provide(key);
+            }
+            Ok(Box::new(node))
         }
         SpecNode::Identified { id, child } => {
             if !ctx.seen_ids.borrow_mut().insert(id.clone()) {

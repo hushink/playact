@@ -10,9 +10,11 @@ use crate::async_action::{AsyncAction, AsyncTask};
 use crate::blackboard::Key;
 use crate::composite::Switch;
 use crate::context::Context;
+use crate::contract::KeySpec;
 use crate::event::EventKey;
 use crate::leaf::{Action, Condition, SetValue, TryAction, WaitForEvent};
 use crate::node::BoxedNode;
+use crate::scope::ScopedKeySpec;
 use crate::status::Status;
 
 use super::error::{ConfigBuildError, ConfigBuildErrorKind, RegistryError};
@@ -151,6 +153,8 @@ pub struct NodeRegistry<W: 'static> {
     switch_keys: HashMap<String, SwitchFactory<W>>,
     set_value_keys: HashMap<String, SetValueFactory<W>>,
     event_keys: HashMap<String, EventFactory<W>>,
+    contract_keys: HashMap<String, &'static dyn KeySpec>,
+    scoped_keys: HashMap<String, &'static dyn ScopedKeySpec>,
     scores: HashMap<String, ScoreFactory<W>>,
     try_actions: HashMap<String, ErasedTryActionFactory<W>>,
     async_actions: HashMap<String, ErasedAsyncActionFactory<W>>,
@@ -168,6 +172,8 @@ impl<W: 'static> NodeRegistry<W> {
             switch_keys: HashMap::new(),
             set_value_keys: HashMap::new(),
             event_keys: HashMap::new(),
+            contract_keys: HashMap::new(),
+            scoped_keys: HashMap::new(),
             scores: HashMap::new(),
             try_actions: HashMap::new(),
             async_actions: HashMap::new(),
@@ -354,6 +360,30 @@ impl<W: 'static> NodeRegistry<W> {
             Box::new(node)
         });
         self.event_keys.insert(name, factory);
+        Ok(())
+    }
+
+    /// Registers a typed key for `contract` configurations.
+    ///
+    /// The configuration refers to the key by its `Key::name()` and lists it in
+    /// `required` or `provided`. Pass a static key reference:
+    /// `registry.contract_key(&TARGET)?`.
+    pub fn contract_key(&mut self, key: &'static dyn KeySpec) -> Result<(), RegistryError> {
+        let name = String::from(key.name());
+        ensure_name_available(&self.contract_keys, "contract key", &name)?;
+        self.contract_keys.insert(name, key);
+        Ok(())
+    }
+
+    /// Registers a cloneable typed key for `scoped` configurations.
+    ///
+    /// The configuration refers to the key by its `Key::name()` and lists it in
+    /// `inputs` or `outputs`. The value type must implement `Clone`. Pass a
+    /// static key reference: `registry.scoped_key(&TARGET)?`.
+    pub fn scoped_key(&mut self, key: &'static dyn ScopedKeySpec) -> Result<(), RegistryError> {
+        let name = String::from(key.name());
+        ensure_name_available(&self.scoped_keys, "scoped key", &name)?;
+        self.scoped_keys.insert(name, key);
         Ok(())
     }
 
@@ -545,6 +575,28 @@ impl<W: 'static> NodeRegistry<W> {
                 },
             )),
         }
+    }
+
+    pub(crate) fn resolve_contract_key(
+        &self,
+        name: &str,
+    ) -> Result<&'static dyn KeySpec, ConfigBuildError> {
+        self.contract_keys.get(name).copied().ok_or_else(|| {
+            ConfigBuildError::new(ConfigBuildErrorKind::UnknownContractKey {
+                key: name.to_string(),
+            })
+        })
+    }
+
+    pub(crate) fn resolve_scoped_key(
+        &self,
+        name: &str,
+    ) -> Result<&'static dyn ScopedKeySpec, ConfigBuildError> {
+        self.scoped_keys.get(name).copied().ok_or_else(|| {
+            ConfigBuildError::new(ConfigBuildErrorKind::UnknownScopedKey {
+                key: name.to_string(),
+            })
+        })
     }
 
     pub(crate) fn build_score(
