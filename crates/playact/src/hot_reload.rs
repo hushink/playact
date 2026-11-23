@@ -153,6 +153,7 @@ pub struct TreeWatcher<W: 'static> {
     pending_since: Option<Instant>,
     preserve_state: bool,
     last_restored: Option<usize>,
+    last_restore_error: Option<String>,
     diff_history: DiffHistory,
 }
 
@@ -237,6 +238,7 @@ impl<W: 'static> TreeWatcher<W> {
             pending_since: None,
             preserve_state: false,
             last_restored: None,
+            last_restore_error: None,
             diff_history: DiffHistory::default(),
         })
     }
@@ -379,6 +381,17 @@ impl<W: 'static> TreeWatcher<W> {
         self.last_restored
     }
 
+    /// Error from the state restore of the most recent successful reload.
+    ///
+    /// `None` means the last reload restored state successfully, did not attempt
+    /// restoration, or has not happened yet. When set, the new tree was reset to
+    /// avoid partially restored state, and [`TreeWatcher::last_restored`]
+    /// reports `Some(0)`.
+    #[must_use]
+    pub fn last_restore_error(&self) -> Option<&str> {
+        self.last_restore_error.as_deref()
+    }
+
     /// Takes the structural changes from the most recent successful reload.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -465,19 +478,21 @@ impl<W: 'static> TreeWatcher<W> {
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
 
-        let restored = match &snapshot {
-            Some(snapshot) => new_tree
-                .restore_by_id_matching(snapshot)
-                .unwrap_or_else(|_| {
+        let (restored, restore_error) = match &snapshot {
+            Some(snapshot) => match new_tree.restore_by_id_matching(snapshot) {
+                Ok(count) => (count, None),
+                Err(error) => {
                     new_tree.reset();
-                    0
-                }),
-            None => 0,
+                    (0, Some(error.to_string()))
+                }
+            },
+            None => (0, None),
         };
 
         let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
         self.last_restored = Some(restored);
+        self.last_restore_error = restore_error;
         self.diff_history.push_now(diff);
 
         Ok(())
@@ -570,8 +585,12 @@ mod tests {
     }
 
     fn write_limiter_config(path: &Path, action: &str) {
+        write_limiter_config_with_max(path, 2, action);
+    }
+
+    fn write_limiter_config_with_max(path: &Path, max: usize, action: &str) {
         let config = format!(
-            r#"{{"root":{{"type":"identified","id":"limit","child":{{"type":"limiter","max":2,"child":{{"type":"action","name":"{action}"}}}}}}}}"#
+            r#"{{"root":{{"type":"identified","id":"limit","child":{{"type":"limiter","max":{max},"child":{{"type":"action","name":"{action}"}}}}}}}}"#
         );
         fs::write(path, config).expect("write limiter config");
     }
@@ -810,6 +829,50 @@ mod tests {
         assert_eq!(watcher.last_restored(), Some(1));
 
         // The limiter already consumed one of its two runs before the reload.
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Failure
+        );
+        assert!(drain(&mut watcher).is_empty());
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_reports_rejected_state_restore() {
+        let path = temp_path();
+        write_limiter_config_with_max(&path, 2, "old");
+
+        let mut watcher = TreeWatcher::<()>::json(&path, registry())
+            .expect("watcher")
+            .with_state_preservation(true);
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+        assert!(watcher.last_restore_error().is_none());
+
+        // The old limiter has done=1, which the new max=1 limiter rejects.
+        write_limiter_config_with_max(&path, 1, "new");
+        watcher.reload_now().expect("reload");
+        assert_eq!(watcher.last_restored(), Some(0));
+        let error = watcher.last_restore_error().expect("restore error");
+        assert!(error.contains("limit"), "unexpected error: {error}");
+
+        // The rejected state was reset, so the new limiter starts from zero.
         assert_eq!(
             watcher.tree_mut().tick(&mut world, Time::ZERO),
             Status::Success

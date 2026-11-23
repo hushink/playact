@@ -1018,7 +1018,8 @@ watcher.tree_mut().tick(&mut world, time);
 - `with_state_preservation(true)` 按 `NodeId` 恢复自身状态。
 - `last_diff()`、`last_revision()`、`last_timestamp()`、`diff_history()` 暴露变化。
   `last_restored()` 报告最近一次成功重载恢复了多少节点自身状态（首次重载前为
-  `None`，没有匹配节点时为 `Some(0)`）。
+  `None`，没有匹配节点时为 `Some(0)`）；`last_restore_error()` 报告被拒绝的恢复，
+  此时新树会被 reset。
 - resolver 报告的 include 文件也会被轮询并触发重载。
 - 解析/构建失败保留旧树并返回错误。
 
@@ -1036,8 +1037,9 @@ loader.tree_mut().tick(&mut world, time);
 ```
 
 `RemoteTreeLoader` 支持 ETag / Last-Modified、响应大小上限、UTF-8 校验、include，
-以及可选的 `ResponseVerifier`（签名/白名单）。`last_restored()`、`last_revision()`、
-`last_timestamp()` 暴露刷新元数据。请求在调用线程同步执行。
+以及可选的 `ResponseVerifier`（签名/白名单）。`last_restored()`、
+`last_restore_error()`、`last_revision()`、`last_timestamp()` 暴露刷新元数据。
+请求在调用线程同步执行。
 
 ## 14. 过程宏 DSL
 

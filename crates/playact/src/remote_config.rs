@@ -142,6 +142,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     last_modified: Option<String>,
     preserve_state: bool,
     last_restored: Option<usize>,
+    last_restore_error: Option<String>,
     diff_history: DiffHistory,
 }
 
@@ -277,6 +278,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             last_modified,
             preserve_state: false,
             last_restored: None,
+            last_restore_error: None,
             diff_history: DiffHistory::default(),
         })
     }
@@ -405,6 +407,17 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.last_restored
     }
 
+    /// Error from the state restore of the most recent successful refresh.
+    ///
+    /// `None` means the last refresh restored state successfully, did not
+    /// attempt restoration, or has not happened yet. When set, the new tree was
+    /// reset to avoid partially restored state, and
+    /// [`RemoteTreeLoader::last_restored`] reports `Some(0)`.
+    #[must_use]
+    pub fn last_restore_error(&self) -> Option<&str> {
+        self.last_restore_error.as_deref()
+    }
+
     /// Takes the structural changes from the most recent successful refresh.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -473,14 +486,15 @@ impl<W: 'static> RemoteTreeLoader<W> {
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
 
-        let restored = match &snapshot {
-            Some(snapshot) => new_tree
-                .restore_by_id_matching(snapshot)
-                .unwrap_or_else(|_| {
+        let (restored, restore_error) = match &snapshot {
+            Some(snapshot) => match new_tree.restore_by_id_matching(snapshot) {
+                Ok(count) => (count, None),
+                Err(error) => {
                     new_tree.reset();
-                    0
-                }),
-            None => 0,
+                    (0, Some(error.to_string()))
+                }
+            },
+            None => (0, None),
         };
 
         let diff = TreeDiff::between(&self.tree, &new_tree);
@@ -488,6 +502,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.etag = etag;
         self.last_modified = last_modified;
         self.last_restored = Some(restored);
+        self.last_restore_error = restore_error;
         self.diff_history.push_now(diff);
 
         Ok(true)
@@ -645,8 +660,12 @@ mod tests {
     }
 
     fn limiter_body(action: &str) -> String {
+        limiter_body_with_max(2, action)
+    }
+
+    fn limiter_body_with_max(max: usize, action: &str) -> String {
         format!(
-            r#"{{"root":{{"type":"identified","id":"limit","child":{{"type":"limiter","max":2,"child":{{"type":"action","name":"{action}"}}}}}}}}"#
+            r#"{{"root":{{"type":"identified","id":"limit","child":{{"type":"limiter","max":{max},"child":{{"type":"action","name":"{action}"}}}}}}}}"#
         )
     }
 
@@ -728,6 +747,48 @@ mod tests {
             loader.tree_mut().tick(&mut world, Time::ZERO),
             Status::Failure
         );
+    }
+
+    #[test]
+    fn refresh_reports_rejected_state_restore() {
+        let url = serve_sequence(vec![
+            limiter_body_with_max(2, "old"),
+            limiter_body_with_max(1, "new"),
+        ]);
+        let mut loader = RemoteTreeLoader::<()>::json(url, registry())
+            .expect("remote loader")
+            .with_state_preservation(true);
+
+        let mut world = ();
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["old"]);
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["old"]);
+        assert!(loader.last_restore_error().is_none());
+
+        // The old limiter has done=1, which the new max=1 limiter rejects.
+        assert!(loader.refresh_now().expect("refresh"));
+        assert_eq!(loader.last_restored(), Some(0));
+        let error = loader.last_restore_error().expect("restore error");
+        assert!(error.contains("limit"), "unexpected error: {error}");
+
+        // The rejected state was reset, so the new limiter starts from zero.
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["new"]);
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Failure
+        );
+        assert!(drain(&mut loader).is_empty());
     }
 
     #[test]
