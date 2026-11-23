@@ -465,8 +465,9 @@ server.poll(&tree, Some(&stats))?;
 最新一条默认展开；条目使用永不复用的单调 revision 编号。`/metrics`、`/tree`、
 `/health` 分别提供 Prometheus 文本、ASCII 状态树与就绪探针；启用 `diff-serde` 后，
 `/diff.json` 返回最近一次差异的 JSON，`/diffs.json` 返回整个 `DiffHistory`
-的 `{"revision", "diff"}` 条目数组（由旧到新）。服务器没有鉴权，并会暴露树元数据；
-请只绑定 loopback，并仅在 debug 构建中使用。
+的 `{"revision", "diff"}` 条目数组（由旧到新）；追加 `?since=N` 可只取 revision
+大于 N 的条目。服务器没有鉴权，并会暴露树元数据；请只绑定 loopback，并仅在 debug
+构建中使用。
 
 ### 树差异
 
@@ -499,7 +500,9 @@ let parsed = TreeDiff::from_json(&json)?;
 `with_diff_history(n)` 保留有界 `DiffHistory`。每个存储的差异都会获得从 1 开始的
 单调 revision；即使因上限淘汰、`pop_latest` 或 `clear` 也不会复用，可通过
 `latest_entry()` / `entries()` 读取。历史序列化为由旧到新的 `{"revision", "diff"}`
-条目数组，配合 `InspectorServer::poll_with_history` 提供给 `/diffs.json`。
+条目数组，配合 `InspectorServer::poll_with_history` 提供给 `/diffs.json`。增量轮询
+可使用 `entries_since(rev)` / `to_json_since(rev)` 只取 revision 大于 `rev` 的条目，
+HTTP 侧对应 `/diffs.json?since=rev`。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。

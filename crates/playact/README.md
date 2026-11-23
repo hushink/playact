@@ -482,8 +482,9 @@ newest entry expanded; entries are labeled by a monotonic revision that is never
 reused. `/metrics`, `/tree`, and `/health` serve Prometheus text, the ASCII status
 tree, and a readiness probe; with `diff-serde`, `/diff.json` returns the latest diff
 and `/diffs.json` the whole `DiffHistory` as an array of `{"revision", "diff"}`
-entries (oldest first). The server has no authentication and exposes tree metadata;
-bind it to loopback and use it only in debug builds.
+entries (oldest first); append `?since=N` to fetch only revisions after `N`. The
+server has no authentication and exposes tree metadata; bind it to loopback and use it
+only in debug builds.
 
 ### Tree diffs
 
@@ -518,7 +519,9 @@ bounded `DiffHistory` when configured with `with_diff_history(n)`. Every stored 
 gets a monotonic revision (starting at 1, never reused across eviction, `pop_latest`,
 or `clear`) exposed by `latest_entry()` / `entries()`. The history serializes to a JSON
 array of `{"revision", "diff"}` entries, oldest first; combine it with
-`InspectorServer::poll_with_history` to serve `/diffs.json`.
+`InspectorServer::poll_with_history` to serve `/diffs.json`. For incremental polling,
+`entries_since(rev)` and `to_json_since(rev)` return only revisions above `rev`, and
+`/diffs.json?since=rev` exposes the same filter over HTTP.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.

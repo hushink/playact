@@ -47,7 +47,7 @@
 //! Call [`InspectorServer::poll_with_history`] to show every stored reload diff:
 //! the page renders a collapsible history and `/diffs.json` serves the whole
 //! [`DiffHistory`] with each entry's monotonic revision when `diff-serde` is
-//! enabled.
+//! enabled. Append `?since=N` to fetch only revisions after `N`.
 //!
 //! The server is a debug tool: it has no authentication, and the report exposes
 //! node names, IDs, and timings. Bind it to a loopback address and never expose
@@ -196,7 +196,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
 /// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
-/// | `/diffs.json` | `DiffHistory` `{"revision", "diff"}` entries as a JSON array, oldest first; requires `diff-serde` |
+/// | `/diffs.json[?since=N]` | `{"revision", "diff"}` entries as a JSON array, oldest first; `since` keeps revisions above N; requires `diff-serde` |
 /// | `/health` | `ok` |
 pub struct InspectorServer {
     listener: TcpListener,
@@ -270,7 +270,8 @@ impl InspectorServer {
     /// Pass `watcher.diff_history()` / `loader.diff_history()`. `/` renders every
     /// stored diff with the newest expanded, and `/diff.json` serves the newest
     /// entry. With `diff-serde`, `/diffs.json` returns the whole history as a
-    /// JSON array of `{"revision", "diff"}` entries, oldest first.
+    /// JSON array of `{"revision", "diff"}` entries, oldest first; add
+    /// `?since=N` to fetch only revisions after `N`.
     pub fn poll_with_history<W>(
         &mut self,
         tree: &BehaviorTree<W>,
@@ -331,7 +332,7 @@ impl InspectorServer {
         let mut parts = line.split_whitespace();
         let method = parts.next().unwrap_or_default();
         let target = parts.next().unwrap_or("/");
-        let path = target.split('?').next().unwrap_or(target);
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let is_get = method.eq_ignore_ascii_case("GET");
         let is_head = method.eq_ignore_ascii_case("HEAD");
 
@@ -361,22 +362,35 @@ impl InspectorServer {
                 ),
             },
             #[cfg(feature = "diff-serde")]
-            (true, "/diffs.json") => match (history, diff) {
-                (Some(history), _) => (
-                    "200 OK",
-                    "application/json; charset=utf-8",
-                    history.to_json(),
-                ),
-                (None, Some(diff)) => (
-                    "200 OK",
-                    "application/json; charset=utf-8",
-                    format!("[{}]", diff.to_json()),
-                ),
-                (None, None) => (
-                    "404 Not Found",
+            (true, "/diffs.json") => match parse_since(query) {
+                Err(_) => (
+                    "400 Bad Request",
                     "text/plain; charset=utf-8",
-                    String::from("no diff recorded\n"),
+                    String::from("invalid `since` revision\n"),
                 ),
+                Ok(since) => match (history, diff) {
+                    (Some(history), _) => {
+                        let body = match since {
+                            Some(revision) => history.to_json_since(revision),
+                            None => history.to_json(),
+                        };
+                        ("200 OK", "application/json; charset=utf-8", body)
+                    }
+                    (None, Some(diff)) => {
+                        // A lone diff has no stored revision; treat it as revision 1.
+                        let body = if since.unwrap_or(0) == 0 {
+                            format!("[{}]", diff.to_json())
+                        } else {
+                            String::from("[]")
+                        };
+                        ("200 OK", "application/json; charset=utf-8", body)
+                    }
+                    (None, None) => (
+                        "404 Not Found",
+                        "text/plain; charset=utf-8",
+                        String::from("no diff recorded\n"),
+                    ),
+                },
             },
             (true, "/metrics") => match stats {
                 Some(stats) => (
@@ -425,6 +439,22 @@ impl InspectorServer {
         }
         stream.flush()
     }
+}
+
+/// A malformed `since` query parameter.
+#[cfg(feature = "diff-serde")]
+struct InvalidSince;
+
+/// Reads the `since` revision from a query string.
+#[cfg(feature = "diff-serde")]
+fn parse_since(query: &str) -> Result<Option<u64>, InvalidSince> {
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if key == "since" {
+            return value.parse().map(Some).map_err(|_| InvalidSince);
+        }
+    }
+    Ok(None)
 }
 
 /// The diff section to render: one diff or the full bounded history.
@@ -1443,6 +1473,29 @@ mod tests {
         assert!(response.contains("application/json"));
         assert!(response.contains("\"added\""));
         assert!(response.contains("\"id\":\"new\""));
+
+        let response = request_with_diff(
+            &mut server,
+            &new,
+            None,
+            Some(&diff),
+            addr,
+            "GET /diffs.json?since=0 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("wrapped diff");
+        assert_eq!(value.as_array().expect("array").len(), 1);
+
+        let response = request_with_diff(
+            &mut server,
+            &new,
+            None,
+            Some(&diff),
+            addr,
+            "GET /diffs.json?since=1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        assert_eq!(body, "[]");
     }
 
     #[cfg(feature = "diff-serde")]
@@ -1480,6 +1533,43 @@ mod tests {
         );
         assert_eq!(entries[1]["revision"], 2);
         assert_eq!(entries[1]["diff"]["added"][0]["id"], "second");
+
+        let response = request_with_history(
+            &mut server,
+            &second,
+            None,
+            &history,
+            addr,
+            "GET /diffs.json?since=1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("incremental json");
+        let entries = value.as_array().expect("array");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["revision"], 2);
+
+        let response = request_with_history(
+            &mut server,
+            &second,
+            None,
+            &history,
+            addr,
+            "GET /diffs.json?since=2 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("empty json");
+        assert!(value.as_array().expect("array").is_empty());
+
+        let response = request_with_history(
+            &mut server,
+            &second,
+            None,
+            &history,
+            addr,
+            "GET /diffs.json?since=bad HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
 
         let response = request_with_history(
             &mut server,

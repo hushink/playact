@@ -254,6 +254,12 @@ impl DiffHistory {
         })
     }
 
+    /// The largest stored revision.
+    #[must_use]
+    pub fn latest_revision(&self) -> Option<u64> {
+        self.diffs.back().map(|stored| stored.revision)
+    }
+
     /// Iterates over diffs from oldest to newest.
     pub fn iter(&self) -> impl Iterator<Item = &TreeDiff> {
         self.diffs.iter().map(|stored| &stored.diff)
@@ -265,6 +271,15 @@ impl DiffHistory {
             revision: stored.revision,
             diff: &stored.diff,
         })
+    }
+
+    /// Iterates over entries newer than `revision`, oldest first.
+    ///
+    /// Revisions are compared numerically, so `entries_since(0)` returns every
+    /// stored entry and `entries_since(latest_revision())` returns none.
+    pub fn entries_since(&self, revision: u64) -> impl Iterator<Item = DiffEntry<'_>> {
+        self.entries()
+            .filter(move |entry| entry.revision > revision)
     }
 
     /// Appends a diff, dropping the oldest entry when the limit is reached.
@@ -302,6 +317,16 @@ impl DiffHistory {
     #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("DiffHistory serialization cannot fail")
+    }
+
+    /// Serializes only entries newer than `revision`, oldest first.
+    ///
+    /// Requires the `diff-serde` feature.
+    #[cfg(feature = "diff-serde")]
+    #[must_use]
+    pub fn to_json_since(&self, revision: u64) -> String {
+        let entries: Vec<DiffEntry<'_>> = self.entries_since(revision).collect();
+        serde_json::to_string(&entries).expect("DiffEntry serialization cannot fail")
     }
 
     /// Parses a history from JSON produced by [`DiffHistory::to_json`].
@@ -617,6 +642,53 @@ mod tests {
         assert_eq!(value["renamed"][0]["new_name"], "new");
         assert_eq!(value["renamed"][0]["old_kind"], "action");
         assert_eq!(value["renamed"][0]["new_kind"], "condition");
+    }
+
+    #[test]
+    fn entries_since_filters_newer_revisions() {
+        let empty = tree(Vec::new());
+        let one = tree(vec![leaf("a", "a")]);
+        let two = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let three = tree(vec![leaf("a", "a"), leaf("b", "b"), leaf("c", "c")]);
+
+        let mut history = DiffHistory::new(4);
+        history.push(TreeDiff::between(&empty, &one));
+        history.push(TreeDiff::between(&one, &two));
+        history.push(TreeDiff::between(&two, &three));
+
+        assert_eq!(history.latest_revision(), Some(3));
+        let revisions: Vec<u64> = history
+            .entries_since(1)
+            .map(|entry| entry.revision)
+            .collect();
+        assert_eq!(revisions, vec![2, 3]);
+        assert_eq!(history.entries_since(0).count(), 3);
+        assert!(history.entries_since(3).next().is_none());
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn serializes_history_since_revision() {
+        let empty = tree(Vec::new());
+        let one = tree(vec![leaf("a", "a")]);
+        let two = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let three = tree(vec![leaf("a", "a"), leaf("b", "b"), leaf("c", "c")]);
+
+        let mut history = DiffHistory::new(4);
+        history.push(TreeDiff::between(&empty, &one));
+        history.push(TreeDiff::between(&one, &two));
+        history.push(TreeDiff::between(&two, &three));
+
+        let value: serde_json::Value =
+            serde_json::from_str(&history.to_json_since(1)).expect("json");
+        let entries = value.as_array().expect("array");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["revision"], 2);
+        assert_eq!(entries[1]["revision"], 3);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&history.to_json_since(3)).expect("json");
+        assert!(value.as_array().expect("array").is_empty());
     }
 
     #[cfg(feature = "diff-serde")]
