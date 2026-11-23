@@ -674,7 +674,13 @@ mod tests {
         assert_eq!(diff.moved[0].id.as_str(), "b");
         assert_eq!(diff.moved[0].from.to_string(), "root.children[1]");
         assert_eq!(diff.moved[0].to.to_string(), "root.children[0]");
-        assert!(diff.renamed.is_empty());
+        // `b` also changed its action name, so it is reported as moved and renamed.
+        assert_eq!(diff.renamed.len(), 1);
+        let renamed = &diff.renamed[0];
+        assert_eq!(renamed.id.as_str(), "b");
+        assert_eq!(renamed.path.to_string(), "root.children[0]");
+        assert_eq!(renamed.old_name, "old");
+        assert_eq!(renamed.new_name, "new");
 
         assert!(watcher.take_last_diff().is_some());
         assert!(watcher.last_diff().is_none());

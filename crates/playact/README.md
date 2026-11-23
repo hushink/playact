@@ -500,7 +500,8 @@ println!("{diff}");
 
 - `added` / `removed` report `NodeId`, name, kind, and `NodePath`
 - `moved` reports the old and new structural paths
-- `renamed` reports old/new name and kind when the path is unchanged
+- `renamed` reports old/new name and kind; a node that also moved appears in both
+  `moved` and `renamed`
 - the main tree and configured services share one ID namespace
 - nodes without IDs are traversed for path accuracy but not reported
 

@@ -832,6 +832,7 @@ let latest = history.latest_entry();
 | `to_json`、`to_json_since(rev)`、`from_json` | `{revision, timestamp?, diff}` 数组 |
 | `pop_latest`、`set_limit`、`clear` | 维护 |
 
+同时发生移动与改名/改类型的节点会同时出现在 `moved` 与 `renamed` 中。
 轮询方应保存 `latest_revision` 并只请求更新条目；`oldest_revision` 用于判断
 是否因淘汰而漏读。
 

@@ -482,7 +482,8 @@ println!("{diff}");
 
 - `added` / `removed` 报告 `NodeId`、名称、类型与 `NodePath`
 - `moved` 报告旧路径与新路径
-- `renamed` 在路径不变时报告新旧名称与类型
+- `renamed` 报告新旧名称与类型；若节点同时移动，它会同时出现在 `moved` 与
+  `renamed` 中
 - 主树与配置中的 services 共享同一个 ID 命名空间
 - 无 ID 节点只参与路径计算，不进入报告
 

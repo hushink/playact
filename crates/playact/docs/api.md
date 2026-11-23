@@ -865,8 +865,9 @@ let latest = history.latest_entry();
 | `to_json`, `to_json_since(rev)`, `from_json` | JSON arrays of `{revision, timestamp?, diff}` |
 | `pop_latest`, `set_limit`, `clear` | maintenance |
 
-A polling client should remember `latest_revision` and request only newer
-entries; `oldest_revision` tells it when eviction may have skipped data.
+A node that both moved and changed name or kind appears in `moved` and
+`renamed`. A polling client should remember `latest_revision` and request only
+newer entries; `oldest_revision` tells it when eviction may have skipped data.
 
 ## 13. Configuration
 
