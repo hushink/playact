@@ -1,6 +1,6 @@
 //! Structural and include diffs between two configurations.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -109,6 +109,12 @@ pub(crate) fn render_human(diff: &ConfigDiff) -> String {
                 change.path,
                 change.old.as_deref().unwrap_or("")
             )),
+            "moved" => output.push_str(&format!(
+                "> {}: {} (moved from {})\n",
+                change.path,
+                change.new.as_deref().unwrap_or(""),
+                change.old.as_deref().unwrap_or("")
+            )),
             _ => output.push_str(&format!(
                 "~ {}: {} -> {}\n",
                 change.path,
@@ -156,30 +162,10 @@ fn diff_value(old: &Value, new: &Value, path: &str, changes: &mut Vec<NodeChange
             }
         }
         (Value::Array(old_items), Value::Array(new_items)) => {
-            let shared = old_items.len().min(new_items.len());
-            for index in 0..shared {
-                diff_value(
-                    &old_items[index],
-                    &new_items[index],
-                    &format!("{path}[{index}]"),
-                    changes,
-                );
-            }
-            for (index, item) in old_items.iter().enumerate().skip(shared) {
-                changes.push(NodeChange {
-                    kind: "removed",
-                    path: format!("{path}[{index}]"),
-                    old: Some(value_label(item)),
-                    new: None,
-                });
-            }
-            for (index, item) in new_items.iter().enumerate().skip(shared) {
-                changes.push(NodeChange {
-                    kind: "added",
-                    path: format!("{path}[{index}]"),
-                    old: None,
-                    new: Some(value_label(item)),
-                });
+            if can_match_arrays(old_items, new_items) {
+                diff_matched_array(old_items, new_items, path, changes);
+            } else {
+                diff_indexed_array(old_items, new_items, path, changes);
             }
         }
         _ => {
@@ -195,6 +181,162 @@ fn diff_value(old: &Value, new: &Value, path: &str, changes: &mut Vec<NodeChange
     }
 }
 
+fn can_match_arrays(old: &[Value], new: &[Value]) -> bool {
+    let mut any = false;
+    for item in old.iter().chain(new) {
+        any = true;
+        if array_identity(item).is_none() {
+            return false;
+        }
+    }
+    any
+}
+
+fn array_identity(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    if let Some(kind) = object.get("type").and_then(Value::as_str) {
+        let detail = node_detail(object, kind).unwrap_or("");
+        return Some(format!("node:{kind}:{detail}"));
+    }
+    let score = object.get("score").and_then(Value::as_str)?;
+    Some(format!("branch:{score}"))
+}
+
+fn array_kind(value: &Value) -> Option<&str> {
+    let object = value.as_object()?;
+    if let Some(kind) = object.get("type").and_then(Value::as_str) {
+        return Some(kind);
+    }
+    object
+        .get("score")
+        .and_then(Value::as_str)
+        .map(|_| "branch")
+}
+
+fn diff_indexed_array(
+    old_items: &[Value],
+    new_items: &[Value],
+    path: &str,
+    changes: &mut Vec<NodeChange>,
+) {
+    let shared = old_items.len().min(new_items.len());
+    for index in 0..shared {
+        diff_value(
+            &old_items[index],
+            &new_items[index],
+            &format!("{path}[{index}]"),
+            changes,
+        );
+    }
+    for (index, item) in old_items.iter().enumerate().skip(shared) {
+        changes.push(NodeChange {
+            kind: "removed",
+            path: format!("{path}[{index}]"),
+            old: Some(value_label(item)),
+            new: None,
+        });
+    }
+    for (index, item) in new_items.iter().enumerate().skip(shared) {
+        changes.push(NodeChange {
+            kind: "added",
+            path: format!("{path}[{index}]"),
+            old: None,
+            new: Some(value_label(item)),
+        });
+    }
+}
+
+fn diff_matched_array(
+    old_items: &[Value],
+    new_items: &[Value],
+    path: &str,
+    changes: &mut Vec<NodeChange>,
+) {
+    let old_ids: Vec<Option<String>> = old_items.iter().map(array_identity).collect();
+    let new_ids: Vec<Option<String>> = new_items.iter().map(array_identity).collect();
+    let mut old_queues: HashMap<String, VecDeque<usize>> = HashMap::new();
+    for (index, id) in old_ids.iter().enumerate() {
+        if let Some(id) = id {
+            old_queues.entry(id.clone()).or_default().push_back(index);
+        }
+    }
+
+    let mut old_used = vec![false; old_items.len()];
+    let mut new_used = vec![false; new_items.len()];
+    let mut pairs = Vec::new();
+
+    for (new_index, id) in new_ids.iter().enumerate() {
+        let Some(id) = id else {
+            continue;
+        };
+        let Some(queue) = old_queues.get_mut(id) else {
+            continue;
+        };
+        while let Some(old_index) = queue.pop_front() {
+            if !old_used[old_index] {
+                old_used[old_index] = true;
+                new_used[new_index] = true;
+                pairs.push((old_index, new_index));
+                break;
+            }
+        }
+    }
+
+    let shared = old_items.len().min(new_items.len());
+    for index in 0..shared {
+        if old_used[index] || new_used[index] {
+            continue;
+        }
+        let old_kind = array_kind(&old_items[index]);
+        if old_kind.is_some() && old_kind == array_kind(&new_items[index]) {
+            old_used[index] = true;
+            new_used[index] = true;
+            pairs.push((index, index));
+        }
+    }
+
+    for (index, item) in old_items.iter().enumerate() {
+        if !old_used[index] {
+            changes.push(NodeChange {
+                kind: "removed",
+                path: format!("{path}[{index}]"),
+                old: Some(value_label(item)),
+                new: None,
+            });
+        }
+    }
+    for (index, item) in new_items.iter().enumerate() {
+        if !new_used[index] {
+            changes.push(NodeChange {
+                kind: "added",
+                path: format!("{path}[{index}]"),
+                old: None,
+                new: Some(value_label(item)),
+            });
+        }
+    }
+
+    pairs.sort_by_key(|(_, new_index)| *new_index);
+    for (old_index, new_index) in pairs {
+        let old_path = format!("{path}[{old_index}]");
+        let new_path = format!("{path}[{new_index}]");
+        if old_index != new_index {
+            changes.push(NodeChange {
+                kind: "moved",
+                path: new_path.clone(),
+                old: Some(old_path),
+                new: Some(value_label(&new_items[new_index])),
+            });
+        }
+        diff_value(
+            &old_items[old_index],
+            &new_items[new_index],
+            &new_path,
+            changes,
+        );
+    }
+}
+
 fn join(path: &str, key: &str) -> String {
     if path.is_empty() {
         key.to_string()
@@ -203,23 +345,27 @@ fn join(path: &str, key: &str) -> String {
     }
 }
 
+fn node_detail<'a>(object: &'a serde_json::Map<String, Value>, kind: &str) -> Option<&'a str> {
+    match kind {
+        "action" | "condition" | "try_action" | "async_action" => {
+            object.get("name").and_then(Value::as_str)
+        }
+        "custom" => object.get("kind").and_then(Value::as_str),
+        "subtree" => object.get("template").and_then(Value::as_str),
+        "switch" | "set_value" => object.get("key").and_then(Value::as_str),
+        "wait_for_event" => object.get("event").and_then(Value::as_str),
+        "include" => object.get("path").and_then(Value::as_str),
+        "identified" => object.get("id").and_then(Value::as_str),
+        _ => object.get("name").and_then(Value::as_str),
+    }
+}
+
 fn value_label(value: &Value) -> String {
     if let Some(object) = value.as_object()
         && let Some(kind) = object.get("type").and_then(Value::as_str)
     {
-        let detail = match kind {
-            "action" | "condition" | "try_action" | "async_action" => {
-                object.get("name").and_then(Value::as_str)
-            }
-            "custom" => object.get("kind").and_then(Value::as_str),
-            "subtree" => object.get("template").and_then(Value::as_str),
-            "switch" | "set_value" => object.get("key").and_then(Value::as_str),
-            "wait_for_event" => object.get("event").and_then(Value::as_str),
-            "include" => object.get("path").and_then(Value::as_str),
-            "identified" => object.get("id").and_then(Value::as_str),
-            _ => object.get("name").and_then(Value::as_str),
-        };
-        return detail.map_or_else(|| kind.to_string(), |detail| format!("{kind}: {detail}"));
+        return node_detail(object, kind)
+            .map_or_else(|| kind.to_string(), |detail| format!("{kind}: {detail}"));
     }
     truncate(&value.to_string(), 160)
 }
@@ -337,6 +483,73 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path, "root.children[1].params.amount");
         assert_eq!(changes[0].kind, "changed");
+    }
+
+    #[test]
+    fn reports_insertions_as_moves_instead_of_index_changes() {
+        let old = json!({
+            "root": {
+                "type": "sequence",
+                "children": [
+                    {"type": "action", "name": "wait"},
+                    {"type": "action", "name": "heal"}
+                ]
+            }
+        });
+        let new = json!({
+            "root": {
+                "type": "sequence",
+                "children": [
+                    {"type": "action", "name": "attack"},
+                    {"type": "action", "name": "wait"},
+                    {"type": "action", "name": "heal"}
+                ]
+            }
+        });
+        let mut changes = Vec::new();
+        diff_value(&old, &new, "", &mut changes);
+        assert_eq!(
+            changes
+                .iter()
+                .filter(|change| change.kind == "moved")
+                .count(),
+            2
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|change| { change.kind == "added" && change.path == "root.children[0]" })
+        );
+        assert!(
+            changes.iter().all(|change| change.kind != "changed"),
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn reports_reorders_as_moves() {
+        let old = json!({
+            "root": {
+                "type": "sequence",
+                "children": [
+                    {"type": "action", "name": "wait"},
+                    {"type": "action", "name": "heal"}
+                ]
+            }
+        });
+        let new = json!({
+            "root": {
+                "type": "sequence",
+                "children": [
+                    {"type": "action", "name": "heal"},
+                    {"type": "action", "name": "wait"}
+                ]
+            }
+        });
+        let mut changes = Vec::new();
+        diff_value(&old, &new, "", &mut changes);
+        assert_eq!(changes.len(), 2);
+        assert!(changes.iter().all(|change| change.kind == "moved"));
     }
 
     #[test]
