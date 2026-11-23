@@ -894,6 +894,7 @@ let mut tree = spec.build(&registry)?;
 | `try_action::<P, E>(...)` | 可失败 action；`Err` -> trace error + Failure |
 | `async_action::<P>(...)` | 返回任务的异步 action |
 | `custom::<P>(kind, factory)` | 任意节点工厂，接收类型化参数与子节点 |
+| `subtree(name, factory)` | 供 `subtree` 节点使用的代码构建 `SubtreeFactory` 模板 |
 | `switch_key(key)` / `set_value_key(key)` / `event_key(key)` | 供配置引用的类型化 key |
 | `contract_key(key)` / `scoped_key(key)` | 供 `contract` / `scoped` 边界使用的 key；scoped 值需实现 `Clone` |
 
@@ -913,7 +914,7 @@ Factory 形状为 `Fn(P) -> TickClosure`。外层 factory 每个节点执行一�
 叶子：`wait`、`wait_until`、`wait_for_event`、`set_value`、`action`、
 `condition`、`try_action`、`async_action`。
 
-结构：`include`、`custom`、`identified`、`scoped`、`contract`。
+结构：`include`、`subtree`、`custom`、`identified`、`scoped`、`contract`。
 
 示例：
 
@@ -973,6 +974,14 @@ Factory 形状为 `Fn(P) -> TickClosure`。外层 factory 每个节点执行一�
   "required": ["combat.target"],
   "provided": ["combat.plan"],
   "child": {"type": "action", "name": "plan"}
+}
+```
+
+```json
+{
+  "type": "subtree",
+  "template": "goblin_patrol",
+  "name": "patrol"
 }
 ```
 

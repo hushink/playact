@@ -485,6 +485,16 @@ pub enum SpecNode {
         #[serde(default)]
         name: Option<String>,
     },
+    /// Instantiates a registered code-built subtree template.
+    ///
+    /// The template must be registered with [`NodeRegistry::subtree`].
+    Subtree {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered template name.
+        template: String,
+    },
     /// Custom node.
     Custom {
         /// Custom kind in the registry.
@@ -601,6 +611,7 @@ impl SpecNode {
             | Self::Condition { .. }
             | Self::TryAction { .. }
             | Self::AsyncAction { .. }
+            | Self::Subtree { .. }
             | Self::Include { .. } => Vec::new(),
         }
     }
@@ -730,9 +741,11 @@ where
 #[cfg(test)]
 mod tests {
     use crate::blackboard::Key;
+    use crate::builder::BehaviorTreeBuilder;
     use crate::context::Context;
     use crate::node::{BoxedNode, Kind, Node};
     use crate::status::Status;
+    use crate::subtree::SubtreeFactory;
     use crate::time::Time;
 
     use super::*;
@@ -1162,6 +1175,68 @@ mod tests {
         assert!(matches!(
             registry.scoped_key(&SHARED),
             Err(RegistryError::Duplicate { category, .. }) if category == "scoped key"
+        ));
+    }
+
+    #[test]
+    fn builds_registered_subtree_template() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .subtree(
+                "ok_tree",
+                SubtreeFactory::new(|| {
+                    BehaviorTreeBuilder::<()>::new("template")
+                        .action("ok", |_| Status::Success)
+                        .build()
+                        .expect("template")
+                        .into_root()
+                }),
+            )
+            .expect("register subtree");
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"subtree","template":"ok_tree","name":"included"}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().name, "included");
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn unknown_subtree_template_reports_path() {
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"subtree","template":"missing"}}"#)
+            .expect("valid spec");
+        let error = spec
+            .build(&action_registry())
+            .err()
+            .expect("unknown template");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownSubtreeTemplate { template } if template == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_subtree_names() {
+        let factory = SubtreeFactory::new(|| {
+            BehaviorTreeBuilder::<()>::new("template")
+                .action("ok", |_| Status::Success)
+                .build()
+                .expect("template")
+                .into_root()
+        });
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .subtree("template", factory.clone())
+            .expect("register subtree");
+        assert!(matches!(
+            registry.subtree("template", factory),
+            Err(RegistryError::Duplicate { category, .. }) if category == "subtree"
         ));
     }
 
@@ -1813,6 +1888,7 @@ mod tests {
         assert!(text.contains("\"identified\""));
         assert!(text.contains("\"scoped\""));
         assert!(text.contains("\"contract\""));
+        assert!(text.contains("\"subtree\""));
         assert!(text.contains("\"if_then_else\""));
         assert!(text.contains("\"then\""));
         assert!(text.contains("\"else\""));

@@ -16,6 +16,7 @@ use crate::leaf::{Action, Condition, SetValue, TryAction, WaitForEvent};
 use crate::node::BoxedNode;
 use crate::scope::ScopedKeySpec;
 use crate::status::Status;
+use crate::subtree::SubtreeFactory;
 
 use super::error::{ConfigBuildError, ConfigBuildErrorKind, RegistryError};
 
@@ -159,6 +160,7 @@ pub struct NodeRegistry<W: 'static> {
     try_actions: HashMap<String, ErasedTryActionFactory<W>>,
     async_actions: HashMap<String, ErasedAsyncActionFactory<W>>,
     custom: HashMap<String, Factory<W>>,
+    subtrees: HashMap<String, SubtreeFactory<W>>,
 }
 
 impl<W: 'static> NodeRegistry<W> {
@@ -178,6 +180,7 @@ impl<W: 'static> NodeRegistry<W> {
             try_actions: HashMap::new(),
             async_actions: HashMap::new(),
             custom: HashMap::new(),
+            subtrees: HashMap::new(),
         }
     }
 
@@ -484,6 +487,22 @@ impl<W: 'static> NodeRegistry<W> {
         insert_factory(&mut self.custom, "custom", kind, erased)
     }
 
+    /// Registers a code-built subtree template.
+    ///
+    /// A `subtree` configuration node instantiates a fresh subtree from this
+    /// factory through its `template` name, so complex subtrees can stay in
+    /// typed Rust code while configuration reuses them in multiple places.
+    pub fn subtree(
+        &mut self,
+        name: impl Into<String>,
+        factory: SubtreeFactory<W>,
+    ) -> Result<(), RegistryError> {
+        let name = name.into();
+        ensure_name_available(&self.subtrees, "subtree", &name)?;
+        self.subtrees.insert(name, factory);
+        Ok(())
+    }
+
     pub(crate) fn build_action(
         &self,
         name: &str,
@@ -653,6 +672,17 @@ impl<W: 'static> NodeRegistry<W> {
             None => Err(ConfigBuildError::new(ConfigBuildErrorKind::UnknownCustom {
                 kind: kind.to_string(),
             })),
+        }
+    }
+
+    pub(crate) fn build_subtree(&self, template: &str) -> Result<BoxedNode<W>, ConfigBuildError> {
+        match self.subtrees.get(template) {
+            Some(factory) => Ok(factory.instantiate()),
+            None => Err(ConfigBuildError::new(
+                ConfigBuildErrorKind::UnknownSubtreeTemplate {
+                    template: template.to_string(),
+                },
+            )),
         }
     }
 }

@@ -928,6 +928,7 @@ let mut tree = spec.build(&registry)?;
 | `try_action::<P, E>(...)` | fallible action; `Err` -> trace error + Failure |
 | `async_action::<P>(...)` | async action returning a task |
 | `custom::<P>(kind, factory)` | arbitrary node factory with typed params and children |
+| `subtree(name, factory)` | code-built `SubtreeFactory` template for `subtree` nodes |
 | `switch_key(key)` / `set_value_key(key)` / `event_key(key)` | typed keys referenced by config |
 | `contract_key(key)` / `scoped_key(key)` | typed keys for `contract` / `scoped` boundaries; scoped values must be `Clone` |
 
@@ -948,7 +949,7 @@ Decorators: `inverter`, `always_succeed`, `always_fail`, `repeat`, `retry`,
 Leaves: `wait`, `wait_until`, `wait_for_event`, `set_value`, `action`,
 `condition`, `try_action`, `async_action`.
 
-Structure: `include`, `custom`, `identified`, `scoped`, `contract`.
+Structure: `include`, `subtree`, `custom`, `identified`, `scoped`, `contract`.
 
 Examples:
 
@@ -1008,6 +1009,14 @@ Examples:
   "required": ["combat.target"],
   "provided": ["combat.plan"],
   "child": {"type": "action", "name": "plan"}
+}
+```
+
+```json
+{
+  "type": "subtree",
+  "template": "goblin_patrol",
+  "name": "patrol"
 }
 ```
 

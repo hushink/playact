@@ -402,6 +402,16 @@ fn build_node<W: 'static>(
             .registry
             .build_async_action(name, params)
             .map_err(|error| error.at(path)),
+        SpecNode::Subtree { name, template } => {
+            let node = ctx
+                .registry
+                .build_subtree(template)
+                .map_err(|error| error.at(path))?;
+            match name {
+                Some(name) => Ok(Box::new(Named::new(name.clone(), node))),
+                None => Ok(node),
+            }
+        }
         SpecNode::Custom {
             kind,
             name,

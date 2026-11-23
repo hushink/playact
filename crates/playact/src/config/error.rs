@@ -186,6 +186,11 @@ pub enum ConfigBuildErrorKind {
         /// Custom kind.
         kind: String,
     },
+    /// Unregistered subtree template.
+    UnknownSubtreeTemplate {
+        /// Template name.
+        template: String,
+    },
     /// Leaf parameter deserialization failed.
     InvalidParams {
         /// Error message.
@@ -234,6 +239,9 @@ impl fmt::Display for ConfigBuildErrorKind {
                 write!(f, "duplicate node id `{id}` at {path}")
             }
             Self::UnknownCustom { kind } => write!(f, "unknown custom kind `{kind}`"),
+            Self::UnknownSubtreeTemplate { template } => {
+                write!(f, "unknown subtree template `{template}`")
+            }
             Self::InvalidParams { message } => write!(f, "invalid params: {message}"),
             Self::InvalidThreshold(error) => error.fmt(f),
             Self::InvalidTree { message } => f.write_str(message),

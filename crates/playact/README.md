@@ -682,6 +682,9 @@ let mut tree = spec.build(&registry)?;
   `guard`, `while`, throttle, and probability), waits, `wait_until`,
   `wait_for_event`, `set_value`, actions, conditions, `try_action`, `async_action`,
   `custom` factories, and `scoped` / `contract` subtree boundaries.
+- `subtree` configuration nodes reference a `SubtreeFactory` registered with
+  `registry.subtree(name, factory)`, so complex code-built subtrees can be reused
+  by name from JSON/TOML/YAML/RON.
 - `try_action` registrations return fallible tick closures; errors are reported
   through the tracer and become `Failure`. `async_action` registrations return
   `AsyncTask` starters for thread, Tokio, or custom remote tasks.

@@ -653,6 +653,8 @@ let mut tree = spec.build(&registry)?;
   `switch`、`if_then_else`、装饰器（含 `guard`、`while`、throttle 与 probability）、
   wait、`wait_until`、`wait_for_event`、`set_value`、action、condition、
   `try_action`、`async_action`、custom 工厂，以及 `scoped` / `contract` 子树边界。
+- `subtree` 配置节点引用通过 `registry.subtree(name, factory)` 注册的
+  `SubtreeFactory`，让复杂的代码构建子树可以在 JSON/TOML/YAML/RON 中按名称复用。
 - `try_action` 注册返回可失败的 tick 闭包；错误通过 tracer 上报并转为 `Failure`。
   `async_action` 注册返回 `AsyncTask` 启动器，可接线程、Tokio 或自定义远程任务。
 - `condition` 注册同时提供 `guard`、`while`、`if_then_else`、`wait_until` 可用的
