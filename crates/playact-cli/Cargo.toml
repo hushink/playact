@@ -19,7 +19,7 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-playact = { version = "0.1.2", path = "../playact", features = ["config", "schema", "toml", "yaml", "ron"] }
+playact = { version = "0.2.0", path = "../playact", features = ["config", "schema", "toml", "yaml", "ron"] }
 jsonschema = { workspace = true }
 ron = { workspace = true }
 schemars = { workspace = true }
