@@ -1221,7 +1221,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "playact"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "jsonschema",
  "notify",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "playact-cli"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "jsonschema",
  "playact",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "playact-macros"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
