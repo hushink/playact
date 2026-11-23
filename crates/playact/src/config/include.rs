@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use super::{ConfigError, TreeParser, TreeSpec};
 
@@ -14,6 +15,23 @@ use super::{ConfigError, TreeParser, TreeSpec};
 pub trait IncludeResolver {
     /// Resolves one include path.
     fn resolve(&self, path: &str) -> Result<TreeSpec, ConfigError>;
+
+    /// Files whose changes should trigger a hot reload, in addition to the root
+    /// configuration file.
+    ///
+    /// [`TreeWatcher`](crate::hot_reload::TreeWatcher) polls these paths after
+    /// every build. Implementations that read local files should record them in
+    /// [`reset_watched_paths`](IncludeResolver::reset_watched_paths) and return
+    /// them here. The default reports no extra paths.
+    fn watched_paths(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// Clears the paths reported by [`watched_paths`](IncludeResolver::watched_paths).
+    ///
+    /// The watcher calls this before every build so the next report reflects
+    /// only the current include graph. The default does nothing.
+    fn reset_watched_paths(&self) {}
 }
 
 impl<F> IncludeResolver for F
@@ -33,6 +51,7 @@ where
 pub struct FsIncludeResolver {
     base: PathBuf,
     parser: TreeParser,
+    watched: Mutex<Vec<PathBuf>>,
 }
 
 impl FsIncludeResolver {
@@ -52,7 +71,11 @@ impl FsIncludeResolver {
                 base.display()
             )));
         }
-        Ok(Self { base, parser })
+        Ok(Self {
+            base,
+            parser,
+            watched: Mutex::new(Vec::new()),
+        })
     }
 
     /// Reads JSON includes from the base directory.
@@ -102,11 +125,30 @@ impl IncludeResolver for FsIncludeResolver {
             return Err(ConfigError::with_path(path, "include path is not a file"));
         }
 
+        if let Ok(mut watched) = self.watched.lock()
+            && !watched.contains(&canonical)
+        {
+            watched.push(canonical.clone());
+        }
+
         let text = fs::read_to_string(&canonical)
             .map_err(|error| ConfigError::with_path(path, format!("read include: {error}")))?;
         let spec = (self.parser)(&text)
             .map_err(|error| ConfigError::with_path(path, format!("parse include: {error}")))?;
         Ok(spec)
+    }
+
+    fn watched_paths(&self) -> Vec<PathBuf> {
+        self.watched
+            .lock()
+            .map(|watched| watched.clone())
+            .unwrap_or_default()
+    }
+
+    fn reset_watched_paths(&self) {
+        if let Ok(mut watched) = self.watched.lock() {
+            watched.clear();
+        }
     }
 }
 
@@ -170,6 +212,26 @@ mod tests {
         assert!(error.to_string().contains("escapes"));
 
         fs::remove_dir_all(&parent).expect("cleanup");
+    }
+
+    #[test]
+    fn records_watched_paths_and_resets() {
+        let base = temp_dir("watch");
+        let sub = base.join("sub.json");
+        fs::write(&sub, r#"{"root":{"type":"action","name":"ok"}}"#).expect("write include");
+
+        let resolver = FsIncludeResolver::json(&base).expect("resolver");
+        assert!(resolver.watched_paths().is_empty());
+
+        resolver.resolve("sub.json").expect("resolve");
+        resolver.resolve("sub.json").expect("resolve again");
+        let expected = sub.canonicalize().expect("canonical include");
+        assert_eq!(resolver.watched_paths(), vec![expected]);
+
+        resolver.reset_watched_paths();
+        assert!(resolver.watched_paths().is_empty());
+
+        fs::remove_dir_all(&base).expect("cleanup");
     }
 
     #[test]

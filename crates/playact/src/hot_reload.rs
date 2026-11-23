@@ -20,14 +20,17 @@
 //!   to the caller;
 //! - Tracers are not preserved; reinstall them through [`TreeWatcher::tree_mut`]
 //!   after a reload;
-//! - `include` files are re-resolved on every reload; the watcher still only
-//!   watches the root file, so when an include file changes on its own call
-//!   [`TreeWatcher::reload_now`] or touch the root file.
+//! - `include` files are re-resolved on every reload, and the watcher polls the
+//!   paths reported by [`IncludeResolver::watched_paths`] (plus the root file),
+//!   so editing an include on its own triggers a reload. `FsIncludeResolver`
+//!   records every file it resolves; custom resolvers can implement
+//!   [`IncludeResolver::watched_paths`] and
+//!   [`IncludeResolver::reset_watched_paths`].
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -99,17 +102,51 @@ impl From<notify::Error> for HotReloadError {
     }
 }
 
+/// A file reported by the include resolver, with its last observed stamp.
+#[derive(Debug, Clone)]
+struct WatchedInclude {
+    path: PathBuf,
+    stamp: Option<FileStamp>,
+}
+
+/// Cheap file identity used to notice include edits while polling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    fs::metadata(path).ok().map(|metadata| FileStamp {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
+}
+
+fn collect_watched_includes(resolver: &dyn IncludeResolver) -> Vec<WatchedInclude> {
+    resolver
+        .watched_paths()
+        .into_iter()
+        .map(|path| WatchedInclude {
+            stamp: file_stamp(&path),
+            path,
+        })
+        .collect()
+}
+
 /// Watches a configuration file and maintains its behavior tree.
 ///
 /// It watches the directory containing the configuration file (filtering events
 /// by file name), so atomic saves that write a temp file and then rename it are
-/// also observed.
+/// also observed. Include files reported by the resolver are polled on every
+/// [`TreeWatcher::poll`], and a change to any of them triggers a reload too.
 pub struct TreeWatcher<W: 'static> {
     path: PathBuf,
     registry: NodeRegistry<W>,
     parser: TreeParser,
     tree: BehaviorTree<W>,
     resolver: Option<Box<dyn IncludeResolver>>,
+    watched_includes: Vec<WatchedInclude>,
     _watcher: RecommendedWatcher,
     events: Receiver<notify::Result<Event>>,
     debounce: Duration,
@@ -131,10 +168,11 @@ impl<W: 'static> TreeWatcher<W> {
 
     /// Creates a watcher with a custom parser and include resolver.
     ///
-    /// The resolver runs again on the initial build and on every reload. Note
-    /// that the watcher still only watches the root configuration file: a change
-    /// to an included file alone triggers no event, so call
-    /// [`TreeWatcher::reload_now`] or touch the root file.
+    /// The resolver runs again on the initial build and on every reload. Its
+    /// [`IncludeResolver::watched_paths`] report is polled alongside the root
+    /// file, so a resolver that records local files (such as
+    /// [`FsIncludeResolver`](crate::config::FsIncludeResolver)) also reloads
+    /// when an include changes on its own.
     pub fn with_parser_and_resolver(
         path: impl Into<PathBuf>,
         registry: NodeRegistry<W>,
@@ -163,9 +201,16 @@ impl<W: 'static> TreeWatcher<W> {
         let text = fs::read_to_string(&path)?;
         let spec = parser(&text)?;
         let tree = match resolver.as_deref() {
-            Some(resolver) => spec.build_with_resolver(&registry, resolver)?,
+            Some(resolver) => {
+                resolver.reset_watched_paths();
+                spec.build_with_resolver(&registry, resolver)?
+            }
             None => spec.build(&registry)?,
         };
+        let watched_includes = resolver
+            .as_deref()
+            .map(collect_watched_includes)
+            .unwrap_or_default();
 
         let (sender, events) = mpsc::channel();
         let mut watcher = notify::recommended_watcher(move |event| {
@@ -184,6 +229,7 @@ impl<W: 'static> TreeWatcher<W> {
             parser,
             tree,
             resolver,
+            watched_includes,
             _watcher: watcher,
             events,
             debounce: Duration::from_millis(200),
@@ -265,6 +311,16 @@ impl<W: 'static> TreeWatcher<W> {
         &self.path
     }
 
+    /// Include files polled for changes in addition to the root file.
+    ///
+    /// The list comes from the resolver's watched-path report after each build;
+    /// it is empty without a resolver or when the resolver reads no files.
+    pub fn include_paths(&self) -> impl Iterator<Item = &Path> {
+        self.watched_includes
+            .iter()
+            .map(|include| include.path.as_path())
+    }
+
     /// The registry used for building and reloading.
     #[must_use]
     pub fn registry(&self) -> &NodeRegistry<W> {
@@ -320,6 +376,9 @@ impl<W: 'static> TreeWatcher<W> {
         if relevant {
             self.pending_since = Some(Instant::now());
         }
+        if self.pending_since.is_none() && self.includes_changed() {
+            self.pending_since = Some(Instant::now());
+        }
 
         let Some(since) = self.pending_since else {
             return Ok(false);
@@ -351,10 +410,23 @@ impl<W: 'static> TreeWatcher<W> {
     }
 
     fn reload(&mut self) -> Result<(), HotReloadError> {
+        let result = self.reload_inner();
+        self.watched_includes = self
+            .resolver
+            .as_deref()
+            .map(collect_watched_includes)
+            .unwrap_or_default();
+        result
+    }
+
+    fn reload_inner(&mut self) -> Result<(), HotReloadError> {
         let text = fs::read_to_string(&self.path)?;
         let spec = (self.parser)(&text)?;
         let mut new_tree = match self.resolver.as_deref() {
-            Some(resolver) => spec.build_with_resolver(&self.registry, resolver)?,
+            Some(resolver) => {
+                resolver.reset_watched_paths();
+                spec.build_with_resolver(&self.registry, resolver)?
+            }
             None => spec.build(&self.registry)?,
         };
 
@@ -378,6 +450,12 @@ impl<W: 'static> TreeWatcher<W> {
         self.diff_history.push(diff);
 
         Ok(())
+    }
+
+    fn includes_changed(&self) -> bool {
+        self.watched_includes
+            .iter()
+            .any(|include| file_stamp(&include.path) != include.stamp)
     }
 
     fn is_relevant(&self, event: &Event) -> bool {
@@ -729,6 +807,62 @@ mod tests {
 
         fs::write(&sub, r#"{"root":{"type":"action","name":"new"}}"#).expect("write sub new");
         watcher.reload_now().expect("reload include");
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new"]);
+
+        drop(watcher);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn poll_reloads_when_an_include_changes() {
+        use crate::config::FsIncludeResolver;
+
+        let dir = std::env::temp_dir().join(format!(
+            "playact_hot_reload_include_poll_{}_{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).expect("create dir");
+        let root = dir.join("root.json");
+        let sub = dir.join("sub.json");
+        let leaf = dir.join("leaf.json");
+        fs::write(&root, r#"{"root":{"type":"include","path":"sub.json"}}"#).expect("write root");
+        fs::write(&sub, r#"{"root":{"type":"include","path":"leaf.json"}}"#).expect("write sub");
+        fs::write(
+            &leaf,
+            "{\n  \"root\": { \"type\": \"action\", \"name\": \"old\" }\n}\n",
+        )
+        .expect("write leaf");
+
+        let resolver = FsIncludeResolver::json(&dir).expect("resolver");
+        let mut watcher = TreeWatcher::<()>::json_with_resolver(&root, registry(), resolver)
+            .expect("watcher")
+            .with_debounce(Duration::ZERO);
+
+        let mut watched: Vec<PathBuf> = watcher.include_paths().map(Path::to_path_buf).collect();
+        watched.sort();
+        let mut expected = vec![
+            sub.canonicalize().expect("canonical sub"),
+            leaf.canonicalize().expect("canonical leaf"),
+        ];
+        expected.sort();
+        assert_eq!(watched, expected);
+
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old"]);
+
+        // Change only the nested include; neither the root nor filesystem events
+        // for it are needed: the watcher polls the recorded include paths.
+        fs::write(&leaf, r#"{"root":{"type":"action","name":"new"}}"#).expect("write leaf new");
+        assert!(watcher.poll().expect("poll reload"));
         assert_eq!(
             watcher.tree_mut().tick(&mut world, Time::ZERO),
             Status::Success

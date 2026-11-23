@@ -714,9 +714,11 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
 `FsIncludeResolver` confines paths to its base directory and rejects `..`, absolute
-paths, and symlink escapes. Cycles and excessive nesting are detected during build.
-A closure `Fn(&str) -> Result<TreeSpec, ConfigError>` also implements `IncludeResolver`
-for custom file, HTTP, or in-memory sources.
+paths, and symlink escapes. Cycles and excessive nesting are detected during build, and
+the resolver records every resolved file so hot reload can watch it. A closure
+`Fn(&str) -> Result<TreeSpec, ConfigError>` also implements `IncludeResolver` for custom
+file, HTTP, or in-memory sources; implement `watched_paths()` when those sources should
+trigger reloads.
 
 ### Hot reload
 
@@ -743,8 +745,11 @@ nodes by `NodeId` and `NodePath`; `with_diff_history(n)` keeps recent diffs in
 debounced (200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver`
 for includes.
 
-The watcher observes the root file only. Changes to included files do not trigger an
-event; call `reload_now()` or touch the root file.
+The watcher polls both the root file and the include paths reported by the resolver, so
+editing an included file on its own triggers a reload. `FsIncludeResolver` records every
+file it resolves; custom resolvers can implement `watched_paths()` and
+`reset_watched_paths()` to report their own local files. `include_paths()` exposes the
+current watch list.
 
 ### Remote configuration
 

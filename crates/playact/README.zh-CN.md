@@ -683,8 +683,9 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
 `FsIncludeResolver` 把路径限制在基准目录内，拒绝 `..`、绝对路径与符号链接逃逸；
-构建期检测循环与过深嵌套。闭包 `Fn(&str) -> Result<TreeSpec, ConfigError>` 也
-自动实现 `IncludeResolver`，可接文件、HTTP 或内存来源。
+构建期检测循环与过深嵌套；并记录解析过的文件，供热重载监视。闭包
+`Fn(&str) -> Result<TreeSpec, ConfigError>` 也自动实现 `IncludeResolver`，可接
+文件、HTTP 或内存来源；需要热重载时可手动实现 `watched_paths()`。
 
 ### 热重载
 
@@ -709,8 +710,10 @@ if watcher.poll()? {
 `diff_history()` 保留最近多次差异。解析/构建失败保留旧树并返回错误。默认 200ms
 去抖。include 使用 `json_with_resolver` / `with_parser_and_resolver`。
 
-监听器只关注根文件；被 include 的文件单独变化不会触发事件，可调用
-`reload_now()` 或触碰根文件。
+监听器同时轮询根文件与 resolver 报告的 include 路径，因此被 include 的文件单独
+变化也会触发重载。`FsIncludeResolver` 会记录它解析过的每个文件；自定义 resolver
+可实现 `watched_paths()` / `reset_watched_paths()` 报告自己的本地文件，
+`include_paths()` 可查看当前监视列表。
 
 ### 远程配置
 
