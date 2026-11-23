@@ -27,6 +27,7 @@ use crate::error::BuildError;
 use crate::event::EventKey;
 use crate::leaf::{Action, Condition, SetValue, TryAction, Wait, WaitForEvent, WaitUntil};
 use crate::node::{BoxedNode, IdentifiedNode, NodeId};
+use crate::scope::{ScopedKeySpec, ScopedSubtree};
 use crate::status::Status;
 use crate::subtree::SubtreeFactory;
 use crate::tree::BehaviorTree;
@@ -652,6 +653,29 @@ where
     ) -> BehaviorTreeBuilder<W, S::Next> {
         self.decorator(f, move |child| Box::new(Throttle::new(window, max, child)))
     }
+
+    /// Wraps a subtree in a private blackboard.
+    ///
+    /// `inputs` are copied from the parent when the subtree activates; `outputs`
+    /// are copied back when it terminates. Undeclared keys stay private.
+    pub fn scoped<const N: usize, const M: usize>(
+        self,
+        name: impl Into<String>,
+        inputs: [&'static dyn ScopedKeySpec; N],
+        outputs: [&'static dyn ScopedKeySpec; M],
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+    ) -> BehaviorTreeBuilder<W, S::Next> {
+        self.decorator(f, move |child| {
+            let mut node = ScopedSubtree::new(name, child);
+            for key in inputs {
+                node = node.input(key);
+            }
+            for key in outputs {
+                node = node.output(key);
+            }
+            Box::new(node)
+        })
+    }
 }
 
 impl<W: 'static> BehaviorTreeBuilder<W, One> {
@@ -705,6 +729,33 @@ mod tests {
         }
 
         fn cancel(&mut self) {}
+    }
+
+    static SCOPE_INPUT: Key<u32> = Key::new("test.builder.scope.input");
+    static SCOPE_OUTPUT: Key<u32> = Key::new("test.builder.scope.output");
+    static SCOPE_PRIVATE: Key<u32> = Key::new("test.builder.scope.private");
+
+    #[test]
+    fn scoped_builder_isolates_blackboard() {
+        let mut tree = BehaviorTreeBuilder::<()>::new("scope")
+            .scoped("skill", [&SCOPE_INPUT], [&SCOPE_OUTPUT], |b| {
+                b.action("work", |ctx| {
+                    let input = ctx.blackboard_ref().get(&SCOPE_INPUT).copied().unwrap_or(0);
+                    ctx.blackboard().set(&SCOPE_OUTPUT, input * 2);
+                    ctx.blackboard().set(&SCOPE_PRIVATE, 1_u32);
+                    Status::Success
+                })
+            })
+            .build()
+            .expect("tree");
+
+        tree.blackboard_mut().set(&SCOPE_INPUT, 4_u32);
+        tree.blackboard_mut().set(&SCOPE_OUTPUT, 99_u32);
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.blackboard().get(&SCOPE_INPUT), Some(&4));
+        assert_eq!(tree.blackboard().get(&SCOPE_OUTPUT), Some(&8));
+        assert_eq!(tree.blackboard().get(&SCOPE_PRIVATE), None);
     }
 
     #[test]

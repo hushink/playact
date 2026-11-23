@@ -326,6 +326,37 @@ let tree = BehaviorTreeBuilder::<World>::new("ai")
 - 终态后输出保留，父节点可以读取
 - 它是校验/生命周期边界，不是独立的黑板命名空间
 
+### 作用域黑板
+
+`ScopedSubtree` 让子树在私有 `Blackboard` 上运行：
+
+```rust
+static PLAN: Key<u32> = playact::key!("plan");
+static RESULT: Key<u32> = playact::key!("result");
+
+let tree = BehaviorTreeBuilder::<World>::new("ai")
+    .scoped("planning", [&PLAN], [&RESULT], |b| {
+        b.sequence(|b| {
+            b.action("prepare", |ctx| {
+                let plan = ctx.blackboard_ref().get(&PLAN).copied().unwrap_or(0);
+                ctx.blackboard().set(&RESULT, plan + 1);
+                Status::Success
+            })
+            .action("finish", |_| Status::Success)
+        })
+    })
+    .build()?;
+```
+
+- 激活时，声明的输入被复制到全新的作用域黑板，声明的输出从父黑板移除。
+- 子树进入终态时，声明的输出复制回父黑板。
+- 子节点写入但未声明为输出的 key 不会泄漏到父黑板。
+- 输入在激活时快照；若要让子节点看到新值，请在下次激活前修改父黑板。
+- 作用域子树不接收 Tracer，因此内部 `Enter`/`Exit` 事件不会产生；
+  `ScopedSubtree` 节点本身仍会出现在父级 trace 中。
+- 快照会恢复子节点状态，但作用域黑板只存在于运行时；恢复后的下一次 tick
+  会重新复制输入。
+
 ### 运行时子树槽
 
 `SubtreeSlot` 根据 typed key 切换子树：
@@ -725,8 +756,8 @@ playact = { version = "0.1", default-features = false }
 
 核心可用：节点、`BehaviorTree`（含 services 与快照）、builder、`Blackboard`
 （内部 `BTreeMap`）、组合/装饰/叶子、`CommandBuffer`、`SubtreeFactory`、
-`SubtreeSlot`、`SubtreeContract`、`EventQueue` / `EventKey`、`WaitUntil` /
-`WaitForEvent` / `TryAction`、`MultiTracer` 与 `describe`。
+`SubtreeSlot`、`SubtreeContract`、`ScopedSubtree`、`EventQueue` / `EventKey`、
+`WaitUntil` / `WaitForEvent` / `TryAction`、`MultiTracer` 与 `describe`。
 
 需要 `std`：`SharedBlackboard`、`AsyncAction` / `ThreadTask` / `TokioTask`、
 `StatsTracer`、配置层、黑板序列化、热重载、远程配置、`TracingTracer`。

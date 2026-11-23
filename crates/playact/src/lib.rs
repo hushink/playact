@@ -120,6 +120,7 @@ pub mod persistence;
 pub mod remote_config;
 #[cfg(feature = "trace-record")]
 pub mod replay;
+pub mod scope;
 #[cfg(feature = "std")]
 pub mod shared;
 pub mod snapshot;
@@ -167,6 +168,7 @@ pub use remote_config::{
 };
 #[cfg(feature = "trace-record")]
 pub use replay::{TraceDiff, TraceRecord, TraceRecorder};
+pub use scope::{ScopedKeySpec, ScopedSubtree};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
 pub use snapshot::{
@@ -204,11 +206,11 @@ pub mod prelude {
         Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer,
         NODE_ID_SNAPSHOT_VERSION, Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, Parallel,
         Probability, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
-        RestoreError, Retry, SNAPSHOT_VERSION, Selector, Sequence, SetValue, Status,
-        SubtreeContract, SubtreeFactory, SubtreeSlot, Switch, Threshold, Throttle, Time, Timeout,
-        TraceEvent, Tracer, TreeDescription, TreeSnapshot, TryAction, UntilFailure, UntilSuccess,
-        UtilityChild, UtilitySelector, Wait, WaitForEvent, WaitUntil, WeightedChild,
-        WeightedRandomSelector, While,
+        RestoreError, Retry, SNAPSHOT_VERSION, ScopedKeySpec, ScopedSubtree, Selector, Sequence,
+        SetValue, Status, SubtreeContract, SubtreeFactory, SubtreeSlot, Switch, Threshold,
+        Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot, TryAction,
+        UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent, WaitUntil,
+        WeightedChild, WeightedRandomSelector, While,
     };
     #[cfg(feature = "std")]
     pub use crate::{

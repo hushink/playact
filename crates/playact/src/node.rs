@@ -91,6 +91,8 @@ pub enum Kind {
     SubtreeSlot,
     /// Subtree boundary with required/provided blackboard keys.
     Contract,
+    /// Subtree executed with a private blackboard.
+    ScopedSubtree,
     /// A whole behavior tree as a node.
     Tree,
     /// Custom node type.
@@ -138,6 +140,7 @@ impl Kind {
             Self::SetValue => "set_value",
             Self::SubtreeSlot => "subtree_slot",
             Self::Contract => "contract",
+            Self::ScopedSubtree => "scoped_subtree",
             Self::Tree => "tree",
             Self::Custom(name) => name,
         }

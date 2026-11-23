@@ -23,6 +23,10 @@ impl<'a> TraceState<'a> {
             current_id: None,
         }
     }
+
+    fn scoped() -> Self {
+        Self::new(None)
+    }
 }
 
 /// The context passed to a node on every tick.
@@ -259,6 +263,18 @@ impl<'a, W> Context<'a, W> {
             blackboard: &mut *self.blackboard,
             time: self.time,
             trace: TraceState::new(None),
+        }
+    }
+
+    pub(crate) fn scoped_context<'b>(
+        &'b mut self,
+        blackboard: &'b mut Blackboard,
+    ) -> Context<'b, W> {
+        Context {
+            world: &mut *self.world,
+            blackboard,
+            time: self.time,
+            trace: TraceState::scoped(),
         }
     }
 

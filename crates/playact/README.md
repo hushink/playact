@@ -333,6 +333,40 @@ let tree = BehaviorTreeBuilder::<World>::new("ai")
 - Outputs remain after a terminal result so the parent can read them.
 - It is a validation/lifecycle boundary, not a separate blackboard namespace.
 
+### Scoped blackboards
+
+`ScopedSubtree` runs a child against a private `Blackboard`:
+
+```rust
+static PLAN: Key<u32> = playact::key!("plan");
+static RESULT: Key<u32> = playact::key!("result");
+
+let tree = BehaviorTreeBuilder::<World>::new("ai")
+    .scoped("planning", [&PLAN], [&RESULT], |b| {
+        b.sequence(|b| {
+            b.action("prepare", |ctx| {
+                let plan = ctx.blackboard_ref().get(&PLAN).copied().unwrap_or(0);
+                ctx.blackboard().set(&RESULT, plan + 1);
+                Status::Success
+            })
+            .action("finish", |_| Status::Success)
+        })
+    })
+    .build()?;
+```
+
+- On activation, declared inputs are copied into a fresh scoped board and
+  declared outputs are removed from the parent.
+- When the child reaches a terminal status, declared outputs are copied back.
+- Undeclared keys written inside the subtree never reach the parent.
+- Inputs are snapshotted at activation; change them in the parent before the
+  next activation to affect the child.
+- The scoped child runs without a Tracer, so internal `Enter`/`Exit` events are
+  not emitted; the `ScopedSubtree` node itself is still visible in the parent
+  trace.
+- Snapshots restore child node state, but the scoped board is runtime-only;
+  inputs are copied again on the next tick after a restore.
+
 ### Runtime subtree slots
 
 `SubtreeSlot` switches subtrees from a typed blackboard key:
@@ -749,8 +783,8 @@ playact = { version = "0.1", default-features = false }
 Available in the core: nodes, `BehaviorTree` (including services and snapshots),
 builder, `Blackboard` (backed by `BTreeMap`), composites, decorators, leaves,
 `CommandBuffer`, `SubtreeFactory`, `SubtreeSlot`, `SubtreeContract`,
-`EventQueue` / `EventKey`, `WaitUntil` / `WaitForEvent` / `TryAction`, `MultiTracer`,
-and `describe`.
+`ScopedSubtree`, `EventQueue` / `EventKey`, `WaitUntil` / `WaitForEvent` /
+`TryAction`, `MultiTracer`, and `describe`.
 
 Requires `std`: `SharedBlackboard`, `AsyncAction` / `ThreadTask` / `TokioTask`,
 `StatsTracer`, configuration, blackboard serialization, hot reload, remote config, and
