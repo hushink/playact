@@ -46,7 +46,8 @@
 //!
 //! Call [`InspectorServer::poll_with_history`] to show every stored reload diff:
 //! the page renders a collapsible history and `/diffs.json` serves the whole
-//! [`DiffHistory`] as a JSON array when `diff-serde` is enabled.
+//! [`DiffHistory`] with each entry's monotonic revision when `diff-serde` is
+//! enabled.
 //!
 //! The server is a debug tool: it has no authentication, and the report exposes
 //! node names, IDs, and timings. Bind it to a loopback address and never expose
@@ -195,7 +196,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
 /// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
-/// | `/diffs.json` | Whole `DiffHistory` JSON array, oldest first; requires `diff-serde` |
+/// | `/diffs.json` | `DiffHistory` `{"revision", "diff"}` entries as a JSON array, oldest first; requires `diff-serde` |
 /// | `/health` | `ok` |
 pub struct InspectorServer {
     listener: TcpListener,
@@ -269,7 +270,7 @@ impl InspectorServer {
     /// Pass `watcher.diff_history()` / `loader.diff_history()`. `/` renders every
     /// stored diff with the newest expanded, and `/diff.json` serves the newest
     /// entry. With `diff-serde`, `/diffs.json` returns the whole history as a
-    /// JSON array, oldest first.
+    /// JSON array of `{"revision", "diff"}` entries, oldest first.
     pub fn poll_with_history<W>(
         &mut self,
         tree: &BehaviorTree<W>,
@@ -684,16 +685,17 @@ fn render_diff_history(out: &mut String, history: &DiffHistory) {
     if history.is_empty() {
         out.push_str("<p class=\"muted\">No reload diffs recorded.</p>\n");
     } else {
-        let total = history.len();
-        for (index, diff) in history.iter().enumerate() {
-            let latest = index + 1 == total;
-            let open = if latest { " open" } else { "" };
-            let marker = if latest { " · latest" } else { "" };
+        let latest = history.latest_entry().map(|entry| entry.revision);
+        for entry in history.entries() {
+            let is_latest = Some(entry.revision) == latest;
+            let open = if is_latest { " open" } else { "" };
+            let marker = if is_latest { " · latest" } else { "" };
+            let diff = entry.diff;
             let _ = writeln!(
                 out,
                 "<details class=\"history-entry\"{open}><summary>#{} · added {} · \
                  removed {} · moved {} · renamed {}{marker}</summary>",
-                index + 1,
+                entry.revision,
                 diff.added.len(),
                 diff.removed.len(),
                 diff.moved.len(),
@@ -1228,8 +1230,8 @@ mod tests {
         assert!(html.contains("root.children[0]"));
     }
 
-    #[test]
-    fn renders_diff_history_with_latest_expanded() {
+    /// Two trees where the second adds an action with ID `second`.
+    fn reload_trees() -> (BehaviorTree<()>, BehaviorTree<()>) {
         let first = BehaviorTreeBuilder::<()>::new("first")
             .sequence(|b| b.action("first", |_| Status::Success).id("first"))
             .build()
@@ -1243,6 +1245,12 @@ mod tests {
             })
             .build()
             .expect("second tree");
+        (first, second)
+    }
+
+    #[test]
+    fn renders_diff_history_with_latest_expanded() {
+        let (first, second) = reload_trees();
 
         let mut history = DiffHistory::new(4);
         history.push(TreeDiff::between(&first, &first));
@@ -1258,6 +1266,18 @@ mod tests {
         assert!(html.contains("second"));
         // The single-diff section is replaced rather than duplicated.
         assert!(!html.contains("<h2>Reload diff</h2>"));
+    }
+
+    #[test]
+    fn history_keeps_revisions_after_eviction() {
+        let (first, second) = reload_trees();
+        let mut history = DiffHistory::new(1);
+        history.push(TreeDiff::between(&first, &first));
+        history.push(TreeDiff::between(&first, &second));
+
+        let html = Inspector::new(&second).with_diff_history(&history).render();
+        assert!(html.contains("#2 · added 1"));
+        assert!(!html.contains("#1 ·"));
     }
 
     #[test]
@@ -1428,19 +1448,7 @@ mod tests {
     #[cfg(feature = "diff-serde")]
     #[test]
     fn server_serves_diff_history() {
-        let first = BehaviorTreeBuilder::<()>::new("first")
-            .sequence(|b| b.action("first", |_| Status::Success).id("first"))
-            .build()
-            .expect("first tree");
-        let second = BehaviorTreeBuilder::<()>::new("second")
-            .sequence(|b| {
-                b.action("first", |_| Status::Success)
-                    .id("first")
-                    .action("second", |_| Status::Success)
-                    .id("second")
-            })
-            .build()
-            .expect("second tree");
+        let (first, second) = reload_trees();
 
         let mut history = DiffHistory::new(4);
         history.push(TreeDiff::between(&first, &first));
@@ -1463,8 +1471,15 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(body).expect("history json");
         let entries = value.as_array().expect("array");
         assert_eq!(entries.len(), 2);
-        assert!(entries[0]["added"].as_array().expect("added").is_empty());
-        assert_eq!(entries[1]["added"][0]["id"], "second");
+        assert_eq!(entries[0]["revision"], 1);
+        assert!(
+            entries[0]["diff"]["added"]
+                .as_array()
+                .expect("added")
+                .is_empty()
+        );
+        assert_eq!(entries[1]["revision"], 2);
+        assert_eq!(entries[1]["diff"]["added"][0]["id"], "second");
 
         let response = request_with_history(
             &mut server,

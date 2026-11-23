@@ -173,13 +173,35 @@ where
     serializer.serialize_str(kind.as_str())
 }
 
+/// A diff stored in a [`DiffHistory`] with the revision assigned when it was
+/// pushed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+pub struct DiffEntry<'a> {
+    /// Monotonic revision, starting at 1 and never reused.
+    pub revision: u64,
+    /// The structural diff.
+    pub diff: &'a TreeDiff,
+}
+
 /// A bounded history of structural diffs, ordered oldest to newest.
 ///
 /// `limit = 0` disables storage. The default keeps only the most recent diff.
+/// Every stored diff gets a monotonic revision so external logs can identify a
+/// reload precisely; revisions are never reused, even after entries are evicted
+/// by the limit, [`pop_latest`](DiffHistory::pop_latest), or
+/// [`clear`](DiffHistory::clear).
 #[derive(Debug, Clone)]
 pub struct DiffHistory {
     limit: usize,
-    diffs: VecDeque<TreeDiff>,
+    next_revision: u64,
+    diffs: VecDeque<StoredDiff>,
+}
+
+#[derive(Debug, Clone)]
+struct StoredDiff {
+    revision: u64,
+    diff: TreeDiff,
 }
 
 impl DiffHistory {
@@ -188,6 +210,7 @@ impl DiffHistory {
     pub fn new(limit: usize) -> Self {
         Self {
             limit,
+            next_revision: 1,
             diffs: VecDeque::new(),
         }
     }
@@ -221,28 +244,51 @@ impl DiffHistory {
     /// The most recent diff.
     #[must_use]
     pub fn latest(&self) -> Option<&TreeDiff> {
-        self.diffs.back()
+        self.diffs.back().map(|stored| &stored.diff)
     }
 
-    /// Iterates from oldest to newest.
+    /// The most recent diff with its revision.
+    #[must_use]
+    pub fn latest_entry(&self) -> Option<DiffEntry<'_>> {
+        self.diffs.back().map(|stored| DiffEntry {
+            revision: stored.revision,
+            diff: &stored.diff,
+        })
+    }
+
+    /// Iterates over diffs from oldest to newest.
     pub fn iter(&self) -> impl Iterator<Item = &TreeDiff> {
-        self.diffs.iter()
+        self.diffs.iter().map(|stored| &stored.diff)
+    }
+
+    /// Iterates over diffs and revisions from oldest to newest.
+    pub fn entries(&self) -> impl Iterator<Item = DiffEntry<'_>> {
+        self.diffs.iter().map(|stored| DiffEntry {
+            revision: stored.revision,
+            diff: &stored.diff,
+        })
     }
 
     /// Appends a diff, dropping the oldest entry when the limit is reached.
-    pub fn push(&mut self, diff: TreeDiff) {
+    ///
+    /// Returns the assigned revision, or `None` when the limit is `0` and
+    /// nothing is stored.
+    pub fn push(&mut self, diff: TreeDiff) -> Option<u64> {
         if self.limit == 0 {
-            return;
+            return None;
         }
         if self.diffs.len() == self.limit {
             self.diffs.pop_front();
         }
-        self.diffs.push_back(diff);
+        let revision = self.next_revision;
+        self.next_revision += 1;
+        self.diffs.push_back(StoredDiff { revision, diff });
+        Some(revision)
     }
 
     /// Removes and returns the most recent diff.
     pub fn pop_latest(&mut self) -> Option<TreeDiff> {
-        self.diffs.pop_back()
+        self.diffs.pop_back().map(|stored| stored.diff)
     }
 
     /// Drops all stored diffs.
@@ -250,7 +296,8 @@ impl DiffHistory {
         self.diffs.clear();
     }
 
-    /// Serializes the history as a JSON array, oldest first.
+    /// Serializes the history as a JSON array of `{"revision", "diff"}` entries,
+    /// oldest first.
     ///
     /// Requires the `diff-serde` feature.
     #[cfg(feature = "diff-serde")]
@@ -272,7 +319,7 @@ impl serde::Serialize for DiffHistory {
     where
         S: serde::Serializer,
     {
-        serializer.collect_seq(self.diffs.iter())
+        serializer.collect_seq(self.entries())
     }
 }
 
@@ -433,18 +480,27 @@ mod tests {
         let three = tree(vec![leaf("a", "a"), leaf("b", "b"), leaf("c", "c")]);
 
         let mut history = DiffHistory::new(2);
-        history.push(TreeDiff::between(&empty, &one));
-        history.push(TreeDiff::between(&one, &two));
-        history.push(TreeDiff::between(&two, &three));
+        assert_eq!(history.push(TreeDiff::between(&empty, &one)), Some(1));
+        assert_eq!(history.push(TreeDiff::between(&one, &two)), Some(2));
+        assert_eq!(history.push(TreeDiff::between(&two, &three)), Some(3));
 
         assert_eq!(history.limit(), 2);
         assert_eq!(history.len(), 2);
         assert_eq!(history.latest().expect("latest").added[0].id.as_str(), "c");
+        assert_eq!(
+            history.latest_entry().expect("latest entry"),
+            DiffEntry {
+                revision: 3,
+                diff: history.latest().expect("latest"),
+            }
+        );
         let ids: Vec<&str> = history
             .iter()
             .flat_map(|diff| diff.added.iter().map(|node| node.id.as_str()))
             .collect();
         assert_eq!(ids, vec!["b", "c"]);
+        let revisions: Vec<u64> = history.entries().map(|entry| entry.revision).collect();
+        assert_eq!(revisions, vec![2, 3]);
 
         let latest = history.pop_latest().expect("popped");
         assert_eq!(latest.added[0].id.as_str(), "c");
@@ -452,17 +508,20 @@ mod tests {
             history.latest().expect("previous").added[0].id.as_str(),
             "b"
         );
+        assert_eq!(history.latest_entry().expect("previous").revision, 2);
 
         history.set_limit(0);
         assert!(history.is_empty());
-        history.push(TreeDiff::default());
+        assert_eq!(history.push(TreeDiff::default()), None);
         assert!(history.is_empty());
 
         history.set_limit(1);
-        history.push(TreeDiff::default());
+        assert_eq!(history.push(TreeDiff::default()), Some(4));
         assert_eq!(history.len(), 1);
         history.clear();
         assert!(history.is_empty());
+        // Revisions stay monotonic across a clear.
+        assert_eq!(history.push(TreeDiff::default()), Some(5));
     }
 
     #[test]
@@ -499,8 +558,10 @@ mod tests {
 
         let value: serde_json::Value = serde_json::from_str(&history.to_json()).expect("json");
         assert_eq!(value.as_array().expect("array").len(), 2);
-        assert_eq!(value[0]["added"][0]["id"], "b");
-        assert_eq!(value[1]["added"][0]["id"], "c");
+        assert_eq!(value[0]["revision"], 2);
+        assert_eq!(value[0]["diff"]["added"][0]["id"], "b");
+        assert_eq!(value[1]["revision"], 3);
+        assert_eq!(value[1]["diff"]["added"][0]["id"], "c");
     }
 
     #[cfg(feature = "diff-serde")]

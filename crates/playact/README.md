@@ -478,11 +478,12 @@ The page shows the tree with last statuses, per-node counters and timings, servi
 a `NodeId` audit table with structural paths, an optional reload diff, and Mermaid
 source, using inline CSS only. With `poll_with_history` / `with_diff_history`, the
 report renders every stored diff as a collapsible `Reload history` list with the
-newest entry expanded. `/metrics`, `/tree`, and `/health` serve Prometheus text, the
-ASCII status tree, and a readiness probe; with `diff-serde`, `/diff.json` returns the
-latest diff and `/diffs.json` the whole `DiffHistory` as a JSON array (oldest first).
-The server has no authentication and exposes tree metadata; bind it to loopback and
-use it only in debug builds.
+newest entry expanded; entries are labeled by a monotonic revision that is never
+reused. `/metrics`, `/tree`, and `/health` serve Prometheus text, the ASCII status
+tree, and a readiness probe; with `diff-serde`, `/diff.json` returns the latest diff
+and `/diffs.json` the whole `DiffHistory` as an array of `{"revision", "diff"}`
+entries (oldest first). The server has no authentication and exposes tree metadata;
+bind it to loopback and use it only in debug builds.
 
 ### Tree diffs
 
@@ -506,9 +507,11 @@ let json = diff.to_json();
 ```
 
 Hot reload and remote refresh expose their latest diff through `last_diff()` and keep a
-bounded `DiffHistory` when configured with `with_diff_history(n)`. The history
-serializes to a JSON array with `DiffHistory::to_json()`, oldest first; combine it with
-`InspectorServer::poll_with_history` to serve `/diffs.json`.
+bounded `DiffHistory` when configured with `with_diff_history(n)`. Every stored diff
+gets a monotonic revision (starting at 1, never reused across eviction, `pop_latest`,
+or `clear`) exposed by `latest_entry()` / `entries()`. `DiffHistory::to_json()`
+serializes to a JSON array of `{"revision", "diff"}` entries, oldest first; combine it
+with `InspectorServer::poll_with_history` to serve `/diffs.json`.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
