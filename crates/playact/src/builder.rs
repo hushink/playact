@@ -708,8 +708,8 @@ impl<W: 'static> BehaviorTreeBuilder<W, One> {
             .unwrap_or_else(|| String::from("BehaviorTree"));
         let tree = BehaviorTree::new(root).with_name(name);
 
-        if let Some(id) = tree.duplicate_node_id() {
-            return Err(BuildError::DuplicateNodeId { id });
+        if let Some((id, path)) = tree.duplicate_node_id_path() {
+            return Err(BuildError::DuplicateNodeId { id, path });
         }
 
         Ok(tree)
@@ -778,9 +778,11 @@ mod tests {
             .err()
             .expect("duplicate ids");
 
+        let expected_path = crate::tree::NodePath::root().with_child(1);
         assert!(matches!(
             error,
-            BuildError::DuplicateNodeId { id } if id == NodeId::new("same")
+            BuildError::DuplicateNodeId { id, path }
+                if id == NodeId::new("same") && path == expected_path
         ));
     }
 

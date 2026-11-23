@@ -167,7 +167,8 @@ The engine never interprets `BattleCommand`.
 - the root must produce exactly one child;
 - a decorator closure must produce exactly one child;
 - composites may be empty (empty `Sequence`/`Parallel` succeed, empty `Selector` fails);
-- `build()` rejects duplicate stable `NodeId` values in the root subtree.
+- `build()` rejects duplicate stable `NodeId` values and reports the structural path
+  of the second occurrence.
 
 There is no `.end()` and no runtime panic from mismatched closing order.
 
@@ -472,10 +473,10 @@ server.poll(&tree, Some(&stats))?;
 ```
 
 The page shows the tree with last statuses, per-node counters and timings, services,
-IDs, and Mermaid source, using inline CSS only. `/metrics`, `/tree`, and `/health`
-serve Prometheus text, the ASCII status tree, and a readiness probe. The server has
-no authentication and exposes tree metadata; bind it to loopback and use it only in
-debug builds.
+a `NodeId` audit table with structural paths, and Mermaid source, using inline CSS
+only. `/metrics`, `/tree`, and `/health` serve Prometheus text, the ASCII status tree,
+and a readiness probe. The server has no authentication and exposes tree metadata;
+bind it to loopback and use it only in debug builds.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
@@ -518,7 +519,8 @@ children and nested-tree services are not traversed by ID snapshots.
 If the new tree may rename or remove IDs, use `restore_by_id_matching`: it applies
 entries whose IDs exist, ignores the rest, and returns the number of nodes restored.
 Builder and `TreeSpec` builds reject duplicate IDs automatically. Manually assembled
-trees via `BehaviorTree::new` can be checked with `BehaviorTree::duplicate_node_id()`.
+trees via `BehaviorTree::new` can be checked with `BehaviorTree::duplicate_node_id()`
+or `duplicate_node_id_path()`, which returns a `NodePath` such as `root.children[1]`.
 
 > Node snapshots do not include the world, blackboard values, closure captures,
 > `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those
@@ -626,7 +628,8 @@ let mut tree = spec.build(&registry)?;
   values deserialize into the key's value or event type at build time.
 - `utility_selector` branches reference score functions registered with
   `registry.score`; scores receive typed parameters and are re-evaluated every tick.
-- A duplicate `NodeId` across the built root and services is rejected at build time.
+- A duplicate `NodeId` across the built root and services is rejected at build time;
+  the error includes the config path of the second occurrence.
 
 `TreeSpec.services` declares nodes that run before the root on every tick:
 

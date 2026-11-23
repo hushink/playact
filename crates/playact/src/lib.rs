@@ -187,7 +187,7 @@ pub use subtree::{SubtreeFactory, SubtreeSlot};
 pub use testing::TestDriver;
 pub use time::Time;
 pub use trace::{AbortReason, MultiTracer, TraceEvent, Tracer};
-pub use tree::{BehaviorTree, TreeDescription};
+pub use tree::{BehaviorTree, NodePath, TreeDescription};
 
 #[cfg(feature = "tracing")]
 pub use trace::TracingTracer;
@@ -208,8 +208,8 @@ pub mod prelude {
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
         Cooldown, EventKey, EventQueue, Guard, IdentifiedNode, IfThenElse, Inverter, Key, KeySpec,
         Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer,
-        NODE_ID_SNAPSHOT_VERSION, Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, Parallel,
-        Probability, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
+        NODE_ID_SNAPSHOT_VERSION, Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, NodePath,
+        Parallel, Probability, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
         RestoreError, Retry, SNAPSHOT_VERSION, ScopedKeySpec, ScopedSubtree, Selector, Sequence,
         SetValue, Status, SubtreeContract, SubtreeFactory, SubtreeSlot, Switch, Threshold,
         Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot, TryAction,

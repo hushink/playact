@@ -4,6 +4,7 @@ use core::fmt;
 use core::num::NonZeroUsize;
 
 use crate::node::NodeId;
+use crate::tree::NodePath;
 
 /// Configuration errors found while building a behavior tree.
 ///
@@ -33,6 +34,8 @@ pub enum BuildError {
     DuplicateNodeId {
         /// Duplicate identity.
         id: NodeId,
+        /// Structural path of the second occurrence.
+        path: NodePath,
     },
     /// Internal build state is inconsistent. Should not occur in normal use.
     InvalidTree {
@@ -52,7 +55,9 @@ impl fmt::Display for BuildError {
                 f,
                 "parallel failure threshold AtLeast({at_least}) exceeds child count {children}"
             ),
-            Self::DuplicateNodeId { id } => write!(f, "duplicate node id `{id}`"),
+            Self::DuplicateNodeId { id, path } => {
+                write!(f, "duplicate node id `{id}` at {path}")
+            }
             Self::InvalidTree { message } => f.write_str(message),
         }
     }

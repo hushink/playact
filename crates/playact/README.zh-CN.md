@@ -162,7 +162,7 @@ let commands: Vec<_> = tree
 - 根节点必须恰好一个子节点；
 - 装饰器闭包必须恰好一个子节点；
 - 组合节点允许为空（空 `Sequence`/`Parallel` 成功，空 `Selector` 失败）；
-- `build()` 会拒绝根子树中重复的稳定 `NodeId`。
+- `build()` 会拒绝根子树中重复的稳定 `NodeId`，并报告第二次出现的结构路径。
 
 不需要 `.end()`，也不会因为闭合顺序错误在运行时 panic。
 
@@ -457,10 +457,10 @@ let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
 ```
 
-页面展示树结构、各节点最后状态、计数与耗时、服务节点、ID 与 Mermaid 源码，仅使用
-内联 CSS。`/metrics`、`/tree`、`/health` 分别提供 Prometheus 文本、ASCII 状态树与
-就绪探针。服务器没有鉴权，并会暴露树元数据；请只绑定 loopback，并仅在 debug 构建中
-使用。
+页面展示树结构、各节点最后状态、计数与耗时、服务节点、带结构路径的 `NodeId` 审计
+表与 Mermaid 源码，仅使用内联 CSS。`/metrics`、`/tree`、`/health` 分别提供
+Prometheus 文本、ASCII 状态树与就绪探针。服务器没有鉴权，并会暴露树元数据；请只
+绑定 loopback，并仅在 debug 构建中使用。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。
@@ -499,7 +499,8 @@ ID 快照不会遍历 `SubtreeSlot` 的动态子节点或嵌套树的 services�
 
 如果新树可能改名或删除 ID，使用 `restore_by_id_matching`：它只应用仍存在 ID 的
 条目，忽略其余条目，并返回恢复的节点数量。builder 与 `TreeSpec` 构建都会自动拒绝重复 ID；通过 `BehaviorTree::new` 手工组装的
-树可用 `BehaviorTree::duplicate_node_id()` 检查。
+树可用 `BehaviorTree::duplicate_node_id()` 或 `duplicate_node_id_path()` 检查，
+后者返回类似 `root.children[1]` 的 `NodePath`。
 
 > 节点快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot`
 > 动态子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，
@@ -601,7 +602,8 @@ let mut tree = spec.build(&registry)?;
   构建期反序列化为 key 的 value 或 event 类型。
 - `utility_selector` 的分支引用 `registry.score` 注册的评分函数；评分函数接收
   类型化参数，并在每个 tick 重新计算。
-- 构建出的根节点与服务中存在重复 `NodeId` 时，构建会直接失败。
+- 构建出的根节点与服务中存在重复 `NodeId` 时，构建会直接失败，并给出第二次出现的
+  配置路径。
 
 `TreeSpec.services` 声明在每个 tick 的根节点之前运行的服务节点：
 

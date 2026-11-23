@@ -104,27 +104,42 @@ impl<W> BehaviorTree<W> {
     ///
     /// Traversal follows [`Node::children`], matching ID-keyed snapshots. Dynamic
     /// `SubtreeSlot` children and the services of a nested `BehaviorTree` are not
-    /// traversed.
+    /// traversed. Use [`BehaviorTree::duplicate_node_id_path`] when the location is
+    /// needed as well.
     #[must_use]
     pub fn duplicate_node_id(&self) -> Option<NodeId> {
-        fn visit<W>(node: &(dyn Node<W> + Send), seen: &mut BTreeSet<NodeId>) -> Option<NodeId> {
+        self.duplicate_node_id_path().map(|(id, _)| id)
+    }
+
+    /// Like [`BehaviorTree::duplicate_node_id`], but also returns the structural
+    /// path of the second occurrence.
+    #[must_use]
+    pub fn duplicate_node_id_path(&self) -> Option<(NodeId, NodePath)> {
+        fn visit<W>(
+            node: &(dyn Node<W> + Send),
+            seen: &mut BTreeSet<NodeId>,
+            path: NodePath,
+        ) -> Option<(NodeId, NodePath)> {
             if let Some(id) = node.id()
                 && !seen.insert(id.clone())
             {
-                return Some(id.clone());
+                return Some((id.clone(), path));
             }
-            node.children()
-                .iter()
-                .find_map(|child| visit(child.as_ref(), seen))
+            for (index, child) in node.children().iter().enumerate() {
+                if let Some(found) = visit(child.as_ref(), seen, path.with_child(index)) {
+                    return Some(found);
+                }
+            }
+            None
         }
 
         let mut seen = BTreeSet::new();
-        if let Some(id) = visit(self.root.as_ref(), &mut seen) {
-            return Some(id);
+        if let Some(found) = visit(self.root.as_ref(), &mut seen, NodePath::root()) {
+            return Some(found);
         }
-        for service in &self.services {
-            if let Some(id) = visit(service.as_ref(), &mut seen) {
-                return Some(id);
+        for (index, service) in self.services.iter().enumerate() {
+            if let Some(found) = visit(service.as_ref(), &mut seen, NodePath::service(index)) {
+                return Some(found);
             }
         }
         None
@@ -524,6 +539,76 @@ impl<W> Node<W> for BehaviorTree<W> {
     }
 }
 
+/// A structural path to a node inside a behavior tree.
+///
+/// The root is `root`; child steps use `.children[i]`. A service path starts at
+/// `services[i]` and then follows the same child steps. Paths are diagnostic
+/// labels, not stable identities.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NodePath {
+    service: Option<usize>,
+    indices: Vec<usize>,
+}
+
+impl NodePath {
+    /// Path to the root node.
+    #[must_use]
+    pub fn root() -> Self {
+        Self {
+            service: None,
+            indices: Vec::new(),
+        }
+    }
+
+    /// Path to the service at `index`.
+    #[must_use]
+    pub fn service(index: usize) -> Self {
+        Self {
+            service: Some(index),
+            indices: Vec::new(),
+        }
+    }
+
+    /// Extends the path with a child index.
+    #[must_use]
+    pub fn with_child(&self, index: usize) -> Self {
+        let mut next = self.clone();
+        next.indices.push(index);
+        next
+    }
+
+    /// The service index, or `None` for the main tree.
+    #[must_use]
+    pub fn service_index(&self) -> Option<usize> {
+        self.service
+    }
+
+    /// Child indices below the root or service node.
+    #[must_use]
+    pub fn indices(&self) -> &[usize] {
+        &self.indices
+    }
+}
+
+impl Default for NodePath {
+    fn default() -> Self {
+        Self::root()
+    }
+}
+
+impl fmt::Display for NodePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.service {
+            Some(index) => write!(f, "services[{index}]")?,
+            None => f.write_str("root")?,
+        }
+        for index in &self.indices {
+            write!(f, ".children[{index}]")?;
+        }
+        Ok(())
+    }
+}
+
 /// A node's structural description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeDescription {
@@ -899,21 +984,28 @@ mod tests {
             )),
         ])));
         assert_eq!(duplicate.duplicate_node_id(), Some(NodeId::new("same")));
+        assert_eq!(
+            duplicate.duplicate_node_id_path(),
+            Some((NodeId::new("same"), NodePath::root().with_child(1)))
+        );
 
         let mut with_service = BehaviorTreeBuilder::<()>::new("root")
             .action("root", |_| Status::Success)
             .id("shared")
             .build()
             .expect("tree");
-        let service = BehaviorTreeBuilder::<()>::new("service")
-            .action("service", |_| Status::Success)
-            .id("shared")
-            .build()
-            .expect("service");
+        let service = crate::node::IdentifiedNode::new(
+            "shared",
+            Box::new(Action::<()>::new("service", |_| Status::Success)),
+        );
         with_service.add_service(Box::new(service));
         assert_eq!(
             with_service.duplicate_node_id(),
             Some(NodeId::new("shared"))
+        );
+        assert_eq!(
+            with_service.duplicate_node_id_path(),
+            Some((NodeId::new("shared"), NodePath::service(0)))
         );
 
         let unique = BehaviorTreeBuilder::<()>::new("unique")

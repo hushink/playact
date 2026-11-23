@@ -168,6 +168,8 @@ pub enum ConfigBuildErrorKind {
     DuplicateNodeId {
         /// Duplicate identity.
         id: String,
+        /// Configuration path of the second occurrence.
+        path: String,
     },
     /// Unregistered custom kind.
     UnknownCustom {
@@ -216,7 +218,9 @@ impl fmt::Display for ConfigBuildErrorKind {
             Self::UnknownScore { name } => write!(f, "unknown utility score `{name}`"),
             Self::UnknownTryAction { name } => write!(f, "unknown fallible action `{name}`"),
             Self::UnknownAsyncAction { name } => write!(f, "unknown async action `{name}`"),
-            Self::DuplicateNodeId { id } => write!(f, "duplicate node id `{id}`"),
+            Self::DuplicateNodeId { id, path } => {
+                write!(f, "duplicate node id `{id}` at {path}")
+            }
             Self::UnknownCustom { kind } => write!(f, "unknown custom kind `{kind}`"),
             Self::InvalidParams { message } => write!(f, "invalid params: {message}"),
             Self::InvalidThreshold(error) => error.fmt(f),

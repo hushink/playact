@@ -1,6 +1,9 @@
 //! Build logic that turns a `TreeSpec` into a `BehaviorTree`.
 
 use core::time::Duration;
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use crate::composite::{
     IfThenElse, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
@@ -67,6 +70,7 @@ impl TreeSpec {
             resolver,
             depth: 0,
             stack: Vec::new(),
+            seen_ids: Rc::new(RefCell::new(BTreeSet::new())),
         };
         let root = build_node(&self.root, &ctx, "root")?;
         let name = self
@@ -80,12 +84,14 @@ impl TreeSpec {
             tree.add_service(node);
         }
 
-        if let Some(id) = tree.duplicate_node_id() {
+        if let Some((id, node_path)) = tree.duplicate_node_id_path() {
+            let path = node_path.to_string();
             return Err(
                 ConfigBuildError::new(ConfigBuildErrorKind::DuplicateNodeId {
                     id: String::from(id.as_str()),
+                    path: path.clone(),
                 })
-                .at("root"),
+                .at(path),
             );
         }
 
@@ -98,6 +104,7 @@ struct BuildCtx<'a, W: 'static> {
     resolver: Option<&'a dyn IncludeResolver>,
     depth: usize,
     stack: Vec<String>,
+    seen_ids: Rc<RefCell<BTreeSet<String>>>,
 }
 
 fn build_node<W: 'static>(
@@ -410,6 +417,15 @@ fn build_node<W: 'static>(
             }
         }
         SpecNode::Identified { id, child } => {
+            if !ctx.seen_ids.borrow_mut().insert(id.clone()) {
+                return Err(
+                    ConfigBuildError::new(ConfigBuildErrorKind::DuplicateNodeId {
+                        id: id.clone(),
+                        path: path.to_string(),
+                    })
+                    .at(path),
+                );
+            }
             let child = build_node(child, ctx, &child_path(path))?;
             Ok(Box::new(IdentifiedNode::new(id.clone(), child)))
         }
@@ -471,6 +487,7 @@ fn build_node<W: 'static>(
                 resolver: ctx.resolver,
                 depth: ctx.depth + 1,
                 stack,
+                seen_ids: Rc::clone(&ctx.seen_ids),
             };
             let root = build_node(&included.root, &nested, include_path)?;
             let node_name = name.clone().unwrap_or_else(|| include_path.clone());

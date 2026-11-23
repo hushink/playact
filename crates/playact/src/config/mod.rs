@@ -894,9 +894,40 @@ mod tests {
         let error = spec.build(&registry).err().expect("duplicate id");
         assert!(matches!(
             error.kind(),
-            ConfigBuildErrorKind::DuplicateNodeId { id } if id == "dup"
+            ConfigBuildErrorKind::DuplicateNodeId { id, .. } if id == "dup"
         ));
-        assert_eq!(error.path(), Some("root"));
+        assert_eq!(error.path(), Some("root.children[1]"));
+    }
+
+    #[test]
+    fn config_detects_duplicate_ids_from_custom_nodes() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .custom::<()>("dupe", |_params: (), _children: Vec<BoxedNode<()>>| {
+                Ok(Box::new(crate::composite::Selector::new(vec![
+                    Box::new(crate::node::IdentifiedNode::new(
+                        "same",
+                        Box::new(crate::leaf::Action::<()>::new("first", |_| Status::Success)),
+                    )),
+                    Box::new(crate::node::IdentifiedNode::new(
+                        "same",
+                        Box::new(crate::leaf::Action::<()>::new("second", |_| {
+                            Status::Success
+                        })),
+                    )),
+                ])))
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"custom","kind":"dupe"}}"#)
+            .expect("valid spec");
+        let error = spec.build(&registry).err().expect("duplicate id");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::DuplicateNodeId { id, path }
+                if id == "same" && path.as_str() == "root.children[1]"
+        ));
+        assert_eq!(error.path(), Some("root.children[1]"));
     }
 
     #[test]
