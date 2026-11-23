@@ -123,7 +123,7 @@ formatting for every lint-valid file. Writes nothing and exits nonzero when any
 file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
-usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] CONFIG...
+usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] [--strict] CONFIG...
        playact migrate --manifest-schema
        playact migrate --init PATH
 
@@ -136,7 +136,9 @@ written in place only when the whole graph is valid, or into a new/empty
 root, cannot be combined with --check, and stages the complete include graph.
 --check reports files that would change without writing; --diff prints
 field-level changes; --patch prints unified diffs; --json prints per-root reports
-including changes. --patch and --json are mutually exclusive.
+including changes and operation match counts. --patch and --json are mutually
+exclusive. --strict fails before writing when an executed operation matches no
+objects or changes none; without it, such operations are warnings in human output.
 
 --manifest-schema prints the manifest JSON Schema. --init PATH writes a starter
 manifest, choosing JSON/TOML/YAML/RON from the extension and refusing to
@@ -860,6 +862,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut json_output = false;
     let mut diff_output = false;
     let mut patch_output = false;
+    let mut strict = false;
     let mut show_manifest_schema = false;
     let mut init_manifest = None;
     let mut options_done = false;
@@ -895,6 +898,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--patch") => {
                     patch_output = true;
+                    continue;
+                }
+                Some("--strict") => {
+                    strict = true;
                     continue;
                 }
                 Some("-m" | "--manifest") => {
@@ -938,6 +945,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             || json_output
             || diff_output
             || patch_output
+            || strict
         {
             return Err(String::from(
                 "manifest generation options cannot be combined with other options or paths",
@@ -987,16 +995,26 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
 
     let schema = load_schema(schema_path.as_deref())?;
     jsonschema::validator_for(&schema).map_err(|error| format!("invalid schema: {error}"))?;
-    let migrator = migrate::load_manifest(&manifest_path)?;
-    let outcome = migrate::migrate_files(&migrator, &schema, &files, include_base.as_deref());
+    let manifest = migrate::load_manifest(&manifest_path)?;
+    let outcome = migrate::migrate_files(&manifest, &schema, &files, include_base.as_deref());
     let migrated = unique_migrated(&outcome.reports);
     let invalid = outcome
         .reports
         .iter()
         .filter(|report| !report.valid)
         .count();
-    let has_issues = invalid > 0;
+    let operation_summary = migrate::summarize_operations(&outcome.reports);
+    let findings = operation_findings(&operation_summary);
+    let strict_failed = strict && invalid == 0 && !findings.is_empty();
+    let has_issues = invalid > 0 || strict_failed;
     let mut staged = None;
+
+    if strict_failed {
+        eprintln!("strict migration checks failed:");
+        for finding in &findings {
+            eprintln!("  {finding}");
+        }
+    }
 
     if !has_issues {
         if let Some(output_dir) = output.as_deref() {
@@ -1025,7 +1043,11 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         }
         if has_issues {
             if !check && !migrated.is_empty() {
-                eprintln!("no files were written because validation failed");
+                if strict_failed {
+                    eprintln!("no files were written because strict migration checks failed");
+                } else {
+                    eprintln!("no files were written because validation failed");
+                }
             }
         } else if let Some(staged) = &staged {
             let output_dir = output.as_deref().expect("staged output has a directory");
@@ -1069,6 +1091,12 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         if patch_output && !has_issues {
             print_patches(&outcome.writes);
         }
+        if !has_issues && !findings.is_empty() {
+            for finding in &findings {
+                eprintln!("warning: migration {finding}");
+            }
+            eprintln!("{} migration operation(s) had no effect", findings.len());
+        }
     }
 
     Ok(if has_issues || (check && !migrated.is_empty()) {
@@ -1084,6 +1112,27 @@ fn unique_migrated(reports: &[migrate::MigrationReport]) -> Vec<String> {
         files.extend(report.migrated.iter().cloned());
     }
     files.into_iter().collect()
+}
+
+fn operation_findings(operations: &[migrate::OperationReport]) -> Vec<String> {
+    operations
+        .iter()
+        .filter_map(|operation| {
+            if operation.matched == 0 {
+                Some(format!(
+                    "operation {} ({} from version {}) matched no objects",
+                    operation.index, operation.op, operation.from
+                ))
+            } else if operation.changed == 0 {
+                Some(format!(
+                    "operation {} ({} from version {}) matched {} object(s) but changed none",
+                    operation.index, operation.op, operation.from, operation.matched
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn unique_changes(reports: &[migrate::MigrationReport]) -> Vec<&migrate::FieldChange> {

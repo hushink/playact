@@ -186,6 +186,7 @@ cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
@@ -223,12 +224,15 @@ defaults, and numeric scaling to each configuration and its include graph,
 validates the migrated result, then writes changed files in place or stages the
 complete graph with `--output DIR`. `--check` reports changes without writing,
 `--diff` prints field-level changes, `--patch` prints unified diffs, and `--json`
-reports per-root results including changes. `--manifest-schema` prints the
-manifest JSON Schema for editor completion, and `--init PATH` writes a starter
-manifest in the format selected by the extension. Declarative rules cannot
-express arbitrary Rust migrations; use `ConfigMigrator` in the application for
-those. `diff` validates two configurations, then reports path-based node,
-parameter, and include-file set changes; child nodes are matched by type and
+reports per-root results including changes and per-operation `matched`/`changed`
+counts. `--strict` fails before writing when an executed operation matches no
+objects or changes none; without it, such operations are warnings in human
+output.
+`--manifest-schema` prints the manifest JSON Schema for editor completion, and
+`--init PATH` writes a starter manifest in the format selected by the extension.
+Declarative rules cannot express arbitrary Rust migrations; use `ConfigMigrator`
+in the application for those. `diff` validates two configurations, then reports
+path-based node, parameter, and include-file set changes; child nodes are matched by type and
 name/kind/key, so insertions and reorders report moves rather than changing every
 later index. Included files with matching relative paths are compared
 recursively, and their findings carry a `file` field. It exits nonzero when

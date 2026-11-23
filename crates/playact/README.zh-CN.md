@@ -759,10 +759,12 @@ let watcher =
   `rename_field`、`remove_field`、`set_field`、`rename_value`、`map_values` 与
   `scale` 规则迁移根配置及其 include，校验结果后原地写入，或用 `--output DIR`
   暂存完整 include 图（include 字符串保持不变）；`--check` 可用于 dry run，
-  `--diff` 输出字段级预览，`--patch` 输出 unified diff（`--json` 始终包含变更；
-  `--patch` 与 `--json` 互斥；`--output` 只接受一个根且不能与 `--check` 组合）。
-  `--manifest-schema` 输出供编辑器补全的清单 JSON Schema，`--init PATH` 写入
-  starter 清单。任意复杂迁移仍应在应用内使用 `ConfigMigrator` 闭包。
+  `--diff` 输出字段级预览，`--patch` 输出 unified diff（`--json` 包含变更与逐操作
+  `matched`/`changed` 计数；`--patch` 与 `--json` 互斥；`--output` 只接受一个根且
+  不能与 `--check` 组合）。`--strict` 在写入前要求每条已执行操作至少匹配并修改一个
+  对象，否则失败；未启用时这类操作只在人类可读输出中产生警告。`--manifest-schema`
+  输出供编辑器补全的清单 JSON Schema，`--init PATH` 写入 starter 清单。任意复杂迁移
+  仍应在应用内使用 `ConfigMigrator` 闭包。
 - 完整示例见 [`examples/config_migration.rs`](examples/config_migration.rs)：迁移
   v0 根配置与 include，构建并 tick。
 

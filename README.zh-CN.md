@@ -174,6 +174,7 @@ cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
@@ -201,7 +202,9 @@ lint 错误、无法格式化或需要格式化的文件时非零退出；`--jso
 报告与逐文件格式状态。`migrate` 按声明式清单对根配置及其 include 图执行字段重命名、
 值映射、删除、默认值与数值换算规则，校验迁移结果后原地写入变更文件，或用 `--output
 DIR` 暂存完整 include 图。`--check` 只报告不写文件，`--diff` 输出字段级变化，
-`--patch` 输出 unified diff，`--json` 输出包含变更的逐根报告。`--manifest-schema`
+`--patch` 输出 unified diff，`--json` 输出包含变更与逐操作 `matched`/`changed`
+计数的逐根报告。`--strict` 在写入前要求每条已执行操作至少匹配并修改一个对象，
+否则失败；不加该选项时，这类操作只在人类可读输出中产生警告。`--manifest-schema`
 输出供编辑器补全的清单 JSON Schema，`--init PATH` 按扩展名生成 starter 清单。
 声明式规则无法表达任意 Rust 迁移；这类逻辑仍应使用应用内的 `ConfigMigrator`。`diff` 先校验
 两个配置，再按路径报告节点、参数与 include 文件集合变化；子节点按 type 与

@@ -140,6 +140,14 @@ jobs:
           cargo run -p playact-cli --quiet -- migrate --output "$migrate_dir/staged" --manifest "$migrate_dir/migrations.json" "$migrate_dir/root.json"
           grep -q '"version": 1' "$migrate_dir/staged/root.json"
           cargo run -p playact-cli --quiet -- lint "$migrate_dir/staged/root.json"
+          printf '%s\n' '{"version":0,"tree":{"type":"action","name":"anything"}}' > "$migrate_dir/strict-root.json"
+          printf '%s\n' '{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"tree","to":"root"},{"op":"remove_field","where":{"type":"missing"},"field":"legacy"}]}]}' > "$migrate_dir/strict.json"
+          if cargo run -p playact-cli --quiet -- migrate --json --strict --manifest "$migrate_dir/strict.json" "$migrate_dir/strict-root.json" > target/migrate-strict.json; then
+            echo "migrate --strict should reject operations that match no objects"
+            exit 1
+          fi
+          grep -q '"matched": 0' target/migrate-strict.json
+          grep -q '"version":0' "$migrate_dir/strict-root.json"
           rm -rf "$migrate_dir"
           bundle_parent=$(mktemp -d)
           bundle_dir="$bundle_parent/bundle"

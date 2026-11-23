@@ -1047,7 +1047,9 @@ let watcher =
 刷新提供同样的管线。简单的字段重命名、删除、默认值、值映射与数值换算可用
 `playact migrate --manifest` 在无应用代码的情况下迁移根配置与 include；`--diff`
 可预览字段级变化，`--patch` 输出 unified diff，`--output DIR` 暂存完整 include 图；
-`--manifest-schema` 与 `--init PATH` 提供编辑器补全与 starter 清单。
+`--json` 包含逐操作 `matched`/`changed` 计数，`--strict` 在写入前拒绝未匹配任何对象
+或未修改任何对象的操作；`--manifest-schema` 与 `--init PATH` 提供编辑器补全与
+starter 清单。
 
 ### 校验与 schema
 

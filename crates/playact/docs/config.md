@@ -197,7 +197,13 @@ for example in VS Code:
   `version`); `--patch` prints unified diffs for valid pending or applied changes
   and cannot be combined with `--json`; `--json` emits per-root reports with a
   `changes` array whose entries carry `file`, JSON Pointer `path`, `kind`
-  (`added`, `removed`, or `changed`), and optional `from` / `to` values. Custom
+  (`added`, `removed`, or `changed`), and optional `from` / `to` values. Reports
+  also include an `operations` array with each executed operation's `from`,
+  one-based `index`, `op`, `matched`, and `changed` counts. `matched` counts the
+  objects selected by `at`, `where`, or the default scope across the root graph;
+  `changed` counts selected objects the operation actually modified. `--strict`
+  fails before writing when an executed operation matched no objects or changed
+  none; without it, those operations produce warnings in human output. Custom
   Rust transformations still require a `ConfigMigrator` closure in the
   application.
 - `--output DIR` requires exactly one root, cannot be combined with `--check`,
@@ -556,6 +562,7 @@ cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.j
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -596,10 +603,12 @@ formatting status. `migrate` applies a declarative manifest to every root and
 included file, validates the migrated graph, and writes in place only when all
 files are valid; `--check` reports pending migrations without writing, `--diff`
 prints field-level changes, `--patch` prints unified diffs, `--output DIR` stages
-the complete graph, and `--json` reports per-root results with changes.
-`--manifest-schema` prints the manifest JSON Schema, and `--init PATH` writes a
-starter manifest. RON formatting serializes the parsed spec
-because RON's generic map syntax does not deserialize as a `TreeSpec`; other
+the complete graph, and `--json` reports per-root results with changes and
+operation match counts. `--strict` rejects executed operations that match no
+objects or change none before writing. `--manifest-schema` prints the manifest
+JSON Schema, and `--init PATH` writes a starter manifest. RON formatting serializes
+the parsed spec because RON's generic map syntax does not deserialize as a
+`TreeSpec`; other
 formats preserve the original field presence. `diff` validates both inputs, then
 reports
 path-based node, parameter, and include-file set changes. Child nodes are
