@@ -1001,13 +1001,15 @@ Factory 形状为 `Fn(P) -> TickClosure`。外层 factory 每个节点执行一�
 ```rust
 use playact::config::FsIncludeResolver;
 
-let resolver = FsIncludeResolver::json("config/")?;
+let resolver = FsIncludeResolver::auto("config/")?;
 let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
-`FsIncludeResolver` 把路径限制在基准目录内，拒绝 `..`、绝对路径与符号链接逃逸；
-构建期检测深度与循环；同时记录解析过的文件供热重载监视。自定义 resolver 可实现
-`watched_paths()` / `reset_watched_paths()`。
+`FsIncludeResolver::auto` 按文件扩展名选择解析器（`.json`、`.toml`、
+`.yaml`/`.yml`、`.ron`）；TOML/YAML/RON 需要对应 feature。也可用
+`json`/`toml`/`yaml`/`ron` 强制单一解析器。它把路径限制在基准目录内，拒绝 `..`、
+绝对路径与符号链接逃逸；构建期检测深度与循环；同时记录解析过的文件供热重载监视。
+自定义 resolver 可实现 `watched_paths()` / `reset_watched_paths()`。
 
 ### 校验与 schema
 

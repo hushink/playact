@@ -241,10 +241,14 @@ therefore needs no `params`, while struct params need a `"params": {...}` object
 ```rust
 use playact::config::FsIncludeResolver;
 
-let resolver = FsIncludeResolver::json("config/")?;
+let resolver = FsIncludeResolver::auto("config/")?;
 let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
+- `FsIncludeResolver::auto` chooses the parser from each included file's
+  extension: `.json` always, and `.toml` / `.yaml` / `.yml` / `.ron` when the
+  corresponding feature is enabled. Includes without a supported extension are
+  rejected. Use `json` / `toml` / `yaml` / `ron` to force one parser.
 - `FsIncludeResolver` confines paths to its base directory and rejects `..`,
   absolute paths, and symlink escapes.
 - Cycles and nesting deeper than `MAX_INCLUDE_DEPTH` (32) are rejected.

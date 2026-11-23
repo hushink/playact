@@ -758,7 +758,7 @@ Split large configurations with `include`:
 ```rust
 use playact::config::FsIncludeResolver;
 
-let resolver = FsIncludeResolver::json("ai/")?;
+let resolver = FsIncludeResolver::auto("ai/")?;
 let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
@@ -767,8 +767,11 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
 `FsIncludeResolver` confines paths to its base directory and rejects `..`, absolute
-paths, and symlink escapes. Cycles and excessive nesting are detected during build, and
-the resolver records every resolved file so hot reload can watch it. A closure
+paths, and symlink escapes. `auto` selects JSON/TOML/YAML/RON from each file's
+extension (JSON always; TOML/YAML/RON need their features); the `json`/`toml`/
+`yaml`/`ron` constructors keep one parser for every include. Cycles and excessive
+nesting are detected during build, and the resolver records every resolved file
+so hot reload can watch it. A closure
 `Fn(&str) -> Result<TreeSpec, ConfigError>` also implements `IncludeResolver` for custom
 file, HTTP, or in-memory sources; implement `watched_paths()` when those sources should
 trigger reloads.

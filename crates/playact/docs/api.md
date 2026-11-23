@@ -1037,14 +1037,16 @@ by snapshots and diffs. Unknown fields are rejected.
 ```rust
 use playact::config::FsIncludeResolver;
 
-let resolver = FsIncludeResolver::json("config/")?;
+let resolver = FsIncludeResolver::auto("config/")?;
 let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
-`FsIncludeResolver` confines paths to its base directory and rejects `..`,
-absolute paths, and symlink escapes. Depth and cycles are guarded. It also
-records resolved files for hot reload; custom resolvers can implement
-`watched_paths()` / `reset_watched_paths()`.
+`FsIncludeResolver::auto` picks the parser from each file's extension
+(`.json`, `.toml`, `.yaml`/`.yml`, `.ron`); TOML/YAML/RON need their features.
+The `json`/`toml`/`yaml`/`ron` constructors force one parser. It confines paths
+to its base directory and rejects `..`, absolute paths, and symlink escapes.
+Depth and cycles are guarded. It also records resolved files for hot reload;
+custom resolvers can implement `watched_paths()` / `reset_watched_paths()`.
 
 ### Validation and schema
 

@@ -721,7 +721,7 @@ let mut tree = spec.build(&registry)?;
 ```rust
 use playact::config::FsIncludeResolver;
 
-let resolver = FsIncludeResolver::json("ai/")?;
+let resolver = FsIncludeResolver::auto("ai/")?;
 let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
@@ -730,6 +730,8 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
 `FsIncludeResolver` 把路径限制在基准目录内，拒绝 `..`、绝对路径与符号链接逃逸；
+`auto` 按每个文件的扩展名选择 JSON/TOML/YAML/RON（JSON 始终可用，TOML/YAML/RON
+需要对应 feature）；`json`/`toml`/`yaml`/`ron` 构造器则对所有 include 使用同一解析器。
 构建期检测循环与过深嵌套；并记录解析过的文件，供热重载监视。闭包
 `Fn(&str) -> Result<TreeSpec, ConfigError>` 也自动实现 `IncludeResolver`，可接
 文件、HTTP 或内存来源；需要热重载时可手动实现 `watched_paths()`。

@@ -234,10 +234,13 @@ Factory 参数规则：省略 `params` 时按 `null` 反序列化；`P = ()` 无
 ```rust
 use playact::config::FsIncludeResolver;
 
-let resolver = FsIncludeResolver::json("config/")?;
+let resolver = FsIncludeResolver::auto("config/")?;
 let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```
 
+- `FsIncludeResolver::auto` 按被包含文件的扩展名选择解析器：`.json` 始终可用，
+  `.toml` / `.yaml` / `.yml` / `.ron` 需要对应 feature。没有受支持扩展名的 include
+  会被拒绝。也可用 `json` / `toml` / `yaml` / `ron` 强制使用单一解析器。
 - `FsIncludeResolver` 把路径限制在基准目录内，拒绝 `..`、绝对路径与符号链接逃逸。
 - 循环与超过 `MAX_INCLUDE_DEPTH`（32）的嵌套会被拒绝。
 - 未使用 `build_with_resolver` 时，`include` 会构建失败。

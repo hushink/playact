@@ -43,6 +43,12 @@ where
     }
 }
 
+#[derive(Clone, Copy)]
+enum ParserMode {
+    Fixed(TreeParser),
+    Auto,
+}
+
 /// Resolver that reads include files from a base directory.
 ///
 /// Target paths are canonicalized and must still reside inside the base
@@ -50,7 +56,7 @@ where
 /// directory is canonicalized and checked for existence at construction time.
 pub struct FsIncludeResolver {
     base: PathBuf,
-    parser: TreeParser,
+    parser: ParserMode,
     watched: Mutex<Vec<PathBuf>>,
 }
 
@@ -58,6 +64,19 @@ impl FsIncludeResolver {
     /// Creates a resolver from a base directory and parser; the base directory
     /// must exist and be a directory.
     pub fn new(base: impl Into<PathBuf>, parser: TreeParser) -> Result<Self, ConfigError> {
+        Self::with_parser(base, ParserMode::Fixed(parser))
+    }
+
+    /// Reads includes, choosing the parser from each file's extension.
+    ///
+    /// `.json` is always available. `.toml`, `.yaml`/`.yml`, and `.ron` require
+    /// the corresponding `toml`, `yaml`, and `ron` features. Includes without a
+    /// supported extension are rejected.
+    pub fn auto(base: impl Into<PathBuf>) -> Result<Self, ConfigError> {
+        Self::with_parser(base, ParserMode::Auto)
+    }
+
+    fn with_parser(base: impl Into<PathBuf>, parser: ParserMode) -> Result<Self, ConfigError> {
         let base = base.into();
         let base = base.canonicalize().map_err(|error| {
             ConfigError::new(format!(
@@ -133,8 +152,11 @@ impl IncludeResolver for FsIncludeResolver {
 
         let text = fs::read_to_string(&canonical)
             .map_err(|error| ConfigError::with_path(path, format!("read include: {error}")))?;
-        let spec = (self.parser)(&text)
-            .map_err(|error| ConfigError::with_path(path, format!("parse include: {error}")))?;
+        let spec = match self.parser {
+            ParserMode::Fixed(parser) => parser(&text),
+            ParserMode::Auto => parse_auto(&canonical, &text),
+        }
+        .map_err(|error| ConfigError::with_path(path, format!("parse include: {error}")))?;
         Ok(spec)
     }
 
@@ -149,6 +171,34 @@ impl IncludeResolver for FsIncludeResolver {
         if let Ok(mut watched) = self.watched.lock() {
             watched.clear();
         }
+    }
+}
+
+fn parse_auto(path: &Path, text: &str) -> Result<TreeSpec, ConfigError> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("json") => TreeSpec::from_json_str(text),
+        #[cfg(feature = "toml")]
+        Some("toml") => TreeSpec::from_toml_str(text),
+        #[cfg(not(feature = "toml"))]
+        Some("toml") => Err(ConfigError::new("TOML includes require the `toml` feature")),
+        #[cfg(feature = "yaml")]
+        Some("yaml" | "yml") => TreeSpec::from_yaml_str(text),
+        #[cfg(not(feature = "yaml"))]
+        Some("yaml" | "yml") => Err(ConfigError::new("YAML includes require the `yaml` feature")),
+        #[cfg(feature = "ron")]
+        Some("ron") => TreeSpec::from_ron_str(text),
+        #[cfg(not(feature = "ron"))]
+        Some("ron") => Err(ConfigError::new("RON includes require the `ron` feature")),
+        Some(other) => Err(ConfigError::new(format!(
+            "unsupported include extension `.{other}`; expected .json, .toml, .yaml, .yml, or .ron"
+        ))),
+        None => Err(ConfigError::new(
+            "include path has no extension; expected .json, .toml, .yaml, .yml, or .ron",
+        )),
     }
 }
 
@@ -230,6 +280,72 @@ mod tests {
 
         resolver.reset_watched_paths();
         assert!(resolver.watched_paths().is_empty());
+
+        fs::remove_dir_all(&base).expect("cleanup");
+    }
+
+    #[test]
+    fn auto_detects_supported_extensions() {
+        let base = temp_dir("auto");
+        fs::write(
+            base.join("sub.json"),
+            r#"{"version":1,"root":{"type":"action","name":"ok"}}"#,
+        )
+        .expect("write json");
+        #[cfg(feature = "toml")]
+        fs::write(
+            base.join("sub.toml"),
+            "version = 1\n[root]\ntype = \"action\"\nname = \"ok\"\n",
+        )
+        .expect("write toml");
+        #[cfg(feature = "yaml")]
+        fs::write(
+            base.join("sub.yaml"),
+            "version: 1\nroot:\n  type: action\n  name: ok\n",
+        )
+        .expect("write yaml");
+        #[cfg(feature = "ron")]
+        fs::write(
+            base.join("sub.ron"),
+            "(version: 1, root: (type: \"action\", name: \"ok\"))",
+        )
+        .expect("write ron");
+
+        let resolver = FsIncludeResolver::auto(&base).expect("resolver");
+        let mut names = vec!["sub.json"];
+        #[cfg(feature = "toml")]
+        names.push("sub.toml");
+        #[cfg(feature = "yaml")]
+        names.push("sub.yaml");
+        #[cfg(feature = "ron")]
+        names.push("sub.ron");
+        for name in names {
+            let spec = resolver.resolve(name).expect("resolve");
+            assert!(
+                matches!(spec.root, super::super::SpecNode::Action { .. }),
+                "{name}"
+            );
+        }
+
+        fs::remove_dir_all(&base).expect("cleanup");
+    }
+
+    #[test]
+    fn auto_rejects_unsupported_extensions() {
+        let base = temp_dir("auto-unsupported");
+        fs::write(base.join("sub.txt"), "{}").expect("write txt");
+        fs::write(base.join("noext"), "{}").expect("write extensionless");
+
+        let resolver = FsIncludeResolver::auto(&base).expect("resolver");
+        let error = resolver
+            .resolve("sub.txt")
+            .expect_err("unsupported extension");
+        assert!(
+            error.to_string().contains("unsupported include extension"),
+            "{error}"
+        );
+        let error = resolver.resolve("noext").expect_err("missing extension");
+        assert!(error.to_string().contains("no extension"), "{error}");
 
         fs::remove_dir_all(&base).expect("cleanup");
     }
