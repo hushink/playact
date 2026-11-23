@@ -793,10 +793,11 @@ let watcher =
   `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` re-run the
   pipeline on every reload or refresh.
 - `playact migrate --manifest migrations.json CONFIG...` applies declarative
-  `rename_field`, `remove_field`, `set_field`, `rename_value`, and `scale`
-  rules to a root and its includes, validates the migrated result, and writes
-  files in place. Use `--check` for a dry run and `--diff` for field-level
-  previews (`--json` always includes changes). Arbitrary migrations still
+  `rename_field`, `remove_field`, `set_field`, `rename_value`, `map_values`, and
+  `scale` rules to a root and its includes, validates the migrated result, and
+  writes files in place. Use `--check` for a dry run, `--diff` for field-level
+  previews, and `--patch` for unified diffs (`--json` always includes changes;
+  `--patch` and `--json` are mutually exclusive). Arbitrary migrations still
   belong in a `ConfigMigrator` closure inside the application.
 - See [`examples/config_migration.rs`](examples/config_migration.rs) for a v0
   root and include that are migrated, built, and ticked.

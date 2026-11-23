@@ -1046,7 +1046,7 @@ let watcher =
 `FsIncludeResolver` 会迁移每个被包含文件；`RemoteTreeLoader::with_migrator` 为远程
 刷新提供同样的管线。简单的字段重命名、删除、默认值、值映射与数值换算可用
 `playact migrate --manifest` 在无应用代码的情况下迁移根配置与 include；`--diff`
-可预览字段级变化。
+可预览字段级变化，`--patch` 输出 unified diff。
 
 ### 校验与 schema
 

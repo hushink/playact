@@ -71,6 +71,15 @@ enum Operation {
         from: Value,
         to: Value,
     },
+    #[serde(rename = "map_values")]
+    MapValues {
+        #[serde(default)]
+        at: Option<String>,
+        #[serde(default, rename = "where")]
+        r#where: Option<BTreeMap<String, Value>>,
+        field: String,
+        map: BTreeMap<String, Value>,
+    },
     #[serde(rename = "scale")]
     Scale {
         #[serde(default)]
@@ -91,6 +100,7 @@ impl Operation {
             Self::Remove { .. } => "remove_field",
             Self::Set { .. } => "set_field",
             Self::RenameValue { .. } => "rename_value",
+            Self::MapValues { .. } => "map_values",
             Self::Scale { .. } => "scale",
         }
     }
@@ -101,6 +111,7 @@ impl Operation {
             | Self::Remove { at, r#where, .. }
             | Self::Set { at, r#where, .. }
             | Self::RenameValue { at, r#where, .. }
+            | Self::MapValues { at, r#where, .. }
             | Self::Scale { at, r#where, .. } => (at.as_deref(), r#where.as_ref()),
         }
     }
@@ -152,6 +163,14 @@ impl Operation {
                 }
                 if from == to {
                     return Err(String::from("rename_value: `from` and `to` must differ"));
+                }
+            }
+            Self::MapValues { field, map, .. } => {
+                if field.is_empty() {
+                    return Err(String::from("map_values: field name cannot be empty"));
+                }
+                if map.is_empty() {
+                    return Err(String::from("map_values: `map` cannot be empty"));
                 }
             }
             Self::Scale {
@@ -218,6 +237,23 @@ impl Operation {
                 }
                 Ok(())
             }),
+            Self::MapValues { field, map, .. } => {
+                let mut apply = |object: &mut Map<String, Value>, _: &str| {
+                    let mapped = match object.get(field) {
+                        Some(Value::String(current)) => map.get(current).cloned(),
+                        _ => None,
+                    };
+                    if let Some(mapped) = mapped {
+                        object.insert(field.clone(), mapped);
+                    }
+                    Ok(())
+                };
+                if at.is_none() && matcher.is_none() {
+                    visit_objects(document, "", &mut apply)
+                } else {
+                    apply_to_target(document, at, matcher, self.name(), apply)
+                }
+            }
             Self::Scale {
                 field,
                 multiply,
@@ -296,6 +332,29 @@ fn apply_to_target(
         ConfigError::with_path(pointer, format!("{operation}: target is not an object"))
     })?;
     action(object, pointer)
+}
+
+fn visit_objects(
+    value: &mut Value,
+    pointer: &str,
+    action: &mut impl FnMut(&mut Map<String, Value>, &str) -> Result<(), ConfigError>,
+) -> Result<(), ConfigError> {
+    match value {
+        Value::Object(object) => {
+            action(object, pointer)?;
+            for (field, child) in object.iter_mut() {
+                let child_pointer = child_pointer(pointer, field);
+                visit_objects(child, &child_pointer, action)?;
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter_mut().enumerate() {
+                visit_objects(child, &format!("{pointer}/{index}"), action)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn visit_matching(
@@ -907,6 +966,39 @@ mod tests {
     }
 
     #[test]
+    fn maps_multiple_values_across_all_objects() {
+        let operation = Operation::MapValues {
+            at: None,
+            r#where: None,
+            field: String::from("type"),
+            map: BTreeMap::from([
+                (
+                    String::from("legacy_wait"),
+                    Value::String(String::from("wait")),
+                ),
+                (
+                    String::from("legacy_action"),
+                    Value::String(String::from("action")),
+                ),
+            ]),
+        };
+        let document = json!({
+            "root": {
+                "type": "sequence",
+                "children": [
+                    {"type": "legacy_wait"},
+                    {"type": "legacy_action", "name": "keep"},
+                    {"type": "identified", "child": {"type": "legacy_wait"}}
+                ]
+            }
+        });
+        let migrated = apply_operations(document, &[operation]).expect("map values");
+        assert_eq!(migrated["root"]["children"][0]["type"], "wait");
+        assert_eq!(migrated["root"]["children"][1]["type"], "action");
+        assert_eq!(migrated["root"]["children"][2]["child"]["type"], "wait");
+    }
+
+    #[test]
     fn scale_rejects_non_numeric_fields() {
         let operation = Operation::Scale {
             at: Some(String::from("/root")),
@@ -1018,6 +1110,18 @@ mod tests {
                 field: String::from("duration"),
                 multiply: f64::NAN,
                 add: 0.0,
+            },
+            Operation::MapValues {
+                at: None,
+                r#where: None,
+                field: String::new(),
+                map: BTreeMap::from([(String::from("a"), json!("b"))]),
+            },
+            Operation::MapValues {
+                at: None,
+                r#where: None,
+                field: String::from("type"),
+                map: BTreeMap::new(),
             },
         ];
         for operation in cases {

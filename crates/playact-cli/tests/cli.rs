@@ -1420,6 +1420,58 @@ fn migrate_diff_previews_field_changes_without_writing() {
 }
 
 #[test]
+fn migrate_patch_prints_unified_diff_without_writing() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original = fs::read_to_string(&root).expect("original");
+
+    let patched = run(&[
+        "migrate",
+        "--check",
+        "--patch",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!patched.status.success(), "{patched:?}");
+    let stdout = String::from_utf8_lossy(&patched.stdout);
+    assert!(stdout.contains("--- "), "{stdout}");
+    assert!(stdout.contains("+++ "), "{stdout}");
+    assert!(stdout.contains("@@"), "{stdout}");
+    assert!(stdout.contains("-\u{7b}\"version\":0"), "{stdout}");
+    assert!(stdout.contains("+  \"version\": 1"), "{stdout}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_patch_cannot_be_combined_with_json() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original = fs::read_to_string(&root).expect("original");
+
+    let output = run(&[
+        "migrate",
+        "--patch",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be combined"), "{stderr}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
 fn migrate_applies_value_renames_and_numeric_scaling() {
     let directory = TempDir::new();
     let root = directory.write(
@@ -1429,7 +1481,7 @@ fn migrate_applies_value_renames_and_numeric_scaling() {
     let manifest = directory.write(
         "migrations.json",
         r#"{"version":1,"migrations":[{"from":0,"operations":[
-            {"op":"rename_value","where":{"type":"legacy_wait"},"field":"type","from":"legacy_wait","to":"wait"},
+            {"op":"map_values","field":"type","map":{"legacy_wait":"wait"}},
             {"op":"rename_field","where":{"type":"wait"},"from":"time","to":"duration_ms"},
             {"op":"scale","where":{"type":"wait"},"field":"duration_ms","multiply":1000}
         ]}]}"#,

@@ -44,6 +44,7 @@ use std::time::{Duration, SystemTime};
 use playact::config::TreeSpec;
 use serde::Serialize;
 use serde_json::Value;
+use similar::TextDiff;
 
 pub use lint::{LintIssue, LintReport};
 
@@ -122,15 +123,16 @@ formatting for every lint-valid file. Writes nothing and exits nonzero when any
 file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
-usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--check] [--diff] [--json] CONFIG...
+usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--check] [--diff] [--patch] CONFIG...
 
 Applies versioned declarative operations from a manifest to each configuration
 and its include graph, then validates every result. Operations are
-rename_field, remove_field, set_field, rename_value, and scale, targeted by
-`at` (JSON Pointer) or `where` (recursive object match). Files are written in
-place only when the whole graph is valid. --check reports files that would
-change without writing; --diff prints field-level changes; --json prints
-per-root reports including changes.";
+rename_field, remove_field, set_field, rename_value, map_values, and scale,
+targeted by `at` (JSON Pointer) or `where` (recursive object match). Files are
+written in place only when the whole graph is valid. --check reports files that
+would change without writing; --diff prints field-level changes; --patch prints
+unified diffs; --json prints per-root reports including changes. --patch and
+--json are mutually exclusive.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -848,6 +850,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut check = false;
     let mut json_output = false;
     let mut diff_output = false;
+    let mut patch_output = false;
     let mut options_done = false;
     let mut files = Vec::new();
     let mut arguments = arguments.into_iter();
@@ -869,6 +872,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--diff") => {
                     diff_output = true;
+                    continue;
+                }
+                Some("--patch") => {
+                    patch_output = true;
                     continue;
                 }
                 Some("-m" | "--manifest") => {
@@ -897,6 +904,9 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     }
     if files.is_empty() {
         return Err(String::from("migrate requires at least one configuration path").into());
+    }
+    if patch_output && json_output {
+        return Err(String::from("--patch cannot be combined with --json").into());
     }
     let manifest_path =
         manifest_path.ok_or_else(|| String::from("migrate requires --manifest PATH"))?;
@@ -960,6 +970,9 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         }
         if diff_output {
             print_field_changes(&unique_changes(&outcome.reports));
+        }
+        if patch_output && !has_issues {
+            print_patches(&outcome.writes);
         }
     }
 
@@ -1059,6 +1072,28 @@ fn truncate_chars(text: String, limit: usize) -> String {
     let mut truncated: String = text.chars().take(limit.saturating_sub(3)).collect();
     truncated.push_str("...");
     truncated
+}
+
+fn print_patches(writes: &[PendingWrite]) {
+    for write in writes {
+        let (Ok(original), Ok(migrated)) = (
+            std::str::from_utf8(&write.original),
+            std::str::from_utf8(&write.formatted),
+        ) else {
+            continue;
+        };
+        let diff = TextDiff::from_lines(original, migrated);
+        let mut unified = diff.unified_diff();
+        unified
+            .context_radius(3)
+            .header(&write.display, &write.display);
+        let rendered = unified.to_string();
+        print!("{rendered}");
+        if !rendered.ends_with('\n') {
+            println!();
+        }
+        println!();
+    }
 }
 
 fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
