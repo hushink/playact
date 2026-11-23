@@ -14,7 +14,9 @@
 //!   also restored by stable `NodeId` for nodes that still exist; renamed or
 //!   removed IDs start from their reset state;
 //! - Each successful refresh records a [`crate::TreeDiff`] with nodes added,
-//!   removed, or moved according to their `NodeId` and structural path;
+//!   removed, moved, or renamed according to their `NodeId` and structural path;
+//!   [`RemoteTreeLoader::with_diff_history`] keeps a bounded history instead of
+//!   only the latest diff;
 //! - On parse/build/network failure the old tree stays untouched and the error
 //!   is returned;
 //! - ETag / Last-Modified conditional requests are supported, and a 304 skips
@@ -34,7 +36,7 @@ use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
     ValidationLimits,
 };
-use crate::diff::TreeDiff;
+use crate::diff::{DiffHistory, TreeDiff};
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -139,7 +141,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     etag: Option<String>,
     last_modified: Option<String>,
     preserve_state: bool,
-    last_diff: Option<TreeDiff>,
+    diff_history: DiffHistory,
 }
 
 impl<W: 'static> RemoteTreeLoader<W> {
@@ -273,7 +275,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             etag,
             last_modified,
             preserve_state: false,
-            last_diff: None,
+            diff_history: DiffHistory::default(),
         })
     }
 
@@ -356,15 +358,30 @@ impl<W: 'static> RemoteTreeLoader<W> {
         &self.url
     }
 
+    /// Keeps up to `limit` recent refresh diffs; `0` disables history.
+    ///
+    /// The default keeps only the most recent diff.
+    #[must_use]
+    pub fn with_diff_history(mut self, limit: usize) -> Self {
+        self.diff_history.set_limit(limit);
+        self
+    }
+
+    /// Recent structural diffs, ordered oldest to newest.
+    #[must_use]
+    pub fn diff_history(&self) -> &DiffHistory {
+        &self.diff_history
+    }
+
     /// Structural changes from the most recent successful refresh.
     #[must_use]
     pub fn last_diff(&self) -> Option<&TreeDiff> {
-        self.last_diff.as_ref()
+        self.diff_history.latest()
     }
 
     /// Takes the structural changes from the most recent successful refresh.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
-        self.last_diff.take()
+        self.diff_history.pop_latest()
     }
 
     /// The current behavior tree.
@@ -440,7 +457,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.tree = new_tree;
         self.etag = etag;
         self.last_modified = last_modified;
-        self.last_diff = Some(diff);
+        self.diff_history.push(diff);
 
         Ok(true)
     }
@@ -716,6 +733,39 @@ mod tests {
 
         assert!(loader.take_last_diff().is_some());
         assert!(loader.last_diff().is_none());
+    }
+
+    #[test]
+    fn refresh_keeps_bounded_diff_history() {
+        let bodies = ["a", "b", "c"]
+            .into_iter()
+            .map(|id| {
+                format!(
+                    r#"{{"root":{{"type":"sequence","children":[
+                        {{"type":"identified","id":"{id}","child":{{"type":"action","name":"new"}}}}
+                    ]}}}}"#
+                )
+            })
+            .collect();
+        let url = serve_sequence(bodies);
+        let mut loader = RemoteTreeLoader::<()>::json(url, registry())
+            .expect("remote loader")
+            .with_diff_history(2);
+
+        assert!(loader.refresh_now().expect("first refresh"));
+        assert!(loader.refresh_now().expect("second refresh"));
+
+        assert_eq!(loader.diff_history().len(), 2);
+        let ids: Vec<&str> = loader
+            .diff_history()
+            .iter()
+            .map(|diff| diff.added[0].id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["b", "c"]);
+        assert_eq!(
+            loader.last_diff().expect("latest").added[0].id.as_str(),
+            "c"
+        );
     }
 
     #[test]

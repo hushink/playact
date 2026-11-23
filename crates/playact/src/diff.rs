@@ -4,7 +4,7 @@
 //! as [`NodePath`] values. Only nodes with IDs participate; ID-less nodes are
 //! still traversed so child paths stay accurate.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -173,6 +173,90 @@ where
     serializer.serialize_str(kind.as_str())
 }
 
+/// A bounded history of structural diffs, ordered oldest to newest.
+///
+/// `limit = 0` disables storage. The default keeps only the most recent diff.
+#[derive(Debug, Clone)]
+pub struct DiffHistory {
+    limit: usize,
+    diffs: VecDeque<TreeDiff>,
+}
+
+impl DiffHistory {
+    /// Creates an empty history with the given limit.
+    #[must_use]
+    pub fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            diffs: VecDeque::new(),
+        }
+    }
+
+    /// The configured limit.
+    #[must_use]
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// Changes the limit and drops the oldest entries when necessary.
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        while self.diffs.len() > limit {
+            self.diffs.pop_front();
+        }
+    }
+
+    /// Number of stored diffs.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.diffs.len()
+    }
+
+    /// Whether no diff is stored.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.diffs.is_empty()
+    }
+
+    /// The most recent diff.
+    #[must_use]
+    pub fn latest(&self) -> Option<&TreeDiff> {
+        self.diffs.back()
+    }
+
+    /// Iterates from oldest to newest.
+    pub fn iter(&self) -> impl Iterator<Item = &TreeDiff> {
+        self.diffs.iter()
+    }
+
+    /// Appends a diff, dropping the oldest entry when the limit is reached.
+    pub fn push(&mut self, diff: TreeDiff) {
+        if self.limit == 0 {
+            return;
+        }
+        if self.diffs.len() == self.limit {
+            self.diffs.pop_front();
+        }
+        self.diffs.push_back(diff);
+    }
+
+    /// Removes and returns the most recent diff.
+    pub fn pop_latest(&mut self) -> Option<TreeDiff> {
+        self.diffs.pop_back()
+    }
+
+    /// Drops all stored diffs.
+    pub fn clear(&mut self) {
+        self.diffs.clear();
+    }
+}
+
+impl Default for DiffHistory {
+    fn default() -> Self {
+        Self::new(1)
+    }
+}
+
 impl fmt::Display for TreeDiff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_empty() {
@@ -320,6 +404,46 @@ mod tests {
         assert!(diff.removed.is_empty());
         assert!(diff.moved.is_empty());
         assert!(diff.renamed.is_empty());
+    }
+
+    #[test]
+    fn history_is_bounded_and_ordered() {
+        let empty = tree(Vec::new());
+        let one = tree(vec![leaf("a", "a")]);
+        let two = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let three = tree(vec![leaf("a", "a"), leaf("b", "b"), leaf("c", "c")]);
+
+        let mut history = DiffHistory::new(2);
+        history.push(TreeDiff::between(&empty, &one));
+        history.push(TreeDiff::between(&one, &two));
+        history.push(TreeDiff::between(&two, &three));
+
+        assert_eq!(history.limit(), 2);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history.latest().expect("latest").added[0].id.as_str(), "c");
+        let ids: Vec<&str> = history
+            .iter()
+            .flat_map(|diff| diff.added.iter().map(|node| node.id.as_str()))
+            .collect();
+        assert_eq!(ids, vec!["b", "c"]);
+
+        let latest = history.pop_latest().expect("popped");
+        assert_eq!(latest.added[0].id.as_str(), "c");
+        assert_eq!(
+            history.latest().expect("previous").added[0].id.as_str(),
+            "b"
+        );
+
+        history.set_limit(0);
+        assert!(history.is_empty());
+        history.push(TreeDiff::default());
+        assert!(history.is_empty());
+
+        history.set_limit(1);
+        history.push(TreeDiff::default());
+        assert_eq!(history.len(), 1);
+        history.clear();
+        assert!(history.is_empty());
     }
 
     #[test]

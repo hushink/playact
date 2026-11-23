@@ -174,6 +174,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/` | HTML report (auto-refreshes every second by default) |
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
+/// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
 /// | `/health` | `ok` |
 pub struct InspectorServer {
     listener: TcpListener,
@@ -300,6 +301,15 @@ impl InspectorServer {
                 }
                 ("200 OK", "text/html; charset=utf-8", inspector.render())
             }
+            #[cfg(feature = "diff-serde")]
+            (true, "/diff.json") => match diff {
+                Some(diff) => ("200 OK", "application/json; charset=utf-8", diff.to_json()),
+                None => (
+                    "404 Not Found",
+                    "text/plain; charset=utf-8",
+                    String::from("no diff recorded\n"),
+                ),
+            },
             (true, "/metrics") => match stats {
                 Some(stats) => (
                     "200 OK",
@@ -1226,10 +1236,51 @@ mod tests {
         assert!(post.starts_with("HTTP/1.1 405 Method Not Allowed"));
     }
 
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn server_serves_diff_json() {
+        let old = BehaviorTreeBuilder::<()>::new("old")
+            .sequence(|b| b.action("old", |_| Status::Success).id("old"))
+            .build()
+            .expect("old tree");
+        let new = BehaviorTreeBuilder::<()>::new("new")
+            .sequence(|b| b.action("new", |_| Status::Success).id("new"))
+            .build()
+            .expect("new tree");
+        let diff = TreeDiff::between(&old, &new);
+
+        let mut server = InspectorServer::bind("127.0.0.1:0").expect("bind");
+        let addr = server.local_addr().expect("addr");
+        let response = request_with_diff(
+            &mut server,
+            &new,
+            None,
+            Some(&diff),
+            addr,
+            "GET /diff.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("application/json"));
+        assert!(response.contains("\"added\""));
+        assert!(response.contains("\"id\":\"new\""));
+    }
+
     fn request<W>(
         server: &mut InspectorServer,
         tree: &BehaviorTree<W>,
         stats: Option<&StatsTracer>,
+        addr: SocketAddr,
+        request: &str,
+    ) -> String {
+        request_with_diff(server, tree, stats, None, addr, request)
+    }
+
+    fn request_with_diff<W>(
+        server: &mut InspectorServer,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        diff: Option<&TreeDiff>,
         addr: SocketAddr,
         request: &str,
     ) -> String {
@@ -1238,7 +1289,7 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("read timeout");
         stream.write_all(request.as_bytes()).expect("write request");
-        assert_eq!(server.poll(tree, stats).expect("poll"), 1);
+        assert_eq!(server.poll_with_diff(tree, stats, diff).expect("poll"), 1);
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("read response");
         response

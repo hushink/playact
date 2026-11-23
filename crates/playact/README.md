@@ -476,8 +476,9 @@ server.poll(&tree, Some(&stats))?;
 The page shows the tree with last statuses, per-node counters and timings, services,
 a `NodeId` audit table with structural paths, an optional reload diff, and Mermaid
 source, using inline CSS only. `/metrics`, `/tree`, and `/health` serve Prometheus
-text, the ASCII status tree, and a readiness probe. The server has no authentication
-and exposes tree metadata; bind it to loopback and use it only in debug builds.
+text, the ASCII status tree, and a readiness probe; with `diff-serde`, `/diff.json`
+returns the latest diff as JSON. The server has no authentication and exposes tree
+metadata; bind it to loopback and use it only in debug builds.
 
 ### Tree diffs
 
@@ -500,7 +501,8 @@ Enable `diff-serde` for compact JSON output:
 let json = diff.to_json();
 ```
 
-Hot reload and remote refresh expose their latest diff through `last_diff()`.
+Hot reload and remote refresh expose their latest diff through `last_diff()` and keep a
+bounded `DiffHistory` when configured with `with_diff_history(n)`.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
@@ -717,9 +719,10 @@ A successful rebuild replaces the tree (root and configured services), preserves
 blackboard data, and resets node state. Enable `with_state_preservation(true)` to also
 restore own state by stable `NodeId` for nodes that still exist; renamed or removed IDs
 start from their reset state. `last_diff()` reports added, removed, moved, and renamed
-nodes by `NodeId` and `NodePath`. Parse/build failures keep the old tree and return an
-error. Edits are debounced (200 ms by default). Use `json_with_resolver` /
-`with_parser_and_resolver` for includes.
+nodes by `NodeId` and `NodePath`; `with_diff_history(n)` keeps recent diffs in
+`diff_history()`. Parse/build failures keep the old tree and return an error. Edits are
+debounced (200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver`
+for includes.
 
 The watcher observes the root file only. Changes to included files do not trigger an
 event; call `reload_now()` or touch the root file.
@@ -743,10 +746,10 @@ loader.tree_mut().tick(&mut world, time);
 the old tree on refresh errors. A successful refresh rebuilds the root and configured
 services, preserves the blackboard, and resets node state; `with_state_preservation(true)`
 also restores node state by stable `NodeId`, matching the hot-reload behavior.
-`last_diff()` exposes the same added/removed/moved/renamed `TreeDiff` as hot reload.
-Requests happen on the calling thread; use a worker thread or a custom `Client` timeout
-in high-latency environments. Includes are available through `json_with_resolver` /
-`with_client_and_resolver`.
+`last_diff()` exposes the same added/removed/moved/renamed `TreeDiff` as hot reload;
+`with_diff_history(n)` keeps a bounded history. Requests happen on the calling thread;
+use a worker thread or a custom `Client` timeout in high-latency environments. Includes
+are available through `json_with_resolver` / `with_client_and_resolver`.
 
 Response bodies are limited to `MAX_REMOTE_CONFIG_BYTES` (1 MiB), must be UTF-8, and
 are checked with `TreeSpec::validate` using `ValidationLimits::default()` before build.

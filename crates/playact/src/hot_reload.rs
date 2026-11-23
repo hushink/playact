@@ -13,7 +13,9 @@
 //!   restored by stable `NodeId` for nodes that still exist in the new tree;
 //!   renamed or removed IDs start from their reset state;
 //! - Each successful reload records a [`crate::TreeDiff`] with nodes added,
-//!   removed, or moved according to their `NodeId` and structural path;
+//!   removed, moved, or renamed according to their `NodeId` and structural path;
+//!   [`TreeWatcher::with_diff_history`] keeps a bounded history instead of only
+//!   the latest diff;
 //! - Parse/build failure: the old tree stays untouched and the error is returned
 //!   to the caller;
 //! - Tracers are not preserved; reinstall them through [`TreeWatcher::tree_mut`]
@@ -32,7 +34,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
 };
-use crate::diff::TreeDiff;
+use crate::diff::{DiffHistory, TreeDiff};
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -113,7 +115,7 @@ pub struct TreeWatcher<W: 'static> {
     debounce: Duration,
     pending_since: Option<Instant>,
     preserve_state: bool,
-    last_diff: Option<TreeDiff>,
+    diff_history: DiffHistory,
 }
 
 impl<W: 'static> TreeWatcher<W> {
@@ -187,7 +189,7 @@ impl<W: 'static> TreeWatcher<W> {
             debounce: Duration::from_millis(200),
             pending_since: None,
             preserve_state: false,
-            last_diff: None,
+            diff_history: DiffHistory::default(),
         })
     }
 
@@ -274,15 +276,30 @@ impl<W: 'static> TreeWatcher<W> {
         &mut self.registry
     }
 
+    /// Keeps up to `limit` recent reload diffs; `0` disables history.
+    ///
+    /// The default keeps only the most recent diff.
+    #[must_use]
+    pub fn with_diff_history(mut self, limit: usize) -> Self {
+        self.diff_history.set_limit(limit);
+        self
+    }
+
+    /// Recent structural diffs, ordered oldest to newest.
+    #[must_use]
+    pub fn diff_history(&self) -> &DiffHistory {
+        &self.diff_history
+    }
+
     /// Structural changes from the most recent successful reload.
     #[must_use]
     pub fn last_diff(&self) -> Option<&TreeDiff> {
-        self.last_diff.as_ref()
+        self.diff_history.latest()
     }
 
     /// Takes the structural changes from the most recent successful reload.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
-        self.last_diff.take()
+        self.diff_history.pop_latest()
     }
 
     /// Processes file events; returns `true` if a reload completed successfully.
@@ -358,7 +375,7 @@ impl<W: 'static> TreeWatcher<W> {
 
         let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
-        self.last_diff = Some(diff);
+        self.diff_history.push(diff);
 
         Ok(())
     }
@@ -566,6 +583,50 @@ mod tests {
 
         assert!(watcher.take_last_diff().is_some());
         assert!(watcher.last_diff().is_none());
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_keeps_bounded_diff_history() {
+        let path = temp_path();
+        fs::write(
+            &path,
+            r#"{"root":{"type":"sequence","children":[
+                {"type":"identified","id":"a","child":{"type":"action","name":"old"}}
+            ]}}"#,
+        )
+        .expect("write initial");
+
+        let mut watcher = TreeWatcher::<()>::json(&path, registry())
+            .expect("watcher")
+            .with_diff_history(2);
+
+        for (id, action) in [("b", "new"), ("c", "new")] {
+            fs::write(
+                &path,
+                format!(
+                    r#"{{"root":{{"type":"sequence","children":[
+                        {{"type":"identified","id":"{id}","child":{{"type":"action","name":"{action}"}}}}
+                    ]}}}}"#
+                ),
+            )
+            .expect("write config");
+            watcher.reload_now().expect("reload");
+        }
+
+        assert_eq!(watcher.diff_history().len(), 2);
+        let ids: Vec<&str> = watcher
+            .diff_history()
+            .iter()
+            .map(|diff| diff.added[0].id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["b", "c"]);
+        assert_eq!(
+            watcher.last_diff().expect("latest").added[0].id.as_str(),
+            "c"
+        );
 
         drop(watcher);
         let _ = fs::remove_file(path);
