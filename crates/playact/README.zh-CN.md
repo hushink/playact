@@ -927,6 +927,7 @@ cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
 cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
+cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 ```
 
 - `battle_ai`：确定性的 1D 玩家 vs 三只哥布林战斗，展示 ReactiveSelector 打断、
@@ -937,6 +938,9 @@ cargo run -p playact --example live_inspector --features inspector
   `guard`、`try_action`、事件、状态保持热重载与结构化重载差异。
 - `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
   与 `/tree` 端点的演示树。
+- `reload_audit`：嵌套 include 热重载、状态保持、revision 与时间戳历史、
+  `/status.json` 以及增量 `/diffs.json?since=` 的端到端演示。设置
+  `PLAYACT_AUDIT_SERVE=1` 可在持续修改配置时保留 inspector 服务。
 
 ## 测试与基准
 

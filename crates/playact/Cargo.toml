@@ -78,6 +78,10 @@ name = "live_inspector"
 required-features = ["inspector"]
 
 [[example]]
+name = "reload_audit"
+required-features = ["hot-reload", "inspector", "diff-serde"]
+
+[[example]]
 name = "battle_ai_showcase"
 required-features = ["hot-reload"]
 

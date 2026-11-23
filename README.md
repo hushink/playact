@@ -122,6 +122,7 @@ cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
 cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
+cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Demonstrates
@@ -134,6 +135,9 @@ cargo run -p playact --example live_inspector --features inspector
   diffs.
 - `live_inspector`: a small demo tree served at `http://127.0.0.1:7878/` with live
   statuses, timings, `/metrics`, and `/tree` endpoints.
+- `reload_audit`: nested include hot reload with state preservation, revision and
+  timestamp history, `/status.json`, and incremental `/diffs.json?since=`. Set
+  `PLAYACT_AUDIT_SERVE=1` to keep the inspector running while you edit the config.
 
 ## Feature flags
 
