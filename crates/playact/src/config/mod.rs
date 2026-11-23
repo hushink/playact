@@ -746,12 +746,40 @@ mod tests {
     use crate::blackboard::Key;
     use crate::builder::BehaviorTreeBuilder;
     use crate::context::Context;
+    use crate::event::EventKey;
     use crate::node::{BoxedNode, Kind, Node};
     use crate::status::Status;
     use crate::subtree::SubtreeFactory;
     use crate::time::Time;
 
     use super::*;
+
+    #[cfg(feature = "schema")]
+    fn schema_variant<'a>(schema: &'a serde_json::Value, kind: &str) -> &'a serde_json::Value {
+        schema
+            .pointer("/$defs/SpecNode/oneOf")
+            .and_then(serde_json::Value::as_array)
+            .expect("SpecNode oneOf")
+            .iter()
+            .find(|variant| {
+                variant
+                    .pointer("/properties/type/const")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(kind)
+            })
+            .unwrap_or_else(|| panic!("missing schema variant `{kind}`"))
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema_enum(variant: &serde_json::Value, pointer: &str) -> Vec<String> {
+        variant
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("missing enum at `{pointer}`"))
+            .iter()
+            .map(|value| value.as_str().expect("enum string").to_string())
+            .collect()
+    }
 
     fn ok_subtree() -> SubtreeFactory<()> {
         SubtreeFactory::new(|| {
@@ -1964,6 +1992,173 @@ mod tests {
         assert!(text.contains("\"try_action\""));
         assert!(text.contains("\"async_action\""));
         assert!(text.contains("\"services\""));
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn registry_schema_injects_registered_names() {
+        static PHASE: Key<u32> = Key::new("test.config.schema.phase");
+        static HP: Key<u32> = Key::new("test.config.schema.hp");
+        static SHARED: Key<u32> = Key::new("test.config.schema.shared");
+        static SIGNAL: EventKey<u32> = EventKey::new("test.config.schema.signal");
+
+        struct DoneTask;
+
+        impl crate::async_action::AsyncTask for DoneTask {
+            fn poll(&mut self) -> Status {
+                Status::Success
+            }
+
+            fn cancel(&mut self) {}
+        }
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .condition::<()>("always", |_| |_: &Context<'_, ()>| true)
+            .unwrap();
+        registry
+            .predicate::<()>("flag", |_| |_: &Context<'_, ()>| true)
+            .unwrap();
+        registry
+            .score::<()>("value", |_| |_: &Context<'_, ()>| 1.0)
+            .unwrap();
+        registry
+            .try_action::<(), &'static str>("risky", |_| |_: &mut Context<'_, ()>| Err("boom"))
+            .unwrap();
+        registry
+            .async_action::<()>("remote", |_| {
+                |_: &mut Context<'_, ()>| -> Box<dyn crate::async_action::AsyncTask> {
+                    Box::new(DoneTask)
+                }
+            })
+            .unwrap();
+        registry.switch_key(PHASE).unwrap();
+        registry.set_value_key(HP).unwrap();
+        registry.event_key(SIGNAL).unwrap();
+        registry.scoped_key(&SHARED).unwrap();
+        registry.contract_key(&SHARED).unwrap();
+        registry
+            .custom::<()>(
+                "custom.kind",
+                |_params: (), _children: Vec<BoxedNode<()>>| {
+                    Ok(BehaviorTreeBuilder::<()>::new("custom")
+                        .action("ok", |_| Status::Success)
+                        .build()
+                        .expect("custom tree")
+                        .into_root())
+                },
+            )
+            .unwrap();
+        registry.subtree("template", ok_subtree()).unwrap();
+
+        let schema = registry.json_schema();
+
+        assert_eq!(
+            schema_enum(schema_variant(&schema, "action"), "/properties/name/enum"),
+            ["ok"]
+        );
+        assert_eq!(
+            schema_enum(
+                schema_variant(&schema, "condition"),
+                "/properties/name/enum"
+            ),
+            ["always"]
+        );
+        assert_eq!(
+            schema_enum(
+                schema_variant(&schema, "try_action"),
+                "/properties/name/enum"
+            ),
+            ["risky"]
+        );
+        assert_eq!(
+            schema_enum(
+                schema_variant(&schema, "async_action"),
+                "/properties/name/enum"
+            ),
+            ["remote"]
+        );
+        for kind in ["guard", "while", "if_then_else", "wait_until"] {
+            assert_eq!(
+                schema_enum(schema_variant(&schema, kind), "/properties/condition/enum"),
+                ["always", "flag"],
+                "predicate list for `{kind}`"
+            );
+        }
+        assert_eq!(
+            schema_enum(schema_variant(&schema, "switch"), "/properties/key/enum"),
+            ["test.config.schema.phase"]
+        );
+        assert_eq!(
+            schema_enum(schema_variant(&schema, "set_value"), "/properties/key/enum"),
+            ["test.config.schema.hp"]
+        );
+        assert_eq!(
+            schema_enum(
+                schema_variant(&schema, "wait_for_event"),
+                "/properties/event/enum"
+            ),
+            ["test.config.schema.signal"]
+        );
+        for field in ["inputs", "outputs"] {
+            assert_eq!(
+                schema_enum(
+                    schema_variant(&schema, "scoped"),
+                    &format!("/properties/{field}/items/enum")
+                ),
+                ["test.config.schema.shared"],
+                "scoped `{field}`"
+            );
+        }
+        for field in ["required", "provided"] {
+            assert_eq!(
+                schema_enum(
+                    schema_variant(&schema, "contract"),
+                    &format!("/properties/{field}/items/enum")
+                ),
+                ["test.config.schema.shared"],
+                "contract `{field}`"
+            );
+        }
+        assert_eq!(
+            schema_enum(schema_variant(&schema, "custom"), "/properties/kind/enum"),
+            ["custom.kind"]
+        );
+        assert_eq!(
+            schema_enum(
+                schema_variant(&schema, "subtree"),
+                "/properties/template/enum"
+            ),
+            ["template"]
+        );
+        assert_eq!(
+            schema_enum(
+                schema
+                    .pointer("/$defs/UtilityBranchSpec")
+                    .expect("branch def"),
+                "/properties/score/enum"
+            ),
+            ["value"]
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn registry_schema_omits_empty_categories() {
+        let schema = NodeRegistry::<()>::new().json_schema();
+        assert!(
+            schema_variant(&schema, "action")
+                .pointer("/properties/name/enum")
+                .is_none()
+        );
+        assert!(
+            schema_variant(&schema, "subtree")
+                .pointer("/properties/template/enum")
+                .is_none()
+        );
     }
 
     #[test]

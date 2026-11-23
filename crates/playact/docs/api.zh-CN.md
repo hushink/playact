@@ -1016,7 +1016,13 @@ use playact::config::ValidationLimits;
 
 spec.validate(&ValidationLimits::default())?; // depth 64, nodes 10_000
 let schema = TreeSpec::json_schema();         // requires `schema`
+let schema = registry.json_schema();          // 注入该注册表接受的名称
 ```
+
+`NodeRegistry::json_schema()` 以 `TreeSpec::json_schema()` 为基础，把 action、
+condition、predicate、score、key、scoped/contract key、custom 与 subtree template
+字段转换为 `enum` 约束。编辑器因此只补全该注册表真正能构建的名称，配置加载前就能
+发现拼写错误。参数结构仍由应用定义，不包含在 schema 中。
 
 ### 热重载
 

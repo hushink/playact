@@ -252,4 +252,7 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
   `DuplicateNodeId`。
 - `TreeSpec::json_schema()`（`schema` feature）返回 JSON Schema，供编辑器补全与
   外部校验使用。
+- `NodeRegistry::json_schema()`（`schema` feature）在相同 schema 中把已注册的
+  action、condition、predicate、score、key、custom 与 subtree 名称注入为 `enum`，
+  使补全内容与实际可构建内容一致。
 - 可选的热重载与远程配置加载器走同一套 `TreeSpec` 流程，因此校验与路径错误同样适用。

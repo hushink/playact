@@ -506,6 +506,81 @@ impl<W: 'static> NodeRegistry<W> {
         Ok(())
     }
 
+    /// Returns the `TreeSpec` JSON Schema with registered names injected.
+    ///
+    /// Requires the `schema` feature. Action, condition, predicate, score, key,
+    /// custom, and subtree names become `enum` constraints on the matching
+    /// fields, so editors complete the names this registry actually accepts.
+    /// Parameter shapes remain application-specific and are not included.
+    #[cfg(feature = "schema")]
+    #[must_use]
+    pub fn json_schema(&self) -> Value {
+        let mut schema = crate::config::TreeSpec::json_schema();
+        let actions = sorted_names(&self.actions);
+        let conditions = sorted_names(&self.conditions);
+        let mut predicates: Vec<String> = self
+            .conditions
+            .keys()
+            .chain(self.predicates.keys())
+            .cloned()
+            .collect();
+        predicates.sort();
+        predicates.dedup();
+        let scores = sorted_names(&self.scores);
+        let switch_keys = sorted_names(&self.switch_keys);
+        let set_value_keys = sorted_names(&self.set_value_keys);
+        let event_keys = sorted_names(&self.event_keys);
+        let scoped_keys = sorted_names(&self.scoped_keys);
+        let contract_keys = sorted_names(&self.contract_keys);
+        let custom = sorted_names(&self.custom);
+        let subtrees = sorted_names(&self.subtrees);
+
+        if let Some(variant) = variant_mut(&mut schema, "action") {
+            set_string_enum(variant, "name", &actions);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "try_action") {
+            set_string_enum(variant, "name", &sorted_names(&self.try_actions));
+        }
+        if let Some(variant) = variant_mut(&mut schema, "async_action") {
+            set_string_enum(variant, "name", &sorted_names(&self.async_actions));
+        }
+        if let Some(variant) = variant_mut(&mut schema, "condition") {
+            set_string_enum(variant, "name", &conditions);
+        }
+        for kind in ["guard", "while", "if_then_else", "wait_until"] {
+            if let Some(variant) = variant_mut(&mut schema, kind) {
+                set_string_enum(variant, "condition", &predicates);
+            }
+        }
+        if let Some(variant) = variant_mut(&mut schema, "switch") {
+            set_string_enum(variant, "key", &switch_keys);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "set_value") {
+            set_string_enum(variant, "key", &set_value_keys);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "wait_for_event") {
+            set_string_enum(variant, "event", &event_keys);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "scoped") {
+            set_array_item_enum(variant, "inputs", &scoped_keys);
+            set_array_item_enum(variant, "outputs", &scoped_keys);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "contract") {
+            set_array_item_enum(variant, "required", &contract_keys);
+            set_array_item_enum(variant, "provided", &contract_keys);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "subtree") {
+            set_string_enum(variant, "template", &subtrees);
+        }
+        if let Some(variant) = variant_mut(&mut schema, "custom") {
+            set_string_enum(variant, "kind", &custom);
+        }
+        if let Some(branch) = schema.pointer_mut("/$defs/UtilityBranchSpec/properties/score") {
+            set_enum(branch, &scores);
+        }
+        schema
+    }
+
     /// Registers a parameterized code-built subtree template.
     ///
     /// The configured `params` value is deserialized into `P` once per
@@ -758,4 +833,52 @@ fn ensure_name_available<V>(
         });
     }
     Ok(())
+}
+
+#[cfg(feature = "schema")]
+fn sorted_names<V>(map: &HashMap<String, V>) -> Vec<String> {
+    let mut names: Vec<String> = map.keys().cloned().collect();
+    names.sort();
+    names
+}
+
+#[cfg(feature = "schema")]
+fn variant_mut<'a>(schema: &'a mut Value, kind: &str) -> Option<&'a mut Value> {
+    schema
+        .pointer_mut("/$defs/SpecNode/oneOf")?
+        .as_array_mut()?
+        .iter_mut()
+        .find(|variant| {
+            variant
+                .pointer("/properties/type/const")
+                .and_then(Value::as_str)
+                == Some(kind)
+        })
+}
+
+#[cfg(feature = "schema")]
+fn set_string_enum(variant: &mut Value, field: &str, names: &[String]) {
+    if let Some(property) = variant.pointer_mut(&format!("/properties/{field}")) {
+        set_enum(property, names);
+    }
+}
+
+#[cfg(feature = "schema")]
+fn set_array_item_enum(variant: &mut Value, field: &str, names: &[String]) {
+    if let Some(items) = variant.pointer_mut(&format!("/properties/{field}/items")) {
+        set_enum(items, names);
+    }
+}
+
+#[cfg(feature = "schema")]
+fn set_enum(value: &mut Value, names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            String::from("enum"),
+            Value::Array(names.iter().cloned().map(Value::String).collect()),
+        );
+    }
 }

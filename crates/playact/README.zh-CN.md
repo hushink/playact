@@ -698,6 +698,8 @@ let mut tree = spec.build(&registry)?;
 - `TreeSpec::validate(&ValidationLimits)` 可在构建前校验版本、最大深度与节点数，
   适合远程配置或用户提交的配置。
 - 可选 `schema` feature 提供 `TreeSpec::json_schema()`，用于编辑器补全与外部校验。
+  `NodeRegistry::json_schema()` 还会把已注册的 action、condition、predicate、score、
+  key、custom 与 subtree 名称注入为 `enum` 约束，使补全内容与实际可构建内容一致。
 - 用 `identified` 包装配置节点可指定稳定 `NodeId`：
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
@@ -929,7 +931,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
-| `schema` | `TreeSpec::json_schema()` JSON Schema 生成（依赖 `config`） |
+| `schema` | `TreeSpec::json_schema()` 与 `NodeRegistry::json_schema()` JSON Schema 生成（依赖 `config`） |
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |

@@ -260,5 +260,8 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
   `UnknownSubtreeTemplate`, `InvalidParams`, or `DuplicateNodeId`.
 - `TreeSpec::json_schema()` (feature `schema`) returns a JSON Schema for editor
   completion and external validation.
+- `NodeRegistry::json_schema()` (feature `schema`) returns the same schema with
+  the registered action, condition, predicate, score, key, custom, and subtree
+  names injected as `enum` values, so completion matches what actually builds.
 - The optional hot-reload and remote-config loaders rebuild through the same
   `TreeSpec` pipeline, so validation and path errors apply there too.

@@ -1053,7 +1053,15 @@ use playact::config::ValidationLimits;
 
 spec.validate(&ValidationLimits::default())?; // depth 64, nodes 10_000
 let schema = TreeSpec::json_schema();         // requires `schema`
+let schema = registry.json_schema();          // adds the names this registry accepts
 ```
+
+`NodeRegistry::json_schema()` starts from `TreeSpec::json_schema()` and turns the
+action, condition, predicate, score, key, scoped/contract key, custom, and
+subtree-template fields into `enum` constraints. Editors then complete only the
+names that this registry can actually build, which catches typos before the
+configuration is loaded. Parameter shapes stay application-defined and are not
+included.
 
 ### Hot reload
 

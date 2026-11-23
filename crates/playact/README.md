@@ -730,7 +730,9 @@ are rebuilt with the tree on hot reload and remote refresh, and
 - `TreeSpec::validate(&ValidationLimits)` checks version, maximum depth, and node count
   before building. This is useful for remote or user-supplied configuration.
 - The optional `schema` feature exposes `TreeSpec::json_schema()` for editor completion
-  and external validation.
+  and external validation. `NodeRegistry::json_schema()` additionally injects the
+  registered action, condition, predicate, score, key, custom, and subtree names as
+  `enum` constraints, so completion matches what the application can build.
 - Wrap a configuration node in `identified` to assign a stable `NodeId`:
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
@@ -975,7 +977,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
-| `schema` | `TreeSpec::json_schema()` JSON Schema generation (requires `config`) |
+| `schema` | `TreeSpec::json_schema()` and `NodeRegistry::json_schema()` JSON Schema generation (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |

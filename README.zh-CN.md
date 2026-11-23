@@ -102,7 +102,7 @@ fn main() -> Result<(), BuildError> {
 | 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe`、结构化 `TreeDiff`、HTML inspector |
 | 持久化 | 带版本的结构快照与按 `NodeId` 的快照，以及可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
-| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、JSON Schema、校验、热重载、远程加载 |
+| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、注册表感知 JSON Schema、校验、热重载、远程加载 |
 | 异步 | 运行时无关 `AsyncTask`、`ThreadTask`、可选 `TokioTask` |
 | 可移植性 | `no_std + alloc` 核心；可选集成按 feature 门控 |
 | 开发体验 | `bt!` DSL、`BtNode` derive、两个完整战斗 AI 示例、基准与确定性压力测试 |
@@ -146,7 +146,7 @@ cargo run -p playact --example save_game --features blackboard-serde,snapshot-se
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
-| `schema` | `TreeSpec` 的 JSON Schema 生成（依赖 `config`） |
+| `schema` | `TreeSpec` 与已填充 `NodeRegistry` 的 JSON Schema 生成（依赖 `config`） |
 | `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | 结构化 trace 录制与 replay 对比（依赖 `std`） |
