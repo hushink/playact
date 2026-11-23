@@ -711,15 +711,16 @@ mod tests {
             Err(NodeIdSnapshotError::UnknownId(id)) if id == "a"
         ));
 
-        let duplicate = BehaviorTreeBuilder::<()>::new("duplicate")
-            .selector(|b| {
-                b.wait(Duration::from_millis(1))
-                    .id("same")
-                    .wait(Duration::from_millis(1))
-                    .id("same")
-            })
-            .build()
-            .expect("tree");
+        let duplicate = crate::BehaviorTree::new(Box::new(crate::composite::Selector::new(vec![
+            Box::new(crate::node::IdentifiedNode::new(
+                "same",
+                Box::new(Wait::<()>::new(Duration::from_millis(1))),
+            )),
+            Box::new(crate::node::IdentifiedNode::new(
+                "same",
+                Box::new(Wait::<()>::new(Duration::from_millis(1))),
+            )),
+        ])));
         assert!(matches!(
             duplicate.snapshot_by_id(),
             Err(NodeIdSnapshotError::DuplicateId(id)) if id == "same"

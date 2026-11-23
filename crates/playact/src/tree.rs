@@ -888,15 +888,16 @@ mod tests {
 
     #[test]
     fn duplicate_node_id_detects_root_and_service_duplicates() {
-        let duplicate = BehaviorTreeBuilder::<()>::new("duplicate")
-            .selector(|b| {
-                b.action("first", |_| Status::Success)
-                    .id("same")
-                    .action("second", |_| Status::Success)
-                    .id("same")
-            })
-            .build()
-            .expect("tree");
+        let duplicate = BehaviorTree::new(Box::new(crate::composite::Selector::new(vec![
+            Box::new(crate::node::IdentifiedNode::new(
+                "same",
+                Box::new(Action::<()>::new("first", |_| Status::Success)),
+            )),
+            Box::new(crate::node::IdentifiedNode::new(
+                "same",
+                Box::new(Action::<()>::new("second", |_| Status::Success)),
+            )),
+        ])));
         assert_eq!(duplicate.duplicate_node_id(), Some(NodeId::new("same")));
 
         let mut with_service = BehaviorTreeBuilder::<()>::new("root")

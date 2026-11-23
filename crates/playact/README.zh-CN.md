@@ -161,7 +161,8 @@ let commands: Vec<_> = tree
 
 - 根节点必须恰好一个子节点；
 - 装饰器闭包必须恰好一个子节点；
-- 组合节点允许为空（空 `Sequence`/`Parallel` 成功，空 `Selector` 失败）。
+- 组合节点允许为空（空 `Sequence`/`Parallel` 成功，空 `Selector` 失败）；
+- `build()` 会拒绝根子树中重复的稳定 `NodeId`。
 
 不需要 `.end()`，也不会因为闭合顺序错误在运行时 panic。
 
@@ -497,9 +498,8 @@ rebuilt.restore_by_id(&snapshot)?;
 ID 快照不会遍历 `SubtreeSlot` 的动态子节点或嵌套树的 services。
 
 如果新树可能改名或删除 ID，使用 `restore_by_id_matching`：它只应用仍存在 ID 的
-条目，忽略其余条目，并返回恢复的节点数量。builder 构建的树可用
-`BehaviorTree::duplicate_node_id()` 在快照前检查重复 ID；`TreeSpec` 构建会自动
-拒绝重复 ID。
+条目，忽略其余条目，并返回恢复的节点数量。builder 与 `TreeSpec` 构建都会自动拒绝重复 ID；通过 `BehaviorTree::new` 手工组装的
+树可用 `BehaviorTree::duplicate_node_id()` 检查。
 
 > 节点快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot`
 > 动态子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，

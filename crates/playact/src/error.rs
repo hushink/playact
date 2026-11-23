@@ -3,12 +3,15 @@
 use core::fmt;
 use core::num::NonZeroUsize;
 
+use crate::node::NodeId;
+
 /// Configuration errors found while building a behavior tree.
 ///
 /// The typestate builder already uses the type system to rule out problems such
 /// as an empty root or a decorator with the wrong number of children; this
 /// covers only semantic errors that still need runtime validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BuildError {
     /// The `Parallel` success threshold exceeds the child count and can never
     /// be met.
@@ -25,6 +28,11 @@ pub enum BuildError {
         at_least: NonZeroUsize,
         /// The actual child count.
         children: usize,
+    },
+    /// The same stable `NodeId` appears more than once in the root subtree.
+    DuplicateNodeId {
+        /// Duplicate identity.
+        id: NodeId,
     },
     /// Internal build state is inconsistent. Should not occur in normal use.
     InvalidTree {
@@ -44,6 +52,7 @@ impl fmt::Display for BuildError {
                 f,
                 "parallel failure threshold AtLeast({at_least}) exceeds child count {children}"
             ),
+            Self::DuplicateNodeId { id } => write!(f, "duplicate node id `{id}`"),
             Self::InvalidTree { message } => f.write_str(message),
         }
     }

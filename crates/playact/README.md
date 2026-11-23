@@ -166,7 +166,8 @@ The engine never interprets `BattleCommand`.
 
 - the root must produce exactly one child;
 - a decorator closure must produce exactly one child;
-- composites may be empty (empty `Sequence`/`Parallel` succeed, empty `Selector` fails).
+- composites may be empty (empty `Sequence`/`Parallel` succeed, empty `Selector` fails);
+- `build()` rejects duplicate stable `NodeId` values in the root subtree.
 
 There is no `.end()` and no runtime panic from mismatched closing order.
 
@@ -516,8 +517,8 @@ children and nested-tree services are not traversed by ID snapshots.
 
 If the new tree may rename or remove IDs, use `restore_by_id_matching`: it applies
 entries whose IDs exist, ignores the rest, and returns the number of nodes restored.
-Use `BehaviorTree::duplicate_node_id()` to check builder-created trees before
-snapshotting; `TreeSpec` builds reject duplicate IDs automatically.
+Builder and `TreeSpec` builds reject duplicate IDs automatically. Manually assembled
+trees via `BehaviorTree::new` can be checked with `BehaviorTree::duplicate_node_id()`.
 
 > Node snapshots do not include the world, blackboard values, closure captures,
 > `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those

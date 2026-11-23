@@ -680,6 +680,8 @@ where
 
 impl<W: 'static> BehaviorTreeBuilder<W, One> {
     /// Builds the behavior tree.
+    ///
+    /// Duplicate stable [`NodeId`] values in the root subtree are rejected.
     pub fn build(mut self) -> Result<BehaviorTree<W>, BuildError> {
         if let Some(error) = self.frame.error {
             return Err(error);
@@ -704,8 +706,13 @@ impl<W: 'static> BehaviorTreeBuilder<W, One> {
             .tree_name
             .take()
             .unwrap_or_else(|| String::from("BehaviorTree"));
+        let tree = BehaviorTree::new(root).with_name(name);
 
-        Ok(BehaviorTree::new(root).with_name(name))
+        if let Some(id) = tree.duplicate_node_id() {
+            return Err(BuildError::DuplicateNodeId { id });
+        }
+
+        Ok(tree)
     }
 }
 
@@ -756,6 +763,25 @@ mod tests {
         assert_eq!(tree.blackboard().get(&SCOPE_INPUT), Some(&4));
         assert_eq!(tree.blackboard().get(&SCOPE_OUTPUT), Some(&8));
         assert_eq!(tree.blackboard().get(&SCOPE_PRIVATE), None);
+    }
+
+    #[test]
+    fn duplicate_ids_are_rejected() {
+        let error = BehaviorTreeBuilder::<()>::new("duplicate")
+            .selector(|b| {
+                b.action("first", |_| Status::Success)
+                    .id("same")
+                    .action("second", |_| Status::Success)
+                    .id("same")
+            })
+            .build()
+            .err()
+            .expect("duplicate ids");
+
+        assert!(matches!(
+            error,
+            BuildError::DuplicateNodeId { id } if id == NodeId::new("same")
+        ));
     }
 
     #[test]
