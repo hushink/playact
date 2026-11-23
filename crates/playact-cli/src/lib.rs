@@ -13,6 +13,8 @@
 //! - `graph`: render node structure and include relationships as Mermaid or DOT;
 //! - `fmt`: validate and rewrite configurations in canonical form, optionally
 //!   across the entire include graph;
+//! - `check`: validate configurations and verify canonical formatting without
+//!   writing;
 //! - `diff`: compare node structure, parameters, and include file sets.
 //!
 //! Registry-aware schemas produced by `NodeRegistry::json_schema()` can be
@@ -27,7 +29,7 @@ mod format;
 mod graph;
 mod lint;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
@@ -38,6 +40,7 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use playact::config::TreeSpec;
+use serde::Serialize;
 use serde_json::Value;
 
 pub use lint::{LintIssue, LintReport};
@@ -54,6 +57,7 @@ Commands:
   bundle   Copy a configuration and its includes into one directory
   graph    Render node structure and includes as Mermaid or DOT
   fmt      Validate and rewrite configurations (and includes) in canonical form
+  check    Validate configurations and verify canonical formatting
   diff     Compare two configurations and their include file sets
 
 Run `playact <COMMAND> --help` for command options.";
@@ -107,6 +111,13 @@ Validates configurations and rewrites each input in canonical form. --recursive
 also formats every included file. All targets are validated and formatted in
 memory before writing; a write failure restores files already written. --check
 reports files that would change without writing them and exits nonzero.";
+const CHECK_USAGE: &str = "\
+usage: playact check [--schema PATH] [--include-base PATH] [--json] CONFIG...
+
+Validates each configuration and its include graph, then checks canonical
+formatting for every lint-valid file. Writes nothing and exits nonzero when any
+file is invalid, cannot be formatted, or would be reformatted. --json prints a
+machine-readable report.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -141,6 +152,7 @@ pub fn main_entry() -> ExitCode {
         Some("bundle") => run_bundle(arguments),
         Some("graph") => run_graph(arguments),
         Some("fmt") => run_fmt(arguments),
+        Some("check") => run_check(arguments),
         Some("diff") => run_diff(arguments),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
@@ -666,6 +678,155 @@ fn apply_formats(pending: &[PendingFormat]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct CheckReport {
+    valid: bool,
+    roots: Vec<LintReport>,
+    formatting: Vec<FormatFinding>,
+}
+
+#[derive(Debug, Serialize)]
+struct FormatFinding {
+    file: String,
+    would_reformat: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+fn run_check(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
+    let mut schema_path = None;
+    let mut include_base = None;
+    let mut json_output = false;
+    let mut options_done = false;
+    let mut files = Vec::new();
+    let mut arguments = arguments.into_iter();
+
+    while let Some(argument) = arguments.next() {
+        if !options_done {
+            match argument.to_str() {
+                Some("-h" | "--help") => {
+                    println!("{CHECK_USAGE}");
+                    return Ok(Outcome::Success);
+                }
+                Some("--json") => {
+                    json_output = true;
+                    continue;
+                }
+                Some("-s" | "--schema") => {
+                    schema_path = Some(next_path(&mut arguments, "--schema")?);
+                    continue;
+                }
+                Some("-b" | "--include-base") => {
+                    include_base = Some(next_path(&mut arguments, "--include-base")?);
+                    continue;
+                }
+                Some("--") => {
+                    options_done = true;
+                    continue;
+                }
+                Some(option) if option.starts_with('-') => {
+                    return Err(format!("unknown option `{option}`").into());
+                }
+                _ => {}
+            }
+        }
+        files.push(PathBuf::from(argument));
+    }
+    if files.is_empty() {
+        return Err(String::from("check requires at least one configuration path").into());
+    }
+
+    let schema = load_schema(schema_path.as_deref())?;
+    jsonschema::validator_for(&schema).map_err(|error| format!("invalid schema: {error}"))?;
+    let reports = lint::lint_files(&schema, &files, include_base.as_deref());
+
+    let mut targets: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+    let mut invalid_files = HashSet::new();
+    for (path, report) in files.iter().zip(&reports) {
+        add_target(&mut targets, path);
+        for issue in &report.issues {
+            match &issue.file {
+                Some(file) => {
+                    invalid_files.insert(file.clone());
+                    invalid_files.insert(lint::display_path(Path::new(file)));
+                }
+                None => {
+                    invalid_files.insert(lint::display_path(Path::new(&report.file)));
+                }
+            }
+        }
+        for included in &report.included {
+            add_target(&mut targets, included);
+        }
+    }
+
+    let mut formatting = Vec::new();
+    for path in targets.values() {
+        let display = lint::display_path(path);
+        if invalid_files.contains(&display) {
+            continue;
+        }
+        match pending_format(path) {
+            Ok(None) => {}
+            Ok(Some(_)) => formatting.push(FormatFinding {
+                file: display,
+                would_reformat: true,
+                error: None,
+            }),
+            Err(error) => formatting.push(FormatFinding {
+                file: display,
+                would_reformat: false,
+                error: Some(error),
+            }),
+        }
+    }
+
+    let valid = reports.iter().all(|report| report.valid) && formatting.is_empty();
+    let report = CheckReport {
+        valid,
+        roots: reports,
+        formatting,
+    };
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_check_human(&report.roots, &report.formatting);
+    }
+
+    Ok(if valid {
+        Outcome::Success
+    } else {
+        Outcome::Invalid
+    })
+}
+
+fn print_check_human(reports: &[LintReport], formatting: &[FormatFinding]) {
+    for report in reports.iter().filter(|report| !report.valid) {
+        print_report_issues(report);
+    }
+    print_invalid_summary(reports);
+    print_format_findings(formatting);
+    if reports.iter().all(|report| report.valid) && formatting.is_empty() {
+        println!("{} configuration(s) valid and formatted", reports.len());
+    }
+}
+
+fn print_format_findings(findings: &[FormatFinding]) {
+    let mut would_reformat = 0;
+    for finding in findings {
+        match &finding.error {
+            Some(error) => eprintln!("playact: {}: {error}", finding.file),
+            None => {
+                would_reformat += 1;
+                eprintln!("would reformat {}", finding.file);
+            }
+        }
+    }
+    if would_reformat > 0 {
+        eprintln!("{would_reformat} file(s) would be reformatted");
+    }
+}
+
 fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut schema_path = None;
     let mut include_base = None;
@@ -732,29 +893,37 @@ fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
 }
 
 fn print_human_reports(reports: &[LintReport]) {
-    let invalid = reports.iter().filter(|report| !report.valid).count();
     for report in reports {
         if report.valid {
             println!("{}: valid", report.file);
         } else {
-            eprintln!("{}:", report.file);
-            for issue in &report.issues {
-                if let Some(file) = &issue.file {
-                    eprintln!(
-                        "  {} error in `{file}` at `{}`: {}",
-                        issue.source, issue.path, issue.message
-                    );
-                } else {
-                    eprintln!(
-                        "  {} error at `{}`: {}",
-                        issue.source, issue.path, issue.message
-                    );
-                }
-            }
+            print_report_issues(report);
         }
     }
+    print_invalid_summary(reports);
+}
+
+fn print_report_issues(report: &LintReport) {
+    eprintln!("{}:", report.file);
+    for issue in &report.issues {
+        if let Some(file) = &issue.file {
+            eprintln!(
+                "  {} error in `{file}` at `{}`: {}",
+                issue.source, issue.path, issue.message
+            );
+        } else {
+            eprintln!(
+                "  {} error at `{}`: {}",
+                issue.source, issue.path, issue.message
+            );
+        }
+    }
+}
+
+fn print_invalid_summary(reports: &[LintReport]) {
+    let invalid = reports.iter().filter(|report| !report.valid).count();
     if invalid > 0 && reports.len() > 1 {
-        eprintln!("{} of {} configuration(s) invalid", invalid, reports.len());
+        eprintln!("{invalid} of {} configuration(s) invalid", reports.len());
     }
 }
 

@@ -992,6 +992,214 @@ fn fmt_supports_toml_and_ron() {
 }
 
 #[test]
+fn check_accepts_valid_formatted_configurations() {
+    let config = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let formatted = run(&["fmt", config.as_str()]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    let original = fs::read_to_string(&config.path).expect("formatted config");
+
+    let checked = run(&["check", config.as_str()]);
+    assert!(checked.status.success(), "{checked:?}");
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    assert!(stdout.contains("valid and formatted"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&config.path).expect("unchanged"),
+        original
+    );
+}
+
+#[test]
+fn check_reports_unformatted_configurations_without_writing() {
+    let config = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let original = fs::read_to_string(&config.path).expect("original");
+
+    let checked = run(&["check", config.as_str()]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("would reformat"), "{stderr}");
+    assert!(
+        stderr.contains("1 file(s) would be reformatted"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&config.path).expect("unchanged"),
+        original
+    );
+}
+
+#[test]
+fn check_reports_lint_errors_without_formatting_invalid_files() {
+    let config = TempFile::new("json", r#"{"root":{"type":"no_such_node"}}"#);
+    let original = fs::read_to_string(&config.path).expect("original");
+
+    let checked = run(&["check", config.as_str()]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("no_such_node"), "{stderr}");
+    assert!(!stderr.contains("would reformat"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&config.path).expect("unchanged"),
+        original
+    );
+}
+
+#[test]
+fn check_still_reports_root_formatting_when_an_include_is_invalid() {
+    let directory = TempDir::new();
+    directory.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"bad.json"}}"#,
+    );
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_bad = fs::read_to_string(directory.path.join("bad.json")).expect("original bad");
+
+    let checked = run(&["check", root.to_str().expect("root path")]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("no_such_node"), "{stderr}");
+    assert!(stderr.contains("would reformat"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&root).expect("unchanged root"),
+        original_root
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path.join("bad.json")).expect("unchanged bad"),
+        original_bad
+    );
+}
+
+#[test]
+fn check_checks_formatting_of_included_files() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"child.json"}}"#,
+    );
+    let child = directory.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let formatted = run(&["fmt", root.to_str().expect("root path")]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    let original_child = fs::read_to_string(&child).expect("original child");
+
+    let checked = run(&["check", root.to_str().expect("root path")]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("would reformat"), "{stderr}");
+    assert!(stderr.contains("child.json"), "{stderr}");
+    assert!(
+        stderr.contains("1 file(s) would be reformatted"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&child).expect("unchanged child"),
+        original_child
+    );
+}
+
+#[test]
+fn check_json_reports_lint_and_formatting_status() {
+    let invalid = TempFile::new("json", r#"{"root":{"type":"no_such_node"}}"#);
+    let unformatted = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let original = fs::read_to_string(&unformatted.path).expect("original");
+
+    let checked = run(&["check", "--json", invalid.as_str(), unformatted.as_str()]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let report: Value = serde_json::from_slice(&checked.stdout).expect("valid JSON report");
+    assert_eq!(report["valid"], false);
+    assert_eq!(report["roots"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["roots"][0]["valid"], false);
+    assert_eq!(report["roots"][1]["valid"], true);
+    assert!(
+        report["formatting"]
+            .as_array()
+            .expect("formatting findings")
+            .iter()
+            .any(|finding| finding["would_reformat"] == true)
+    );
+    assert_eq!(
+        fs::read_to_string(&unformatted.path).expect("unchanged"),
+        original
+    );
+}
+
+#[test]
+fn check_deduplicates_shared_included_files() {
+    let directory = TempDir::new();
+    let child = directory.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let first = directory.write(
+        "first.json",
+        r#"{"version":1,"root":{"type":"include","path":"child.json"}}"#,
+    );
+    let second = directory.write(
+        "second.json",
+        r#"{"version":1,"root":{"type":"include","path":"child.json"}}"#,
+    );
+    for root in [&first, &second] {
+        let formatted = run(&["fmt", root.to_str().expect("root path")]);
+        assert!(formatted.status.success(), "{formatted:?}");
+    }
+    let original_child = fs::read_to_string(&child).expect("original child");
+
+    let checked = run(&[
+        "check",
+        first.to_str().expect("first path"),
+        second.to_str().expect("second path"),
+    ]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert_eq!(stderr.matches("would reformat").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains("1 file(s) would be reformatted"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&child).expect("unchanged child"),
+        original_child
+    );
+}
+
+#[test]
+fn check_reports_includes_that_cannot_be_formatted() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"child.txt"}}"#,
+    );
+    let child = directory.write(
+        "child.txt",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let formatted = run(&["fmt", root.to_str().expect("root path")]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    let original_child = fs::read_to_string(&child).expect("original child");
+
+    let checked = run(&["check", root.to_str().expect("root path")]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("unsupported extension"), "{stderr}");
+    assert!(stderr.contains("child.txt"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&child).expect("unchanged child"),
+        original_child
+    );
+}
+
+#[test]
 fn diff_reports_no_changes_for_identical_configs() {
     let config = TempFile::new(
         "json",

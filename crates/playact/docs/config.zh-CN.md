@@ -365,8 +365,7 @@ schema 校验会逐节点深入，错误会指向具体字段；构建错误会�
 
 ### CLI
 
-工作区 `playact-cli` crate 提供 `playact` 二进制，包含 `schema`、`catalog` 与
-`lint` 命令：
+工作区 `playact-cli` crate 提供 `playact` 二进制，用于配置工具链：
 
 ```text
 cargo run -p playact-cli -- schema > schema.json
@@ -381,17 +380,20 @@ cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
 cargo run -p playact-cli -- fmt --check --schema schema.json config/*.toml
 cargo run -p playact-cli -- fmt --recursive --schema schema.json config/root.json
 cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/root.json
+cargo run -p playact-cli -- check --schema schema.json config/root.json
+cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
-`schema` 输出基础 `TreeSpec` schema。`catalog`、`lint` 与 `convert` 接受
-`NodeRegistry::json_schema()` 生成的注册表感知 schema；通过 `--schema` 传入即可包含
-注册名称、描述与参数 schema；未传入时使用基础 schema。`lint` 会解析并校验限制，但
-没有应用注册表，因此不会构建树；需要应用内构建预检时使用 `config_lint` 示例。
+`schema` 输出基础 `TreeSpec` schema。`catalog`、`lint`、`convert`、`bundle`、
+`fmt`、`check` 与 `diff` 接受 `NodeRegistry::json_schema()` 生成的注册表感知
+schema；通过 `--schema` 传入即可包含注册名称、描述与参数 schema；未传入时使用基础
+schema。`lint` 会解析并校验限制，但没有应用注册表，因此不会构建树；需要应用内构建
+预检时使用 `config_lint` 示例。
 `include` 节点会递归解析；路径限制在 `--include-base` 内，未指定时使用每个根文件的
 父目录。include 格式按扩展名选择，无法识别时回退到包含它的文件格式。被包含文件的
-错误在 JSON 报告中带有 `file` 字段。`--watch` 在根配置、被包含
-文件或 schema 变化时重新 lint。`convert` 在写入 JSON/TOML/YAML/RON 前先校验输入及
+错误在 JSON 报告中带有 `file` 字段。`--watch` 在根配置、被包含文件或 schema 变化时
+重新 lint。`convert` 在写入 JSON/TOML/YAML/RON 前先校验输入及
 其 include。TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。
 不使用 `--recursive` 时 include 路径会被保留而不会复制文件，转换后应保持在相同
 include 基准目录内或自行调整。`convert --recursive --format FORMAT` 可写入新的或空的
@@ -403,10 +405,12 @@ include 基准目录内或自行调整。`convert --recursive --format FORMAT` �
 （默认）或 DOT；缺失或无效的 include 会显示为错误节点。`fmt` 校验输入后按规范格式
 重写；被包含文件只做校验，除非显式传入或使用 `--recursive` 格式化整个 include 图。
 所有目标都会先在内存中完成校验与格式化，再开始写入；写入失败时会恢复已写入的文件。
-`--check` 不写文件，存在需要格式化的文件时非零退出。RON 格式化使用解析后的 spec
-序列化，因为 RON 的通用 map 语法无法反序列化为
-`TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
-参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与重排会报告为
-moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，其变化带有
-`file` 字段。存在差异时非零退出并支持 `--json`；include 文件集合使用
+`--check` 不写文件，存在需要格式化的文件时非零退出。`check` 把 include 感知的校验
+与只读格式检查结合：所有通过 lint 的根文件和被包含文件必须已经是规范格式。存在 lint
+错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint 报告
+与逐文件格式状态。RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法
+反序列化为 `TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径
+报告节点、参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
+重排会报告为 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，
+其变化带有 `file` 字段。存在差异时非零退出并支持 `--json`；include 文件集合使用
 `--include-base`，未指定时使用各自输入文件的父目录。

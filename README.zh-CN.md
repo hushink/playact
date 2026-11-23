@@ -148,8 +148,7 @@ cargo run -p playact --example config_lint --features config,schema,toml,yaml,ro
 
 ## CLI
 
-工作区包含 `playact-cli`（二进制 `playact`，不发布），提供 schema、catalog 与 lint
-工具：
+工作区包含 `playact-cli`（二进制 `playact`，不发布），提供配置工具：
 
 ```text
 cargo run -p playact-cli -- schema > schema.json
@@ -165,15 +164,17 @@ cargo run -p playact-cli -- fmt config/*.toml
 cargo run -p playact-cli -- fmt --check config/*.toml
 cargo run -p playact-cli -- fmt --recursive config/root.json
 cargo run -p playact-cli -- fmt --check --recursive config/root.json
+cargo run -p playact-cli -- check --schema schema.json config/root.json
+cargo run -p playact-cli -- check --json config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
 
 `schema` 输出基础 `TreeSpec` schema。把 `NodeRegistry::json_schema()` 生成的
-注册表感知 schema 通过 `--schema` 传给 `catalog`/`lint`/`convert`，即可包含注册
-名称、描述与参数 schema。`lint` 支持 JSON/TOML/YAML/RON，递归解析并校验
-`include`（基准目录默认为根文件父目录，也可用 `--include-base` 指定），支持多文件与
-watch，任一文件无效时非零退出。`convert` 在写入目标格式前先校验输入及其 include；
+注册表感知 schema 通过 `--schema` 传入，即可包含注册名称、描述与参数 schema；
+`catalog`、`lint`、`convert`、`bundle`、`fmt`、`check` 与 `diff` 均支持该选项。
+`lint` 支持 JSON/TOML/YAML/RON，递归解析并校验 `include`（基准目录默认为根文件
+父目录，也可用 `--include-base` 指定），支持多文件与 watch，任一文件无效时非零退出。`convert` 在写入目标格式前先校验输入及其 include；
 TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。不使用
 `--recursive` 时 include 路径会被保留而不会复制文件，转换后应保持在相同 include
 基准目录内或自行调整路径。`bundle` 在验证根配置及 include 图后，把根文件与所有被
@@ -185,11 +186,13 @@ TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可�
 （默认）或 DOT；缺失或无效的 include 会显示为错误节点。`fmt` 校验输入后按规范格式
 重写；被包含文件只做校验，除非显式传入或使用 `--recursive` 格式化整个 include 图。
 所有目标都会先在内存中完成校验与格式化，再开始写入；写入失败时会恢复已写入的文件。
-`fmt --check` 不写文件，存在需要格式化的文件时非零退出。`diff` 先校验两个配置，再按
-路径报告节点、参数与 include 文件集合
-变化；子节点按 type 与 name/kind/key 匹配，插入与重排会报告为 moved，而不是后续索引
-全部变化。相对路径相同的 include 文件会递归比较，其变化带有 `file` 字段。存在差异时
-非零退出，并支持 `--json` 供审阅工具使用。
+`fmt --check` 不写文件，存在需要格式化的文件时非零退出。`check` 把 include 感知的
+校验与只读格式检查结合：所有通过 lint 的根文件和被包含文件必须已经是规范格式。存在
+lint 错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint
+报告与逐文件格式状态。`diff` 先校验两个配置，再按路径报告节点、参数与 include 文件
+集合变化；子节点按 type 与 name/kind/key 匹配，插入与重排会报告为 moved，而不是后续
+索引全部变化。相对路径相同的 include 文件会递归比较，其变化带有 `file` 字段。存在
+差异时非零退出，并支持 `--json` 供审阅工具使用。
 
 ## Feature 矩阵
 
