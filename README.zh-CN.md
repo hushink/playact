@@ -126,7 +126,8 @@ cargo run -p playact --example reload_audit --features hot-reload,inspector,diff
 - `battle_ai_config`：同一套思路的 JSON 配置驱动版本，展示 typed 参数与 custom
   节点工厂。
 - `battle_ai_showcase`：完全配置驱动的 AI，覆盖 services、`utility_selector`、
-  `guard`、`try_action`、事件、状态保持热重载与结构化重载差异。
+  `guard`、`try_action`、事件、配置级 `scoped`/`contract` 边界、状态保持热重载与
+  结构化重载差异。
 - `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
   与 `/tree` 端点的演示树。
 - `reload_audit`：嵌套 include 热重载、状态保持、revision 与时间戳历史、

@@ -13,6 +13,8 @@
 //! - `guard` with a registered predicate;
 //! - `try_action` errors reported through `StatsTracer`;
 //! - `wait_for_event` consuming service-published events;
+//! - a `scoped` service wrapping a `contract` subtree, showing input/output keys
+//!   and private state isolation;
 //! - state-preserving hot reload with stable `NodeId`s;
 //! - a structural `TreeDiff` after the reload.
 
@@ -42,6 +44,8 @@ impl World {
 
 static TARGET_VISIBLE: Key<bool> = Key::new("showcase.target_visible");
 static SCAN_PULSE: EventKey<u32> = EventKey::new("showcase.scan_pulse");
+static PATROL_PLAN: Key<u32> = Key::new("showcase.patrol_plan");
+static PATROL_DEBUG: Key<u32> = Key::new("showcase.patrol_debug");
 
 #[derive(Deserialize)]
 struct HpBelow {
@@ -115,6 +119,34 @@ fn build_registry() -> NodeRegistry<World> {
     registry
         .event_key(SCAN_PULSE)
         .expect("register scan_pulse event");
+    registry
+        .action::<()>("plan_patrol", |_| {
+            move |ctx: &mut Context<'_, World>| {
+                let visible = ctx
+                    .blackboard_ref()
+                    .get(&TARGET_VISIBLE)
+                    .copied()
+                    .unwrap_or(false);
+                let plan = if visible { 2 } else { 1 };
+                ctx.blackboard().set(&PATROL_PLAN, plan);
+                // This key is not declared as a scope output, so it must stay private.
+                ctx.blackboard().set(&PATROL_DEBUG, plan + 10);
+                Status::Success
+            }
+        })
+        .expect("register plan_patrol");
+    registry
+        .scoped_key(&TARGET_VISIBLE)
+        .expect("register scoped target_visible");
+    registry
+        .scoped_key(&PATROL_PLAN)
+        .expect("register scoped patrol_plan");
+    registry
+        .contract_key(&TARGET_VISIBLE)
+        .expect("register contract target_visible");
+    registry
+        .contract_key(&PATROL_PLAN)
+        .expect("register contract patrol_plan");
 
     registry
         .try_action::<AttackParams, &'static str>("attack", |params: AttackParams| {
@@ -254,6 +286,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "\nfinal: player={:.0} enemy={:.0} distance={:.0}",
         world.player_hp, world.enemy_hp, world.distance
     );
+    let patrol_plan = watcher.tree().blackboard().get(&PATROL_PLAN).copied();
+    let private_leaked = watcher.tree().blackboard().contains(&PATROL_DEBUG);
+    println!("patrol plan: {patrol_plan:?} (private state leaked: {private_leaked})");
 
     drop(watcher);
     let _ = std::fs::remove_file(path);
@@ -289,23 +324,49 @@ mod tests {
             .expect("v1 spec")
             .build(&registry)
             .expect("v1 tree");
-        assert_eq!(v1.service_count(), 1);
+        assert_eq!(v1.service_count(), 2);
         assert_eq!(v1.duplicate_node_id(), None);
 
         let v2 = TreeSpec::from_json_str(CONFIG_V2)
             .expect("v2 spec")
             .build(&registry)
             .expect("v2 tree");
-        assert_eq!(v2.service_count(), 2);
+        assert_eq!(v2.service_count(), 3);
         assert_eq!(v2.duplicate_node_id(), None);
 
         let diff = TreeDiff::between(&v1, &v2);
         assert_eq!(diff.added.len(), 1);
         assert_eq!(diff.added[0].id.as_str(), "scan_extra");
-        assert_eq!(diff.added[0].path.to_string(), "services[1]");
+        assert_eq!(diff.added[0].path.to_string(), "services[2]");
         assert!(diff.removed.is_empty());
         assert!(diff.moved.is_empty());
         assert!(diff.renamed.is_empty());
+    }
+
+    #[test]
+    fn showcase_scoped_contract_service_isolates_state() {
+        let registry = build_registry();
+        let mut tree = TreeSpec::from_json_str(CONFIG_V1)
+            .expect("v1 spec")
+            .build(&registry)
+            .expect("v1 tree");
+        let mut world = World::new();
+        assert_eq!(world.distance, 20.0);
+
+        let _ = tree.tick(&mut world, Time::ZERO);
+        assert_eq!(tree.blackboard().get(&TARGET_VISIBLE), Some(&false));
+        assert_eq!(tree.blackboard().get(&PATROL_PLAN), Some(&1));
+        assert!(
+            !tree.blackboard().contains(&PATROL_DEBUG),
+            "scoped private state leaked into the parent blackboard"
+        );
+
+        world.distance = 5.0;
+        world.turn = 1;
+        let _ = tree.tick(&mut world, Time::from_millis(1_000, 1_000));
+        assert_eq!(tree.blackboard().get(&TARGET_VISIBLE), Some(&true));
+        assert_eq!(tree.blackboard().get(&PATROL_PLAN), Some(&2));
+        assert!(!tree.blackboard().contains(&PATROL_DEBUG));
     }
 
     #[test]

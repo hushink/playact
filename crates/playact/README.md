@@ -986,8 +986,8 @@ cargo run -p playact --example reload_audit --features hot-reload,inspector,diff
 - `battle_ai_config`: the same ideas driven by JSON configuration, typed parameters,
   and custom node factories.
 - `battle_ai_showcase`: fully config-driven AI using services, `utility_selector`,
-  `guard`, `try_action`, events, state-preserving hot reload, and structural reload
-  diffs.
+  `guard`, `try_action`, events, config-level `scoped`/`contract` boundaries,
+  state-preserving hot reload, and structural reload diffs.
 - `live_inspector`: a demo tree served at `http://127.0.0.1:7878/` with live
   statuses, timings, `/metrics`, and `/tree` endpoints.
 - `reload_audit`: nested include hot reload with state preservation, revision and

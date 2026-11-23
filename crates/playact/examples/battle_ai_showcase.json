@@ -3,7 +3,32 @@
   "version": 1,
   "name": "battle showcase v1",
   "services": [
-    {"type": "action", "name": "sense"}
+    {"type": "action", "name": "sense"},
+    {
+      "type": "identified",
+      "id": "patrol_scope",
+      "child": {
+        "type": "scoped",
+        "name": "patrol scope",
+        "inputs": ["showcase.target_visible"],
+        "outputs": ["showcase.patrol_plan"],
+        "child": {
+          "type": "identified",
+          "id": "patrol_contract",
+          "child": {
+            "type": "contract",
+            "name": "patrol contract",
+            "required": ["showcase.target_visible"],
+            "provided": ["showcase.patrol_plan"],
+            "child": {
+              "type": "identified",
+              "id": "plan_patrol",
+              "child": {"type": "action", "name": "plan_patrol"}
+            }
+          }
+        }
+      }
+    }
   ],
   "root": {
     "type": "identified",
