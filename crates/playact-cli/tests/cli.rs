@@ -148,6 +148,49 @@ fn lint_json_report_is_machine_readable() {
 }
 
 #[test]
+fn convert_writes_a_valid_configuration() {
+    let input = TempFile::new(
+        "json",
+        r#"{"version":1,"name":"converted","root":{"type":"action","name":"anything"}}"#,
+    );
+    let output = TempFile::new("toml", "");
+
+    let converted = run(&["convert", input.as_str(), output.as_str()]);
+    assert!(converted.status.success(), "{converted:?}");
+    let text = fs::read_to_string(&output.path).expect("converted output");
+    assert!(text.contains("type = \"action\""), "{text}");
+
+    let linted = run(&["lint", output.as_str()]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn convert_rejects_invalid_input_without_writing() {
+    let input = TempFile::new("json", r#"{"root":{"type":"no_such_node"}}"#);
+    let output = TempFile::new("yaml", "");
+
+    let converted = run(&["convert", input.as_str(), output.as_str()]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let text = fs::read_to_string(&output.path).expect("output file");
+    assert!(text.is_empty(), "invalid input must not be written: {text}");
+}
+
+#[test]
+fn watch_cannot_be_combined_with_json_reports() {
+    let valid = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let output = run(&["lint", "--json", "--watch", valid.as_str()]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--watch cannot be combined with --json"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn lint_uses_registry_names_from_the_schema() {
     let schema = TempFile::new("json", &registry_schema());
     let bad = TempFile::new("json", r#"{"root":{"type":"action","name":"missing"}}"#);

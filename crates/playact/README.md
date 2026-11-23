@@ -742,8 +742,8 @@ are rebuilt with the tree on hot reload and remote refresh, and
 - [`examples/schema_export.rs`](examples/schema_export.rs) writes that schema to
   `target/playact-schema.json`; the
   [configuration reference](docs/config.md#editor-completion) shows a VS Code mapping.
-  The workspace `playact-cli` crate also provides `schema`, `catalog`, and `lint`
-  commands that accept a registry-aware schema file.
+  The workspace `playact-cli` crate also provides `schema`, `catalog`, `lint`,
+  and `convert` commands that accept a registry-aware schema file.
 - Wrap a configuration node in `identified` to assign a stable `NodeId`:
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}

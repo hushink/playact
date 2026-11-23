@@ -77,6 +77,55 @@ impl Format {
             Self::Ron => TreeSpec::from_ron_str(text),
         }
     }
+
+    /// Serializes a `TreeSpec` in this format.
+    ///
+    /// # Errors
+    ///
+    /// Returns the format serializer's message.
+    pub fn serialize_spec(self, spec: &TreeSpec) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Json => serde_json::to_vec_pretty(spec).map_err(|error| error.to_string()),
+            Self::Toml => serialize_toml(spec),
+            Self::Yaml => serde_yaml_ng::to_string(spec)
+                .map(String::into_bytes)
+                .map_err(|error| error.to_string()),
+            Self::Ron => ron::ser::to_string_pretty(spec, ron::ser::PrettyConfig::default())
+                .map(String::into_bytes)
+                .map_err(|error| error.to_string()),
+        }
+    }
+}
+
+fn serialize_toml(spec: &TreeSpec) -> Result<Vec<u8>, String> {
+    let value = serde_json::to_value(spec).map_err(|error| error.to_string())?;
+    let value = strip_nulls(value)?;
+    let value: toml::Value = serde_json::from_value(value)
+        .map_err(|error| format!("TOML cannot represent this configuration: {error}"))?;
+    toml::to_string_pretty(&value)
+        .map(String::into_bytes)
+        .map_err(|error| error.to_string())
+}
+
+fn strip_nulls(value: Value) -> Result<Value, String> {
+    match value {
+        Value::Object(object) => {
+            let mut cleaned = serde_json::Map::new();
+            for (key, value) in object {
+                if !value.is_null() {
+                    cleaned.insert(key, strip_nulls(value)?);
+                }
+            }
+            Ok(Value::Object(cleaned))
+        }
+        Value::Array(values) => values
+            .into_iter()
+            .map(strip_nulls)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        Value::Null => Err(String::from("TOML cannot represent null values")),
+        other => Ok(other),
+    }
 }
 
 #[cfg(test)]
@@ -91,6 +140,22 @@ mod tests {
         assert_eq!(Format::from_path(Path::new("tree.ron")), Ok(Format::Ron));
         assert!(Format::from_path(Path::new("tree.txt")).is_err());
         assert!(Format::from_path(Path::new("tree")).is_err());
+    }
+
+    #[test]
+    fn serializes_specs_in_all_formats() {
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"action","name":"wait"}}"#)
+            .expect("valid TreeSpec");
+        for format in [Format::Json, Format::Toml, Format::Yaml, Format::Ron] {
+            let bytes = format
+                .serialize_spec(&spec)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}"));
+            let text = std::str::from_utf8(&bytes).expect("UTF-8 output");
+            let reparsed = format
+                .parse_spec(text)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}\n{text}"));
+            assert_eq!(reparsed.version, spec.version, "{format:?}");
+        }
     }
 
     #[test]

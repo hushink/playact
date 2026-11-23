@@ -54,7 +54,7 @@ pub fn lint_files(schema: &Value, files: &[PathBuf]) -> Vec<LintReport> {
     files.iter().map(|path| lint_file(schema, path)).collect()
 }
 
-fn lint_file(schema: &Value, path: &Path) -> LintReport {
+pub(crate) fn lint_file(schema: &Value, path: &Path) -> LintReport {
     let file = path.display().to_string();
     let mut issues = Vec::new();
 

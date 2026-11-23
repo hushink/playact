@@ -105,3 +105,5 @@ jobs:
           grep -Fq '`action.name`' target/cli-catalog.md
           grep -Fq '`patrol`' target/cli-catalog.md
           cargo run -p playact-cli --quiet -- lint crates/playact/examples/battle_ai.json
+          cargo run -p playact-cli --quiet -- convert crates/playact/examples/battle_ai.json target/cli-battle.toml
+          cargo run -p playact-cli --quiet -- lint target/cli-battle.toml
