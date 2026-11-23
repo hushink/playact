@@ -484,6 +484,32 @@ assert_eq!(driver.run_until_terminal(10), Some((1, Status::Success)));
 `TestDriver` owns the tree and world, exposes the blackboard and last status, and never
 reads the system clock or sleeps.
 
+### Trace recording and replay comparison
+
+The `trace-record` feature stores owned trace events and reports the first divergence
+between two runs:
+
+```rust
+use playact::TraceRecorder;
+
+let mut driver = TestDriver::new(tree, world);
+let recorder = driver.install_trace_recorder();
+let _ = driver.tick_n(100);
+let expected = recorder.records();
+
+// later, with the same deterministic world scenario:
+let mut driver = TestDriver::new(build_tree(), same_world);
+let recorder = driver.install_trace_recorder();
+let _ = driver.tick_n(100);
+if let Some(diff) = recorder.diff(&expected) {
+    eprintln!("behavior diverged at event {}: {diff:?}", diff.index);
+}
+```
+
+This records the tree's observable behavior, not the world. Reproduce the same world
+inputs and use node snapshots / `BlackboardCodec` for stateful replay. Trace events are
+owned, so they can be stored for regression tests.
+
 ## Configuration
 
 The optional `config` feature builds trees from data while keeping parameters typed:
@@ -706,7 +732,8 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
 | `schema` | `TreeSpec::json_schema()` JSON Schema generation (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
-| `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std`) |
+| `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
+| `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std` + `trace-record`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

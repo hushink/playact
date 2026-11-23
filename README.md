@@ -136,7 +136,8 @@ cargo run -p playact --example battle_ai_config --features config
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
 | `schema` | JSON Schema generation for `TreeSpec` (requires `config`) |
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
-| `test-util` | Deterministic `TestDriver` with virtual time (requires `std`) |
+| `trace-record` | Owned trace recording and replay comparison (requires `std`) |
+| `test-util` | Deterministic `TestDriver` with virtual time (requires `std` and `trace-record`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

@@ -14,7 +14,8 @@ readme = "README.md"
 [features]
 default = ["std"]
 std = []
-test-util = ["std"]
+trace-record = ["std"]
+test-util = ["std", "trace-record"]
 config = ["std", "dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
 blackboard-serde = ["std", "dep:serde", "dep:serde_json"]
 toml = ["config", "dep:toml"]
@@ -28,6 +29,7 @@ tokio = ["std", "dep:tokio"]
 macros = ["dep:playact-macros"]
 full = [
     "std",
+    "trace-record",
     "test-util",
     "config",
     "blackboard-serde",

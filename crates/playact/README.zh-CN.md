@@ -470,6 +470,30 @@ assert_eq!(driver.run_until_terminal(10), Some((1, Status::Success)));
 
 `TestDriver` 持有树和 world，暴露黑板与最后状态，不读系统时钟也不 sleep。
 
+### Trace 录制与 replay 对比
+
+`trace-record` feature 保存 owned trace 事件，并报告两次运行的首个差异：
+
+```rust
+use playact::TraceRecorder;
+
+let mut driver = TestDriver::new(tree, world);
+let recorder = driver.install_trace_recorder();
+let _ = driver.tick_n(100);
+let expected = recorder.records();
+
+// 之后使用相同的确定性 world 场景：
+let mut driver = TestDriver::new(build_tree(), same_world);
+let recorder = driver.install_trace_recorder();
+let _ = driver.tick_n(100);
+if let Some(diff) = recorder.diff(&expected) {
+    eprintln!("behavior diverged at event {}: {diff:?}", diff.index);
+}
+```
+
+它记录的是树的可见行为，不是 world。复现时需要提供相同的 world 输入，并用节点
+快照 / `BlackboardCodec` 处理有状态数据。事件是 owned 的，可保存用于回归测试。
+
 ## 配置驱动
 
 可选 `config` feature 从数据构建行为树，同时保持参数类型安全：
@@ -683,7 +707,8 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
 | `schema` | `TreeSpec::json_schema()` JSON Schema 生成（依赖 `config`） |
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
-| `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std`） |
+| `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |
+| `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std` + `trace-record`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

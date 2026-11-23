@@ -111,6 +111,16 @@ impl<W> TestDriver<W> {
         (1..=max_ticks).find(|_| self.tick() == target)
     }
 
+    /// Installs a [`crate::TraceRecorder`] on the tree and returns it.
+    ///
+    /// This replaces any existing tracer. Record a scenario, then run the same
+    /// scenario again and compare with [`crate::TraceRecorder::diff`].
+    pub fn install_trace_recorder(&mut self) -> crate::TraceRecorder {
+        let recorder = crate::TraceRecorder::new();
+        self.tree.set_tracer(Some(Box::new(recorder.clone())));
+        recorder
+    }
+
     /// The underlying tree.
     #[must_use]
     pub fn tree(&self) -> &BehaviorTree<W> {
@@ -198,6 +208,14 @@ mod tests {
         let mut driver = TestDriver::new(wait_tree(), ());
         assert_eq!(driver.run_until_status(Status::Success, 10), Some(3));
         assert_eq!(driver.run_until_status(Status::Failure, 1), None);
+    }
+
+    #[test]
+    fn installs_a_trace_recorder() {
+        let mut driver = TestDriver::new(wait_tree(), ());
+        let recorder = driver.install_trace_recorder();
+        let _ = driver.tick_n(2);
+        assert!(!recorder.is_empty());
     }
 
     #[test]

@@ -113,6 +113,8 @@ pub mod node;
 pub mod persistence;
 #[cfg(feature = "remote-config")]
 pub mod remote_config;
+#[cfg(feature = "trace-record")]
+pub mod replay;
 #[cfg(feature = "std")]
 pub mod shared;
 pub mod snapshot;
@@ -158,6 +160,8 @@ pub use persistence::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCo
 pub use remote_config::{
     MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader, ResponseVerifier,
 };
+#[cfg(feature = "trace-record")]
+pub use replay::{TraceDiff, TraceRecord, TraceRecorder};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
 pub use snapshot::{
@@ -216,6 +220,8 @@ pub mod prelude {
     pub use crate::{
         MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader, ResponseVerifier,
     };
+    #[cfg(feature = "trace-record")]
+    pub use crate::{TraceDiff, TraceRecord, TraceRecorder};
     #[cfg(feature = "config")]
     pub use crate::{TreeParser, ValidationLimits};
 }
