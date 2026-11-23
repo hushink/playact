@@ -133,6 +133,9 @@ jobs:
           grep -q '"version": 1' "$migrate_dir/root.json"
           grep -q '"root"' "$migrate_dir/root.json"
           cargo run -p playact-cli --quiet -- lint "$migrate_dir/root.json"
+          cargo run -p playact-cli --quiet -- migrate --output "$migrate_dir/staged" --manifest "$migrate_dir/migrations.json" "$migrate_dir/root.json"
+          grep -q '"version": 1' "$migrate_dir/staged/root.json"
+          cargo run -p playact-cli --quiet -- lint "$migrate_dir/staged/root.json"
           rm -rf "$migrate_dir"
           bundle_parent=$(mktemp -d)
           bundle_dir="$bundle_parent/bundle"

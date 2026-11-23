@@ -1420,6 +1420,202 @@ fn migrate_diff_previews_field_changes_without_writing() {
 }
 
 #[test]
+fn migrate_output_stages_migrated_graph_without_touching_sources() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}"#,
+    );
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let output = directory.path.join("staged");
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_shared = fs::read_to_string(&shared).expect("original shared");
+
+    let migrated = run(&[
+        "migrate",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let stdout = String::from_utf8_lossy(&migrated.stdout);
+    assert!(stdout.contains("staged 2 file(s)"), "{stdout}");
+
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&shared).expect("shared"),
+        original_shared
+    );
+    let staged_root = output.join("root.json");
+    let staged_shared = output.join("shared.json");
+    for path in [&staged_root, &staged_shared] {
+        let value: Value =
+            serde_json::from_str(&fs::read_to_string(path).expect("staged")).expect("valid JSON");
+        assert_eq!(value["version"], 1, "{value}");
+        assert!(value.get("root").is_some(), "{value}");
+    }
+
+    let linted = run(&["lint", staged_root.to_str().expect("staged root")]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn migrate_output_copies_current_include_graph() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"shared.json"}}"#,
+    );
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let output = directory.path.join("staged");
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_shared = fs::read_to_string(&shared).expect("original shared");
+
+    let migrated = run(&[
+        "migrate",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let stdout = String::from_utf8_lossy(&migrated.stdout);
+    assert!(stdout.contains("staged 2 file(s)"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(output.join("root.json")).expect("staged root"),
+        original_root
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("shared.json")).expect("staged shared"),
+        original_shared
+    );
+
+    let linted = run(&[
+        "lint",
+        output.join("root.json").to_str().expect("staged root path"),
+    ]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn migrate_output_preserves_include_parent_segments() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"include","path":"sub/../shared.json"}}"#,
+    );
+    directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let output = directory.path.join("staged");
+
+    let migrated = run(&[
+        "migrate",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    assert!(output.join("shared.json").is_file());
+    assert!(output.join("sub").is_dir());
+
+    let linted = run(&[
+        "lint",
+        output.join("root.json").to_str().expect("staged root path"),
+    ]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn migrate_output_rejects_conflicting_options_and_nonempty_directories() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let output = directory.path.join("staged");
+    let original = fs::read_to_string(&root).expect("original");
+
+    let checked = run(&[
+        "migrate",
+        "--check",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("cannot be combined"), "{stderr}");
+    assert!(!output.exists());
+
+    fs::create_dir_all(&output).expect("output directory");
+    fs::write(output.join("existing.txt"), "keep").expect("existing output file");
+    let blocked = run(&[
+        "migrate",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!blocked.status.success(), "{blocked:?}");
+    let stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert!(stderr.contains("is not empty"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(output.join("existing.txt")).expect("existing output"),
+        "keep"
+    );
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_output_requires_exactly_one_root() {
+    let directory = TempDir::new();
+    let first = directory.write(
+        "first.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let second = directory.write(
+        "second.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let output = directory.path.join("staged");
+
+    let migrated = run(&[
+        "migrate",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        first.to_str().expect("first path"),
+        second.to_str().expect("second path"),
+    ]);
+    assert!(!migrated.status.success(), "{migrated:?}");
+    let stderr = String::from_utf8_lossy(&migrated.stderr);
+    assert!(stderr.contains("exactly one"), "{stderr}");
+    assert!(!output.exists());
+}
+
+#[test]
 fn migrate_patch_prints_unified_diff_without_writing() {
     let directory = TempDir::new();
     let root = directory.write(

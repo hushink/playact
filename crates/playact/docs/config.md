@@ -180,6 +180,11 @@ TOML, YAML, and RON work:
   (`added`, `removed`, or `changed`), and optional `from` / `to` values. Custom
   Rust transformations still require a `ConfigMigrator` closure in the
   application.
+- `--output DIR` requires exactly one root, cannot be combined with `--check`,
+  and stages the complete include graph into a new or empty directory instead of
+  modifying sources. Include strings are preserved and must stay lexically
+  inside the include base (as with `bundle`); load the staged root with `DIR` as
+  the include base. The staged root uses the source root's file name.
 
 ## Name, parameters, and IDs
 
@@ -526,6 +531,7 @@ cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
+cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
@@ -567,8 +573,9 @@ or files that would change; `--json` reports root lint findings plus per-file
 formatting status. `migrate` applies a declarative manifest to every root and
 included file, validates the migrated graph, and writes in place only when all
 files are valid; `--check` reports pending migrations without writing, `--diff`
-prints field-level changes, `--patch` prints unified diffs, and `--json` reports
-per-root results with changes. RON formatting serializes the parsed spec
+prints field-level changes, `--patch` prints unified diffs, `--output DIR` stages
+the complete graph, and `--json` reports per-root results with changes. RON
+formatting serializes the parsed spec
 because RON's generic map syntax does not deserialize as a `TreeSpec`; other
 formats preserve the original field presence. `diff` validates both inputs, then
 reports

@@ -123,16 +123,18 @@ formatting for every lint-valid file. Writes nothing and exits nonzero when any
 file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
-usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--check] [--diff] [--patch] CONFIG...
+usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] CONFIG...
 
 Applies versioned declarative operations from a manifest to each configuration
 and its include graph, then validates every result. Operations are
 rename_field, remove_field, set_field, rename_value, map_values, and scale,
 targeted by `at` (JSON Pointer) or `where` (recursive object match). Files are
-written in place only when the whole graph is valid. --check reports files that
-would change without writing; --diff prints field-level changes; --patch prints
-unified diffs; --json prints per-root reports including changes. --patch and
---json are mutually exclusive.";
+written in place only when the whole graph is valid, or into a new/empty
+--output directory with include strings preserved. --output requires exactly one
+root, cannot be combined with --check, and stages the complete include graph.
+--check reports files that would change without writing; --diff prints
+field-level changes; --patch prints unified diffs; --json prints per-root reports
+including changes. --patch and --json are mutually exclusive.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -847,6 +849,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut manifest_path = None;
     let mut schema_path = None;
     let mut include_base = None;
+    let mut output = None;
     let mut check = false;
     let mut json_output = false;
     let mut diff_output = false;
@@ -890,6 +893,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                     include_base = Some(next_path(&mut arguments, "--include-base")?);
                     continue;
                 }
+                Some("-o" | "--output") => {
+                    output = Some(next_path(&mut arguments, "--output")?);
+                    continue;
+                }
                 Some("--") => {
                     options_done = true;
                     continue;
@@ -908,6 +915,14 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     if patch_output && json_output {
         return Err(String::from("--patch cannot be combined with --json").into());
     }
+    if output.is_some() && check {
+        return Err(String::from("--output cannot be combined with --check").into());
+    }
+    if output.is_some() && files.len() != 1 {
+        return Err(
+            String::from("migrate --output requires exactly one configuration path").into(),
+        );
+    }
     let manifest_path =
         manifest_path.ok_or_else(|| String::from("migrate requires --manifest PATH"))?;
 
@@ -922,9 +937,19 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         .filter(|report| !report.valid)
         .count();
     let has_issues = invalid > 0;
+    let mut staged = None;
 
-    if !has_issues && !check && !outcome.writes.is_empty() {
-        apply_writes(&outcome.writes)?;
+    if !has_issues {
+        if let Some(output_dir) = output.as_deref() {
+            staged = Some(migrate::stage_output(
+                &files[0],
+                output_dir,
+                include_base.as_deref(),
+                &outcome.writes,
+            )?);
+        } else if !check && !outcome.writes.is_empty() {
+            apply_writes(&outcome.writes)?;
+        }
     }
 
     if json_output {
@@ -942,6 +967,17 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         if has_issues {
             if !check && !migrated.is_empty() {
                 eprintln!("no files were written because validation failed");
+            }
+        } else if let Some(staged) = &staged {
+            let output_dir = output.as_deref().expect("staged output has a directory");
+            println!(
+                "staged {} file(s) at {} (root {})",
+                staged.files,
+                lint::display_path(output_dir),
+                lint::display_path(&staged.root)
+            );
+            if !migrated.is_empty() {
+                println!("migrated {} source file(s)", migrated.len());
             }
         } else if check {
             for file in &migrated {

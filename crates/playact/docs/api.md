@@ -1086,8 +1086,8 @@ must declare it. `FsIncludeResolver` migrates every included file;
 `RemoteTreeLoader::with_migrator` offers the same pipeline for remote refreshes.
 For simple field renames, removals, defaults, value mappings, and numeric
 scaling, `playact migrate --manifest` can upgrade roots and includes without
-application code; `--diff` previews field-level changes and `--patch` prints
-unified diffs.
+application code; `--diff` previews field-level changes, `--patch` prints unified
+diffs, and `--output DIR` stages the complete include graph.
 
 ### Validation and schema
 

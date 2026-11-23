@@ -182,6 +182,7 @@ cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json config/root.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
@@ -217,11 +218,11 @@ nonzero on lint errors, formatting errors, or files that would change; `--json`
 reports root lint findings plus per-file formatting status. `migrate` applies a
 versioned declarative manifest of field renames, value mappings, removals,
 defaults, and numeric scaling to each configuration and its include graph,
-validates the migrated result, then writes changed files in place. `--check`
-reports changes without writing, `--diff` prints field-level changes, `--patch`
-prints unified diffs, and `--json` reports per-root results including changes.
-Declarative rules cannot express arbitrary Rust migrations; use `ConfigMigrator`
-in the application for those. `diff` validates two configurations, then reports path-based node,
+validates the migrated result, then writes changed files in place or stages the
+complete graph with `--output DIR`. `--check` reports changes without writing,
+`--diff` prints field-level changes, `--patch` prints unified diffs, and `--json`
+reports per-root results including changes. Declarative rules cannot express
+arbitrary Rust migrations; use `ConfigMigrator` in the application for those. `diff` validates two configurations, then reports path-based node,
 parameter, and include-file set changes; child nodes are matched by type and
 name/kind/key, so insertions and reorders report moves rather than changing every
 later index. Included files with matching relative paths are compared

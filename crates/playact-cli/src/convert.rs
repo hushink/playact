@@ -278,7 +278,7 @@ fn rewrite_includes(
     Ok(())
 }
 
-fn prepare_output(output_dir: &Path) -> Result<bool, String> {
+pub(crate) fn prepare_output(output_dir: &Path) -> Result<bool, String> {
     if output_dir.exists() {
         if !output_dir.is_dir() {
             return Err(format!(
@@ -307,7 +307,7 @@ fn prepare_output(output_dir: &Path) -> Result<bool, String> {
     }
 }
 
-fn cleanup_output(output_dir: &Path, written: &[PathBuf], created: bool) {
+pub(crate) fn cleanup_output(output_dir: &Path, written: &[PathBuf], created: bool) {
     for path in written.iter().rev() {
         let _ = fs::remove_file(path);
     }

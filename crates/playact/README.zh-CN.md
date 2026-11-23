@@ -757,10 +757,11 @@ let watcher =
   刷新时重新执行迁移。
 - `playact migrate --manifest migrations.json CONFIG...` 按声明式
   `rename_field`、`remove_field`、`set_field`、`rename_value`、`map_values` 与
-  `scale` 规则迁移根配置及其 include，校验结果后原地写入；`--check` 可用于 dry run，
+  `scale` 规则迁移根配置及其 include，校验结果后原地写入，或用 `--output DIR`
+  暂存完整 include 图（include 字符串保持不变）；`--check` 可用于 dry run，
   `--diff` 输出字段级预览，`--patch` 输出 unified diff（`--json` 始终包含变更；
-  `--patch` 与 `--json` 互斥）。任意复杂迁移仍应在应用内使用 `ConfigMigrator`
-  闭包。
+  `--patch` 与 `--json` 互斥；`--output` 只接受一个根且不能与 `--check` 组合）。
+  任意复杂迁移仍应在应用内使用 `ConfigMigrator` 闭包。
 - 完整示例见 [`examples/config_migration.rs`](examples/config_migration.rs)：迁移
   v0 根配置与 include，构建并 tick。
 

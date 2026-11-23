@@ -162,6 +162,10 @@ include，然后构建并 tick。
   不能与 `--json` 组合；`--json` 输出带 `changes` 数组的逐根报告，条目包含 `file`、
   JSON Pointer `path`、`kind`（`added`、`removed`、`changed`）与可选 `from` / `to`。
   任意 Rust 变换仍需应用中的 `ConfigMigrator` 闭包。
+- `--output DIR` 只接受一个根配置，不能与 `--check` 组合，并把完整 include 图写入
+  新的或空的目录而不修改源文件。include 字符串保持不变，且必须像 `bundle` 一样在
+  词法上位于 include 基准目录内；加载暂存根文件时以 `DIR` 作为 include 基准目录。
+  暂存根文件使用源根文件的文件名。
 
 ## 名称、参数与 ID
 
@@ -487,6 +491,7 @@ cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
+cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
@@ -517,8 +522,8 @@ include 基准目录内或自行调整。`convert --recursive --format FORMAT` �
 错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint 报告
 与逐文件格式状态。`migrate` 对每个根文件及其 include 应用声明式清单，校验迁移后的
 图，所有文件有效时才原地写入；`--check` 只报告待迁移文件，`--diff` 输出字段级变化，
-`--patch` 输出 unified diff，`--json` 输出包含变更的逐根报告。RON 格式化使用解析后的
-spec 序列化，因为 RON 的通用 map 语法无法反序列化为
+`--patch` 输出 unified diff，`--output DIR` 暂存完整图，`--json` 输出包含变更的逐根
+报告。RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法反序列化为
 `TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
 参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
 重排会报告为 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，

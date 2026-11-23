@@ -174,7 +174,7 @@ impl Bundler<'_> {
     }
 }
 
-fn relative_include_path(include: &str) -> Result<PathBuf, String> {
+pub(crate) fn relative_include_path(include: &str) -> Result<PathBuf, String> {
     if include.trim().is_empty() {
         return Err(String::from("include path is empty"));
     }

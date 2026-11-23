@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::PendingWrite;
+use crate::bundle::relative_include_path;
+use crate::convert::{cleanup_output, prepare_output};
 use crate::format::Format;
 use crate::lint::{self, LintIssue, collect_includes, display_path, resolve_base, resolve_include};
 
@@ -479,6 +481,189 @@ pub(crate) struct MigrationReport {
 pub(crate) struct MigrationOutcome {
     pub reports: Vec<MigrationReport>,
     pub writes: Vec<PendingWrite>,
+}
+
+/// Result of staging a migrated include graph into a directory.
+pub(crate) struct StagedOutput {
+    /// Number of written files, including the root.
+    pub files: usize,
+    /// Staged root inside the output directory.
+    pub root: PathBuf,
+}
+
+/// Copies a migrated root and its complete include graph into `output_dir`.
+///
+/// Include strings are preserved, so the staged root must be loaded with
+/// `output_dir` as its include base. The output directory must not exist or be
+/// empty. Only call this after the migration graph validated successfully.
+pub(crate) fn stage_output(
+    root: &Path,
+    output_dir: &Path,
+    include_base: Option<&Path>,
+    writes: &[PendingWrite],
+) -> Result<StagedOutput, String> {
+    let base = resolve_base(root, include_base)?;
+    let writes: BTreeMap<&Path, &PendingWrite> = writes
+        .iter()
+        .map(|write| (write.path.as_path(), write))
+        .collect();
+    let root_source = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize root `{}`: {error}", display_path(root)))?;
+    let root_name = root
+        .file_name()
+        .ok_or_else(|| String::from("root path has no file name"))?;
+    let root_relative = PathBuf::from(root_name);
+    let root_format = Format::from_path(&root_source)?;
+    let root_bytes = final_bytes(&root_source, &writes)?;
+    let root_document = parse_final(&root_source, &root_bytes, root_format)?;
+
+    let mut state = StageState {
+        base: &base,
+        writes: &writes,
+        files: vec![(root_relative.clone(), root_bytes)],
+        destinations: BTreeMap::from([(root_relative.clone(), root_source.clone())]),
+        directories: BTreeSet::new(),
+        visited: HashSet::from([root_source.clone()]),
+        stack: vec![root_source.clone()],
+    };
+    state.walk(&root_document, root_format, 0)?;
+    state.stack.pop();
+
+    let created = prepare_output(output_dir)?;
+    if created && let Err(error) = fs::create_dir_all(output_dir) {
+        let _ = fs::remove_dir_all(output_dir);
+        return Err(format!(
+            "create output directory `{}`: {error}",
+            display_path(output_dir)
+        ));
+    }
+
+    let mut written = Vec::with_capacity(state.files.len());
+    for directory in &state.directories {
+        let path = output_dir.join(directory);
+        if let Err(error) = fs::create_dir_all(&path) {
+            cleanup_output(output_dir, &written, created);
+            return Err(format!(
+                "create output directory `{}`: {error}",
+                display_path(&path)
+            ));
+        }
+    }
+    for (relative, bytes) in &state.files {
+        let path = output_dir.join(relative);
+        written.push(path.clone());
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            cleanup_output(output_dir, &written, created);
+            return Err(format!(
+                "create output directory `{}`: {error}",
+                display_path(parent)
+            ));
+        }
+        if let Err(error) = fs::write(&path, bytes) {
+            cleanup_output(output_dir, &written, created);
+            return Err(format!("write `{}`: {error}", display_path(&path)));
+        }
+    }
+
+    Ok(StagedOutput {
+        files: written.len(),
+        root: output_dir.join(root_relative),
+    })
+}
+
+struct StageState<'a> {
+    base: &'a Path,
+    writes: &'a BTreeMap<&'a Path, &'a PendingWrite>,
+    files: Vec<(PathBuf, Vec<u8>)>,
+    destinations: BTreeMap<PathBuf, PathBuf>,
+    directories: BTreeSet<PathBuf>,
+    visited: HashSet<PathBuf>,
+    stack: Vec<PathBuf>,
+}
+
+impl StageState<'_> {
+    fn walk(&mut self, document: &Value, format: Format, depth: usize) -> Result<(), String> {
+        for (location, include) in collect_includes(document) {
+            if depth >= MAX_INCLUDE_DEPTH {
+                return Err(format!(
+                    "include at `{location}`: nesting exceeds {MAX_INCLUDE_DEPTH} levels"
+                ));
+            }
+            let normalized = relative_include_path(&include)
+                .map_err(|error| format!("include at `{location}`: {error}"))?;
+            let (target, target_format) = resolve_include(self.base, &include, format)
+                .map_err(|error| format!("include at `{location}`: {error}"))?;
+            if self.stack.contains(&target) {
+                return Err(format!(
+                    "include at `{location}`: cycle through `{}`",
+                    display_path(&target)
+                ));
+            }
+            let destination = PathBuf::from(&include);
+            self.directories.extend(parent_directories(&destination));
+            if let Some(existing) = self.destinations.get(&normalized) {
+                if existing != &target {
+                    return Err(format!(
+                        "include at `{location}`: `{include}` conflicts with another staged file"
+                    ));
+                }
+                continue;
+            }
+            self.destinations.insert(normalized, target.clone());
+            let bytes = final_bytes(&target, self.writes)?;
+            let document = parse_final(&target, &bytes, target_format)?;
+            self.files.push((destination, bytes));
+            if !self.visited.insert(target.clone()) {
+                continue;
+            }
+            self.stack.push(target.clone());
+            self.walk(&document, target_format, depth + 1)?;
+            self.stack.pop();
+        }
+        Ok(())
+    }
+}
+
+fn final_bytes(source: &Path, writes: &BTreeMap<&Path, &PendingWrite>) -> Result<Vec<u8>, String> {
+    match writes.get(source) {
+        Some(write) => Ok(write.formatted.clone()),
+        None => {
+            fs::read(source).map_err(|error| format!("read `{}`: {error}", display_path(source)))
+        }
+    }
+}
+
+fn parse_final(source: &Path, bytes: &[u8], format: Format) -> Result<Value, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("`{}` is not UTF-8: {error}", display_path(source)))?;
+    format
+        .parse_document(text)
+        .map_err(|error| format!("parse migrated `{}`: {error}", display_path(source)))
+}
+
+fn parent_directories(path: &Path) -> Vec<PathBuf> {
+    let components: Vec<_> = path.components().collect();
+    let mut directories = Vec::new();
+    let mut current = PathBuf::new();
+    for (index, component) in components.iter().enumerate() {
+        match component {
+            std::path::Component::Normal(part) => {
+                current.push(part);
+                if index + 1 < components.len() {
+                    directories.push(current.clone());
+                }
+            }
+            std::path::Component::ParentDir => {
+                current.pop();
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+        }
+    }
+    directories
 }
 
 /// Migrates roots and their include graphs, validating every final document.
