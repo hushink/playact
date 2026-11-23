@@ -115,6 +115,7 @@ fn main() -> Result<(), BuildError> {
 ```text
 cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
+cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
 ```
 
@@ -122,6 +123,8 @@ cargo run -p playact --example live_inspector --features inspector
   Cooldown、Timeout、Inverter、Tracer、abort 清理与 CommandBuffer/Executor 分离。
 - `battle_ai_config`：同一套思路的 JSON 配置驱动版本，展示 typed 参数与 custom
   节点工厂。
+- `battle_ai_showcase`：完全配置驱动的 AI，覆盖 services、`utility_selector`、
+  `guard`、`try_action`、事件与状态保持热重载。
 - `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
   与 `/tree` 端点的演示树。
 

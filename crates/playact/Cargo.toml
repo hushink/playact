@@ -75,6 +75,10 @@ required-features = ["config"]
 name = "live_inspector"
 required-features = ["inspector"]
 
+[[example]]
+name = "battle_ai_showcase"
+required-features = ["hot-reload"]
+
 [[bench]]
 name = "engine"
 harness = false

@@ -899,6 +899,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 ```text
 cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
+cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
 ```
 
@@ -907,6 +908,8 @@ cargo run -p playact --example live_inspector --features inspector
   and CommandBuffer/Executor separation.
 - `battle_ai_config`: the same ideas driven by JSON configuration, typed parameters,
   and custom node factories.
+- `battle_ai_showcase`: fully config-driven AI using services, `utility_selector`,
+  `guard`, `try_action`, events, and state-preserving hot reload.
 - `live_inspector`: a demo tree served at `http://127.0.0.1:7878/` with live
   statuses, timings, `/metrics`, and `/tree` endpoints.
 
