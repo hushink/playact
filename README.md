@@ -147,7 +147,7 @@ cargo run -p playact --example live_inspector --features inspector
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |
 | `test-util` | Deterministic `TestDriver` with virtual time (requires `std` and `trace-record`) |
 | `inspector` | Self-contained HTML report and zero-dependency debug HTTP server (requires `std`) |
-| `diff-serde` | `TreeDiff::to_json()` serialization (requires `std`) |
+| `diff-serde` | `TreeDiff` and `DiffHistory` JSON serialization (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

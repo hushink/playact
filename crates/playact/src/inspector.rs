@@ -44,6 +44,10 @@
 //! # }
 //! ```
 //!
+//! Call [`InspectorServer::poll_with_history`] to show every stored reload diff:
+//! the page renders a collapsible history and `/diffs.json` serves the whole
+//! [`DiffHistory`] as a JSON array when `diff-serde` is enabled.
+//!
 //! The server is a debug tool: it has no authentication, and the report exposes
 //! node names, IDs, and timings. Bind it to a loopback address and never expose
 //! it on an untrusted network.
@@ -56,7 +60,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::diff::TreeDiff;
+use crate::diff::{DiffHistory, TreeDiff};
 use crate::node::Kind;
 use crate::stats::{NodeStats, StatsTracer};
 use crate::status::Status;
@@ -80,6 +84,7 @@ pub struct Inspector<'a, W> {
     tree: &'a BehaviorTree<W>,
     stats: Option<&'a StatsTracer>,
     diff: Option<&'a TreeDiff>,
+    diff_history: Option<&'a DiffHistory>,
     title: Option<String>,
     refresh_seconds: u64,
 }
@@ -92,6 +97,7 @@ impl<'a, W> Inspector<'a, W> {
             tree,
             stats: None,
             diff: None,
+            diff_history: None,
             title: None,
             refresh_seconds: 0,
         }
@@ -111,6 +117,15 @@ impl<'a, W> Inspector<'a, W> {
     #[must_use]
     pub fn with_diff(mut self, diff: &'a TreeDiff) -> Self {
         self.diff = Some(diff);
+        self
+    }
+
+    /// Adds the full reload diff history.
+    ///
+    /// When set, this replaces the single-diff section in the report.
+    #[must_use]
+    pub fn with_diff_history(mut self, history: &'a DiffHistory) -> Self {
+        self.diff_history = Some(history);
         self
     }
 
@@ -143,6 +158,11 @@ impl<'a, W> Inspector<'a, W> {
             .title
             .clone()
             .unwrap_or_else(|| String::from(self.tree.name()));
+        let diff = match (self.diff_history, self.diff) {
+            (Some(history), _) => Some(DiffView::History(history)),
+            (None, Some(diff)) => Some(DiffView::Single(diff)),
+            (None, None) => None,
+        };
 
         render_report(
             &title,
@@ -150,7 +170,7 @@ impl<'a, W> Inspector<'a, W> {
             &description,
             &services,
             stats.as_ref(),
-            self.diff,
+            diff,
             self.refresh_seconds,
         )
     }
@@ -175,6 +195,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
 /// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
+/// | `/diffs.json` | Whole `DiffHistory` JSON array, oldest first; requires `diff-serde` |
 /// | `/health` | `ok` |
 pub struct InspectorServer {
     listener: TcpListener,
@@ -240,11 +261,36 @@ impl InspectorServer {
         stats: Option<&StatsTracer>,
         diff: Option<&TreeDiff>,
     ) -> io::Result<usize> {
+        self.poll_with_views(tree, stats, diff, None)
+    }
+
+    /// Like [`InspectorServer::poll`], and shows the full reload diff history.
+    ///
+    /// Pass `watcher.diff_history()` / `loader.diff_history()`. `/` renders every
+    /// stored diff with the newest expanded, and `/diff.json` serves the newest
+    /// entry. With `diff-serde`, `/diffs.json` returns the whole history as a
+    /// JSON array, oldest first.
+    pub fn poll_with_history<W>(
+        &mut self,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        history: &DiffHistory,
+    ) -> io::Result<usize> {
+        self.poll_with_views(tree, stats, history.latest(), Some(history))
+    }
+
+    fn poll_with_views<W>(
+        &mut self,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        diff: Option<&TreeDiff>,
+        history: Option<&DiffHistory>,
+    ) -> io::Result<usize> {
         let mut served = 0;
         while served < MAX_CONNECTIONS_PER_POLL {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    let _ = self.handle(stream, tree, stats, diff);
+                    let _ = self.handle(stream, tree, stats, diff, history);
                     served += 1;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
@@ -261,6 +307,7 @@ impl InspectorServer {
         tree: &BehaviorTree<W>,
         stats: Option<&StatsTracer>,
         diff: Option<&TreeDiff>,
+        history: Option<&DiffHistory>,
     ) -> io::Result<()> {
         stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT))?;
         let mut buffer = [0_u8; MAX_REQUEST_BYTES];
@@ -293,7 +340,9 @@ impl InspectorServer {
                 if let Some(stats) = stats {
                     inspector = inspector.with_stats(stats);
                 }
-                if let Some(diff) = diff {
+                if let Some(history) = history {
+                    inspector = inspector.with_diff_history(history);
+                } else if let Some(diff) = diff {
                     inspector = inspector.with_diff(diff);
                 }
                 if let Some(title) = &self.title {
@@ -302,9 +351,27 @@ impl InspectorServer {
                 ("200 OK", "text/html; charset=utf-8", inspector.render())
             }
             #[cfg(feature = "diff-serde")]
-            (true, "/diff.json") => match diff {
+            (true, "/diff.json") => match diff.or_else(|| history.and_then(DiffHistory::latest)) {
                 Some(diff) => ("200 OK", "application/json; charset=utf-8", diff.to_json()),
                 None => (
+                    "404 Not Found",
+                    "text/plain; charset=utf-8",
+                    String::from("no diff recorded\n"),
+                ),
+            },
+            #[cfg(feature = "diff-serde")]
+            (true, "/diffs.json") => match (history, diff) {
+                (Some(history), _) => (
+                    "200 OK",
+                    "application/json; charset=utf-8",
+                    history.to_json(),
+                ),
+                (None, Some(diff)) => (
+                    "200 OK",
+                    "application/json; charset=utf-8",
+                    format!("[{}]", diff.to_json()),
+                ),
+                (None, None) => (
                     "404 Not Found",
                     "text/plain; charset=utf-8",
                     String::from("no diff recorded\n"),
@@ -359,13 +426,19 @@ impl InspectorServer {
     }
 }
 
+/// The diff section to render: one diff or the full bounded history.
+enum DiffView<'a> {
+    Single(&'a TreeDiff),
+    History(&'a DiffHistory),
+}
+
 fn render_report(
     title: &str,
     tree_name: &str,
     root: &TreeDescription,
     services: &[TreeDescription],
     stats: Option<&BTreeMap<Vec<usize>, NodeStats>>,
-    diff: Option<&TreeDiff>,
+    diff: Option<DiffView<'_>>,
     refresh_seconds: u64,
 ) -> String {
     let nodes = count_nodes(root) + services.iter().map(count_nodes).sum::<usize>();
@@ -493,73 +566,14 @@ fn render_report(
     }
     out.push_str("</section>\n");
 
-    if let Some(diff) = diff {
-        out.push_str("<section>\n<h2>Reload diff</h2>\n<div class=\"panel\">\n");
-        if diff.is_empty() {
-            out.push_str("<p class=\"muted\">No structural changes.</p>\n");
-        } else {
-            let _ = writeln!(
-                out,
-                "<p class=\"muted\">added {} · removed {} · moved {} · renamed {}</p>",
-                diff.added.len(),
-                diff.removed.len(),
-                diff.moved.len(),
-                diff.renamed.len()
-            );
-            out.push_str("<ul class=\"diff-list\">\n");
-            for node in &diff.added {
-                write_diff_line(
-                    &mut out,
-                    "added",
-                    "+",
-                    node.id.as_str(),
-                    &node.name,
-                    node.kind,
-                    &node.path.to_string(),
-                    None,
-                );
-            }
-            for node in &diff.removed {
-                write_diff_line(
-                    &mut out,
-                    "removed",
-                    "-",
-                    node.id.as_str(),
-                    &node.name,
-                    node.kind,
-                    &node.path.to_string(),
-                    None,
-                );
-            }
-            for node in &diff.moved {
-                write_diff_line(
-                    &mut out,
-                    "moved",
-                    "~",
-                    node.id.as_str(),
-                    &node.name,
-                    node.kind,
-                    &node.from.to_string(),
-                    Some(&node.to.to_string()),
-                );
-            }
-            for node in &diff.renamed {
-                let _ = writeln!(
-                    out,
-                    "<li><span class=\"diff-badge renamed\">*</span>\
-                     <code>{}</code> <span class=\"kind\">{}</span> {} &rarr; \
-                     <span class=\"kind\">{}</span> {} at <code>{}</code></li>",
-                    escape_html(node.id.as_str()),
-                    escape_html(node.old_kind.as_str()),
-                    escape_html(&node.old_name),
-                    escape_html(node.new_kind.as_str()),
-                    escape_html(&node.new_name),
-                    escape_html(&node.path.to_string()),
-                );
-            }
-            out.push_str("</ul>\n");
+    match diff {
+        Some(DiffView::History(history)) => render_diff_history(&mut out, history),
+        Some(DiffView::Single(diff)) => {
+            out.push_str("<section>\n<h2>Reload diff</h2>\n<div class=\"panel\">\n");
+            render_diff_body(&mut out, diff, true);
+            out.push_str("</div>\n</section>\n");
         }
-        out.push_str("</div>\n</section>\n");
+        None => {}
     }
 
     out.push_str("<section>\n<h2>Node statistics</h2>\n");
@@ -663,6 +677,104 @@ fn collect_id_entries(
             stats_path.pop();
         }
     }
+}
+
+fn render_diff_history(out: &mut String, history: &DiffHistory) {
+    out.push_str("<section>\n<h2>Reload history</h2>\n<div class=\"panel\">\n");
+    if history.is_empty() {
+        out.push_str("<p class=\"muted\">No reload diffs recorded.</p>\n");
+    } else {
+        let total = history.len();
+        for (index, diff) in history.iter().enumerate() {
+            let latest = index + 1 == total;
+            let open = if latest { " open" } else { "" };
+            let marker = if latest { " · latest" } else { "" };
+            let _ = writeln!(
+                out,
+                "<details class=\"history-entry\"{open}><summary>#{} · added {} · \
+                 removed {} · moved {} · renamed {}{marker}</summary>",
+                index + 1,
+                diff.added.len(),
+                diff.removed.len(),
+                diff.moved.len(),
+                diff.renamed.len()
+            );
+            out.push_str("<div class=\"history-body\">\n");
+            render_diff_body(out, diff, false);
+            out.push_str("</div>\n</details>\n");
+        }
+    }
+    out.push_str("</div>\n</section>\n");
+}
+
+fn render_diff_body(out: &mut String, diff: &TreeDiff, include_counts: bool) {
+    if diff.is_empty() {
+        out.push_str("<p class=\"muted\">No structural changes.</p>\n");
+        return;
+    }
+    if include_counts {
+        let _ = writeln!(
+            out,
+            "<p class=\"muted\">added {} · removed {} · moved {} · renamed {}</p>",
+            diff.added.len(),
+            diff.removed.len(),
+            diff.moved.len(),
+            diff.renamed.len()
+        );
+    }
+
+    out.push_str("<ul class=\"diff-list\">\n");
+    for node in &diff.added {
+        write_diff_line(
+            out,
+            "added",
+            "+",
+            node.id.as_str(),
+            &node.name,
+            node.kind,
+            &node.path.to_string(),
+            None,
+        );
+    }
+    for node in &diff.removed {
+        write_diff_line(
+            out,
+            "removed",
+            "-",
+            node.id.as_str(),
+            &node.name,
+            node.kind,
+            &node.path.to_string(),
+            None,
+        );
+    }
+    for node in &diff.moved {
+        write_diff_line(
+            out,
+            "moved",
+            "~",
+            node.id.as_str(),
+            &node.name,
+            node.kind,
+            &node.from.to_string(),
+            Some(&node.to.to_string()),
+        );
+    }
+    for node in &diff.renamed {
+        let _ = writeln!(
+            out,
+            "<li><span class=\"diff-badge renamed\">*</span>\
+             <code>{}</code> <span class=\"kind\">{}</span> {} &rarr; \
+             <span class=\"kind\">{}</span> {} at <code>{}</code></li>",
+            escape_html(node.id.as_str()),
+            escape_html(node.old_kind.as_str()),
+            escape_html(&node.old_name),
+            escape_html(node.new_kind.as_str()),
+            escape_html(&node.new_name),
+            escape_html(&node.path.to_string()),
+        );
+    }
+    out.push_str("</ul>\n");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -987,6 +1099,12 @@ details > summary::-webkit-details-marker { display: none; }
 .diff-badge.removed { color: var(--failure); }
 .diff-badge.moved { color: var(--running); }
 .diff-badge.renamed { color: var(--accent); }
+.history-entry { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.history-entry:last-child { border-bottom: 0; }
+.history-entry > summary { font-weight: 600; }
+.history-entry > summary::before { content: "▸"; color: var(--muted); margin-right: 6px; }
+.history-entry[open] > summary::before { content: "▾"; }
+.history-body { padding: 8px 0 0 12px; }
 .table-wrap { overflow-x: auto; padding: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td {
@@ -1108,6 +1226,47 @@ mod tests {
         assert!(html.contains("action"));
         assert!(html.contains("condition"));
         assert!(html.contains("root.children[0]"));
+    }
+
+    #[test]
+    fn renders_diff_history_with_latest_expanded() {
+        let first = BehaviorTreeBuilder::<()>::new("first")
+            .sequence(|b| b.action("first", |_| Status::Success).id("first"))
+            .build()
+            .expect("first tree");
+        let second = BehaviorTreeBuilder::<()>::new("second")
+            .sequence(|b| {
+                b.action("first", |_| Status::Success)
+                    .id("first")
+                    .action("second", |_| Status::Success)
+                    .id("second")
+            })
+            .build()
+            .expect("second tree");
+
+        let mut history = DiffHistory::new(4);
+        history.push(TreeDiff::between(&first, &first));
+        history.push(TreeDiff::between(&first, &second));
+
+        let html = Inspector::new(&second).with_diff_history(&history).render();
+        assert!(html.contains("Reload history"));
+        assert!(html.contains("#1 · added 0"));
+        assert!(html.contains("#2 · added 1"));
+        assert!(html.contains("latest"));
+        assert!(html.contains("<details class=\"history-entry\" open>"));
+        assert!(html.contains("diff-badge added"));
+        assert!(html.contains("second"));
+        // The single-diff section is replaced rather than duplicated.
+        assert!(!html.contains("<h2>Reload diff</h2>"));
+    }
+
+    #[test]
+    fn renders_empty_diff_history_placeholder() {
+        let empty = tree("empty");
+        let history = DiffHistory::new(2);
+        let html = Inspector::new(&empty).with_diff_history(&history).render();
+        assert!(html.contains("Reload history"));
+        assert!(html.contains("No reload diffs recorded."));
     }
 
     #[test]
@@ -1266,6 +1425,60 @@ mod tests {
         assert!(response.contains("\"id\":\"new\""));
     }
 
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn server_serves_diff_history() {
+        let first = BehaviorTreeBuilder::<()>::new("first")
+            .sequence(|b| b.action("first", |_| Status::Success).id("first"))
+            .build()
+            .expect("first tree");
+        let second = BehaviorTreeBuilder::<()>::new("second")
+            .sequence(|b| {
+                b.action("first", |_| Status::Success)
+                    .id("first")
+                    .action("second", |_| Status::Success)
+                    .id("second")
+            })
+            .build()
+            .expect("second tree");
+
+        let mut history = DiffHistory::new(4);
+        history.push(TreeDiff::between(&first, &first));
+        history.push(TreeDiff::between(&first, &second));
+
+        let mut server = InspectorServer::bind("127.0.0.1:0").expect("bind");
+        let addr = server.local_addr().expect("addr");
+
+        let response = request_with_history(
+            &mut server,
+            &second,
+            None,
+            &history,
+            addr,
+            "GET /diffs.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("application/json"));
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("history json");
+        let entries = value.as_array().expect("array");
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0]["added"].as_array().expect("added").is_empty());
+        assert_eq!(entries[1]["added"][0]["id"], "second");
+
+        let response = request_with_history(
+            &mut server,
+            &second,
+            None,
+            &history,
+            addr,
+            "GET /diff.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("latest json");
+        assert_eq!(value["added"][0]["id"], "second");
+    }
+
     fn request<W>(
         server: &mut InspectorServer,
         tree: &BehaviorTree<W>,
@@ -1290,6 +1503,30 @@ mod tests {
             .expect("read timeout");
         stream.write_all(request.as_bytes()).expect("write request");
         assert_eq!(server.poll_with_diff(tree, stats, diff).expect("poll"), 1);
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        response
+    }
+
+    fn request_with_history<W>(
+        server: &mut InspectorServer,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        history: &DiffHistory,
+        addr: SocketAddr,
+        request: &str,
+    ) -> String {
+        let mut stream = TcpStream::connect(addr).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        stream.write_all(request.as_bytes()).expect("write request");
+        assert_eq!(
+            server
+                .poll_with_history(tree, stats, history)
+                .expect("poll"),
+            1
+        );
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("read response");
         response

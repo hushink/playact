@@ -140,7 +140,7 @@ cargo run -p playact --example live_inspector --features inspector
 | `trace-record` | 结构化 trace 录制与 replay 对比（依赖 `std`） |
 | `test-util` | 确定性虚拟时间 `TestDriver`（依赖 `std` 与 `trace-record`） |
 | `inspector` | 自包含 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
-| `diff-serde` | `TreeDiff::to_json()` 序列化（依赖 `std`） |
+| `diff-serde` | `TreeDiff` 与 `DiffHistory` 的 JSON 序列化（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

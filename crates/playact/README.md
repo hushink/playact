@@ -462,7 +462,7 @@ over a local HTTP endpoint:
 ```rust
 use playact::inspector::{Inspector, InspectorServer};
 
-// Static report (add .with_diff(&diff) after a reload)
+// Static report (add .with_diff(&diff) or .with_diff_history(&history) after a reload)
 Inspector::new(&tree)
     .with_stats(&stats)
     .write_to("tree.html")?;
@@ -471,14 +471,18 @@ Inspector::new(&tree)
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
 // After a reload, use server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
+// To show every kept diff, use server.poll_with_history(&tree, Some(&stats), watcher.diff_history())?;
 ```
 
 The page shows the tree with last statuses, per-node counters and timings, services,
 a `NodeId` audit table with structural paths, an optional reload diff, and Mermaid
-source, using inline CSS only. `/metrics`, `/tree`, and `/health` serve Prometheus
-text, the ASCII status tree, and a readiness probe; with `diff-serde`, `/diff.json`
-returns the latest diff as JSON. The server has no authentication and exposes tree
-metadata; bind it to loopback and use it only in debug builds.
+source, using inline CSS only. With `poll_with_history` / `with_diff_history`, the
+report renders every stored diff as a collapsible `Reload history` list with the
+newest entry expanded. `/metrics`, `/tree`, and `/health` serve Prometheus text, the
+ASCII status tree, and a readiness probe; with `diff-serde`, `/diff.json` returns the
+latest diff and `/diffs.json` the whole `DiffHistory` as a JSON array (oldest first).
+The server has no authentication and exposes tree metadata; bind it to loopback and
+use it only in debug builds.
 
 ### Tree diffs
 
@@ -502,7 +506,9 @@ let json = diff.to_json();
 ```
 
 Hot reload and remote refresh expose their latest diff through `last_diff()` and keep a
-bounded `DiffHistory` when configured with `with_diff_history(n)`.
+bounded `DiffHistory` when configured with `with_diff_history(n)`. The history
+serializes to a JSON array with `DiffHistory::to_json()`, oldest first; combine it with
+`InspectorServer::poll_with_history` to serve `/diffs.json`.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.

@@ -447,7 +447,7 @@ tree.last_status(); // Option<Status>
 ```rust
 use playact::inspector::{Inspector, InspectorServer};
 
-// 静态报告（重载后可追加 .with_diff(&diff)）
+// 静态报告（重载后可追加 .with_diff(&diff) 或 .with_diff_history(&history)）
 Inspector::new(&tree)
     .with_stats(&stats)
     .write_to("tree.html")?;
@@ -456,13 +456,16 @@ Inspector::new(&tree)
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
 // 重载后可用 server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
+// 展示完整历史时用 server.poll_with_history(&tree, Some(&stats), watcher.diff_history())?;
 ```
 
 页面展示树结构、各节点最后状态、计数与耗时、服务节点、带结构路径的 `NodeId` 审计
-表、可选重载差异与 Mermaid 源码，仅使用内联 CSS。`/metrics`、`/tree`、`/health`
-分别提供 Prometheus 文本、ASCII 状态树与就绪探针；启用 `diff-serde` 后，
-`/diff.json` 返回最近一次差异的 JSON。服务器没有鉴权，并会暴露树元数据；请只绑定
-loopback，并仅在 debug 构建中使用。
+表、可选重载差异与 Mermaid 源码，仅使用内联 CSS。搭配 `poll_with_history` /
+`with_diff_history` 时，页面会以可折叠的 `Reload history` 列表展示全部保留的差异，
+最新一条默认展开。`/metrics`、`/tree`、`/health` 分别提供 Prometheus 文本、ASCII
+状态树与就绪探针；启用 `diff-serde` 后，`/diff.json` 返回最近一次差异的 JSON，
+`/diffs.json` 返回整个 `DiffHistory` 的 JSON 数组（由旧到新）。服务器没有鉴权，
+并会暴露树元数据；请只绑定 loopback，并仅在 debug 构建中使用。
 
 ### 树差异
 
@@ -486,7 +489,9 @@ let json = diff.to_json();
 ```
 
 热重载与远程刷新通过 `last_diff()` 暴露最近一次差异，并可通过
-`with_diff_history(n)` 保留有界 `DiffHistory`。
+`with_diff_history(n)` 保留有界 `DiffHistory`。历史可用 `DiffHistory::to_json()`
+序列化为由旧到新的 JSON 数组，配合 `InspectorServer::poll_with_history` 提供给
+`/diffs.json`。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。

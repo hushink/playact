@@ -249,11 +249,30 @@ impl DiffHistory {
     pub fn clear(&mut self) {
         self.diffs.clear();
     }
+
+    /// Serializes the history as a JSON array, oldest first.
+    ///
+    /// Requires the `diff-serde` feature.
+    #[cfg(feature = "diff-serde")]
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("DiffHistory serialization cannot fail")
+    }
 }
 
 impl Default for DiffHistory {
     fn default() -> Self {
         Self::new(1)
+    }
+}
+
+#[cfg(feature = "diff-serde")]
+impl serde::Serialize for DiffHistory {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(self.diffs.iter())
     }
 }
 
@@ -463,6 +482,25 @@ mod tests {
         assert!(text.contains("+ c c at root.children[1]"));
         assert!(text.contains("- a a at root.children[0]"));
         assert!(text.contains("~ b b: root.children[1] -> root.children[0]"));
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn serializes_history_to_json() {
+        let empty = tree(Vec::new());
+        let one = tree(vec![leaf("a", "a")]);
+        let two = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let three = tree(vec![leaf("a", "a"), leaf("b", "b"), leaf("c", "c")]);
+
+        let mut history = DiffHistory::new(2);
+        history.push(TreeDiff::between(&empty, &one));
+        history.push(TreeDiff::between(&one, &two));
+        history.push(TreeDiff::between(&two, &three));
+
+        let value: serde_json::Value = serde_json::from_str(&history.to_json()).expect("json");
+        assert_eq!(value.as_array().expect("array").len(), 2);
+        assert_eq!(value[0]["added"][0]["id"], "b");
+        assert_eq!(value[1]["added"][0]["id"], "c");
     }
 
     #[cfg(feature = "diff-serde")]
