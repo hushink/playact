@@ -12,6 +12,8 @@
 //! - With [`TreeWatcher::with_state_preservation`] enabled, node state is also
 //!   restored by stable `NodeId` for nodes that still exist in the new tree;
 //!   renamed or removed IDs start from their reset state;
+//! - Each successful reload records a [`crate::TreeDiff`] with nodes added,
+//!   removed, or moved according to their `NodeId` and structural path;
 //! - Parse/build failure: the old tree stays untouched and the error is returned
 //!   to the caller;
 //! - Tracers are not preserved; reinstall them through [`TreeWatcher::tree_mut`]
@@ -30,6 +32,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
 };
+use crate::diff::TreeDiff;
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -110,6 +113,7 @@ pub struct TreeWatcher<W: 'static> {
     debounce: Duration,
     pending_since: Option<Instant>,
     preserve_state: bool,
+    last_diff: Option<TreeDiff>,
 }
 
 impl<W: 'static> TreeWatcher<W> {
@@ -183,6 +187,7 @@ impl<W: 'static> TreeWatcher<W> {
             debounce: Duration::from_millis(200),
             pending_since: None,
             preserve_state: false,
+            last_diff: None,
         })
     }
 
@@ -269,6 +274,17 @@ impl<W: 'static> TreeWatcher<W> {
         &mut self.registry
     }
 
+    /// Structural changes from the most recent successful reload.
+    #[must_use]
+    pub fn last_diff(&self) -> Option<&TreeDiff> {
+        self.last_diff.as_ref()
+    }
+
+    /// Takes the structural changes from the most recent successful reload.
+    pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
+        self.last_diff.take()
+    }
+
     /// Processes file events; returns `true` if a reload completed successfully.
     ///
     /// On a parse/build failure it returns an error and the old tree stays
@@ -340,7 +356,9 @@ impl<W: 'static> TreeWatcher<W> {
             new_tree.reset();
         }
 
+        let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
+        self.last_diff = Some(diff);
 
         Ok(())
     }
@@ -502,6 +520,51 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut watcher), vec!["new", "new"]);
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_reports_structural_diff() {
+        let path = temp_path();
+        fs::write(
+            &path,
+            r#"{"root":{"type":"sequence","children":[
+                {"type":"identified","id":"a","child":{"type":"action","name":"old"}},
+                {"type":"identified","id":"b","child":{"type":"action","name":"old"}}
+            ]}}"#,
+        )
+        .expect("write initial");
+
+        let mut watcher = TreeWatcher::<()>::json(&path, registry()).expect("watcher");
+        assert!(watcher.last_diff().is_none());
+
+        fs::write(
+            &path,
+            r#"{"root":{"type":"sequence","children":[
+                {"type":"identified","id":"b","child":{"type":"action","name":"new"}},
+                {"type":"identified","id":"c","child":{"type":"action","name":"new"}}
+            ]},"services":[
+                {"type":"identified","id":"svc","child":{"type":"action","name":"new"}}
+            ]}"#,
+        )
+        .expect("write new");
+        watcher.reload_now().expect("reload");
+
+        let diff = watcher.last_diff().expect("diff");
+        assert_eq!(diff.added.len(), 2);
+        assert_eq!(diff.added[0].id.as_str(), "c");
+        assert_eq!(diff.added[1].id.as_str(), "svc");
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(diff.removed[0].id.as_str(), "a");
+        assert_eq!(diff.moved.len(), 1);
+        assert_eq!(diff.moved[0].id.as_str(), "b");
+        assert_eq!(diff.moved[0].from.to_string(), "root.children[1]");
+        assert_eq!(diff.moved[0].to.to_string(), "root.children[0]");
+
+        assert!(watcher.take_last_diff().is_some());
+        assert!(watcher.last_diff().is_none());
 
         drop(watcher);
         let _ = fs::remove_file(path);

@@ -13,6 +13,8 @@
 //! - With [`RemoteTreeLoader::with_state_preservation`] enabled, node state is
 //!   also restored by stable `NodeId` for nodes that still exist; renamed or
 //!   removed IDs start from their reset state;
+//! - Each successful refresh records a [`crate::TreeDiff`] with nodes added,
+//!   removed, or moved according to their `NodeId` and structural path;
 //! - On parse/build/network failure the old tree stays untouched and the error
 //!   is returned;
 //! - ETag / Last-Modified conditional requests are supported, and a 304 skips
@@ -32,6 +34,7 @@ use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
     ValidationLimits,
 };
+use crate::diff::TreeDiff;
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -136,6 +139,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     etag: Option<String>,
     last_modified: Option<String>,
     preserve_state: bool,
+    last_diff: Option<TreeDiff>,
 }
 
 impl<W: 'static> RemoteTreeLoader<W> {
@@ -269,6 +273,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             etag,
             last_modified,
             preserve_state: false,
+            last_diff: None,
         })
     }
 
@@ -351,6 +356,17 @@ impl<W: 'static> RemoteTreeLoader<W> {
         &self.url
     }
 
+    /// Structural changes from the most recent successful refresh.
+    #[must_use]
+    pub fn last_diff(&self) -> Option<&TreeDiff> {
+        self.last_diff.as_ref()
+    }
+
+    /// Takes the structural changes from the most recent successful refresh.
+    pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
+        self.last_diff.take()
+    }
+
     /// The current behavior tree.
     #[must_use]
     pub fn tree(&self) -> &BehaviorTree<W> {
@@ -420,9 +436,11 @@ impl<W: 'static> RemoteTreeLoader<W> {
             new_tree.reset();
         }
 
+        let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
         self.etag = etag;
         self.last_modified = last_modified;
+        self.last_diff = Some(diff);
 
         Ok(true)
     }
@@ -661,6 +679,42 @@ mod tests {
             loader.tree_mut().tick(&mut world, Time::ZERO),
             Status::Failure
         );
+    }
+
+    #[test]
+    fn refresh_reports_structural_diff() {
+        let old = String::from(
+            r#"{"root":{"type":"sequence","children":[
+                {"type":"identified","id":"a","child":{"type":"action","name":"old"}},
+                {"type":"identified","id":"b","child":{"type":"action","name":"old"}}
+            ]}}"#,
+        );
+        let new = String::from(
+            r#"{"root":{"type":"sequence","children":[
+                {"type":"identified","id":"b","child":{"type":"action","name":"new"}},
+                {"type":"identified","id":"c","child":{"type":"action","name":"new"}}
+            ]},"services":[
+                {"type":"identified","id":"svc","child":{"type":"action","name":"new"}}
+            ]}"#,
+        );
+        let url = serve_sequence(vec![old, new]);
+        let mut loader = RemoteTreeLoader::<()>::json(url, registry()).expect("remote loader");
+        assert!(loader.last_diff().is_none());
+
+        assert!(loader.refresh_now().expect("refresh"));
+        let diff = loader.last_diff().expect("diff");
+        assert_eq!(diff.added.len(), 2);
+        assert_eq!(diff.added[0].id.as_str(), "c");
+        assert_eq!(diff.added[1].id.as_str(), "svc");
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(diff.removed[0].id.as_str(), "a");
+        assert_eq!(diff.moved.len(), 1);
+        assert_eq!(diff.moved[0].id.as_str(), "b");
+        assert_eq!(diff.moved[0].from.to_string(), "root.children[1]");
+        assert_eq!(diff.moved[0].to.to_string(), "root.children[0]");
+
+        assert!(loader.take_last_diff().is_some());
+        assert!(loader.last_diff().is_none());
     }
 
     #[test]

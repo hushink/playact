@@ -104,7 +104,7 @@ fn main() -> Result<(), BuildError> {
 | Decorators | `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`, `UntilFailure`, `While`, `Probability`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard` |
 | Leaves | `Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`, `AsyncAction` |
 | Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, `SubtreeContract`, `ScopedSubtree`, nested `BehaviorTree`, services |
-| Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, live status tree, error events, `last_status`, ASCII/DOT/Mermaid `describe`, HTML inspector |
+| Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, live status tree, error events, `last_status`, ASCII/DOT/Mermaid `describe`, structural `TreeDiff`, HTML inspector |
 | Persistence | Versioned structural and ID-keyed node snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |
 | Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, JSON Schema, validation, hot reload, remote loading |

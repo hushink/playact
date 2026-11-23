@@ -478,6 +478,23 @@ only. `/metrics`, `/tree`, and `/health` serve Prometheus text, the ASCII status
 and a readiness probe. The server has no authentication and exposes tree metadata;
 bind it to loopback and use it only in debug builds.
 
+### Tree diffs
+
+`TreeDiff::between(&old, &new)` compares nodes by stable `NodeId`:
+
+```rust
+let diff = TreeDiff::between(&old_tree, &new_tree);
+println!("{diff}");
+```
+
+- `added` / `removed` report `NodeId`, name, kind, and `NodePath`
+- `moved` reports the old and new structural paths
+- the main tree and configured services share one ID namespace
+- nodes without IDs are traversed for path accuracy but not reported
+- name/kind changes at the same path are not reported
+
+Hot reload and remote refresh expose their latest diff through `last_diff()`.
+
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
 
@@ -683,14 +700,18 @@ watcher.tree_mut().tick(&mut world, time);
 
 if watcher.poll()? {
     println!("reloaded: {}", watcher.tree().describe());
+    if let Some(diff) = watcher.last_diff() {
+        println!("{diff}");
+    }
 }
 ```
 
 A successful rebuild replaces the tree (root and configured services), preserves
 blackboard data, and resets node state. Enable `with_state_preservation(true)` to also
 restore own state by stable `NodeId` for nodes that still exist; renamed or removed IDs
-start from their reset state. Parse/build failures keep the old tree and return an
-error. Edits are debounced (200 ms by default). Use `json_with_resolver` /
+start from their reset state. `last_diff()` reports added, removed, and moved nodes by
+`NodeId` and `NodePath`. Parse/build failures keep the old tree and return an error.
+Edits are debounced (200 ms by default). Use `json_with_resolver` /
 `with_parser_and_resolver` for includes.
 
 The watcher observes the root file only. Changes to included files do not trigger an
@@ -714,7 +735,8 @@ loader.tree_mut().tick(&mut world, time);
 `RemoteTreeLoader` uses `reqwest::blocking`, supports ETag / Last-Modified, and keeps
 the old tree on refresh errors. A successful refresh rebuilds the root and configured
 services, preserves the blackboard, and resets node state; `with_state_preservation(true)`
-also restores node state by stable `NodeId`, matching the hot-reload behavior. Requests
+also restores node state by stable `NodeId`, matching the hot-reload behavior.
+`last_diff()` exposes the same added/removed/moved `TreeDiff` as hot reload. Requests
 happen on the calling thread; use a worker thread or a custom `Client` timeout in
 high-latency environments. Includes are available through `json_with_resolver` /
 `with_client_and_resolver`.

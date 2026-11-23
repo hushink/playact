@@ -99,7 +99,7 @@ fn main() -> Result<(), BuildError> {
 | 装饰节点 | `Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`While`、`Probability`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard` |
 | 叶子节点 | `Action`、`Condition`、`Wait`、`WaitUntil`、`WaitForEvent`、`SetValue`、`TryAction`、`AsyncAction` |
 | 组合复用 | typestate 构建器、`SubtreeFactory`、`SubtreeSlot`、`SubtreeContract`、`ScopedSubtree`、嵌套 `BehaviorTree`、服务 |
-| 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe`、HTML inspector |
+| 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe`、结构化 `TreeDiff`、HTML inspector |
 | 持久化 | 带版本的结构快照与按 `NodeId` 的快照，以及可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
 | 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、JSON Schema、校验、热重载、远程加载 |

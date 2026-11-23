@@ -462,6 +462,23 @@ server.poll(&tree, Some(&stats))?;
 Prometheus 文本、ASCII 状态树与就绪探针。服务器没有鉴权，并会暴露树元数据；请只
 绑定 loopback，并仅在 debug 构建中使用。
 
+### 树差异
+
+`TreeDiff::between(&old, &new)` 按稳定 `NodeId` 比较两棵树：
+
+```rust
+let diff = TreeDiff::between(&old_tree, &new_tree);
+println!("{diff}");
+```
+
+- `added` / `removed` 报告 `NodeId`、名称、类型与 `NodePath`
+- `moved` 报告旧路径与新路径
+- 主树与配置中的 services 共享同一个 ID 命名空间
+- 无 ID 节点只参与路径计算，不进入报告
+- 同一路径上的名称/类型变化不会进入报告
+
+热重载与远程刷新通过 `last_diff()` 暴露最近一次差异。
+
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。
 
@@ -654,14 +671,17 @@ watcher.tree_mut().tick(&mut world, time);
 
 if watcher.poll()? {
     println!("reloaded: {}", watcher.tree().describe());
+    if let Some(diff) = watcher.last_diff() {
+        println!("{diff}");
+    }
 }
 ```
 
 成功重建会替换旧树（根节点与配置中的服务）、保留黑板数据并重置节点状态。启用
 `with_state_preservation(true)` 后，还会按稳定的 `NodeId` 为仍然存在的节点恢复
-自身状态；被改名或删除的 ID 从 reset 状态开始。解析/构建失败保留旧树并返回
-错误。默认 200ms 去抖。include 使用 `json_with_resolver` /
-`with_parser_and_resolver`。
+自身状态；被改名或删除的 ID 从 reset 状态开始。`last_diff()` 按 `NodeId` 与
+`NodePath` 报告新增、删除和移动的节点。解析/构建失败保留旧树并返回错误。默认
+200ms 去抖。include 使用 `json_with_resolver` / `with_parser_and_resolver`。
 
 监听器只关注根文件；被 include 的文件单独变化不会触发事件，可调用
 `reload_now()` 或触碰根文件。
@@ -684,7 +704,8 @@ loader.tree_mut().tick(&mut world, time);
 `RemoteTreeLoader` 使用 `reqwest::blocking`，支持 ETag / Last-Modified，刷新失败
 保留旧树。成功刷新会重建根节点与配置中的服务、保留黑板并重置节点状态；
 `with_state_preservation(true)` 还会按稳定 `NodeId` 恢复仍存在节点的状态，与热重载
-行为一致。请求在调用线程同步执行；高延迟环境请放到工作线程或设置 Client 超时。
+行为一致。`last_diff()` 提供与热重载相同的 `TreeDiff`，列出新增、删除和移动的
+节点。请求在调用线程同步执行；高延迟环境请放到工作线程或设置 Client 超时。
 include 使用 `json_with_resolver` / `with_client_and_resolver`。
 
 响应体限制为 `MAX_REMOTE_CONFIG_BYTES`（1 MiB），必须是 UTF-8，并在构建前通过
