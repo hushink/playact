@@ -480,12 +480,13 @@ source, using inline CSS only. With `poll_with_history` / `with_diff_history`, t
 report renders every stored diff as a collapsible `Reload history` list with the
 newest entry expanded; entries are labeled by a monotonic revision that is never
 reused, plus their UTC timestamp when one was recorded. `/metrics`, `/tree`, and
-`/health` serve Prometheus text, the ASCII status
-tree, and a readiness probe; with `diff-serde`, `/diff.json` returns the latest diff
-and `/diffs.json` the whole `DiffHistory` as an array of `{"revision", "diff"}`
-entries (oldest first); append `?since=N` to fetch only revisions after `N`. The
-server has no authentication and exposes tree metadata; bind it to loopback and use it
-only in debug builds.
+`/health` serve Prometheus text, the ASCII status tree, and a readiness probe;
+`/status.json` returns a machine-readable summary with the root status, node and
+statistics counts, history length, and the latest revision and timestamp. With
+`diff-serde`, `/diff.json` returns the latest diff and `/diffs.json` the whole
+`DiffHistory` as an array of `{"revision", "diff"}` entries (oldest first); append
+`?since=N` to fetch only revisions after `N`. The server has no authentication and
+exposes tree metadata; bind it to loopback and use it only in debug builds.
 
 ### Tree diffs
 

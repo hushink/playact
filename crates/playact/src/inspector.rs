@@ -195,6 +195,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/` | HTML report (auto-refreshes every second by default) |
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
+/// | `/status.json` | Summary JSON: tree name, root status, node/stats counts, history length, latest revision and timestamp |
 /// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
 /// | `/diffs.json[?since=N]` | `{"revision", "diff"}` entries as a JSON array, oldest first; `since` keeps revisions above N; requires `diff-serde` |
 /// | `/health` | `ok` |
@@ -332,7 +333,10 @@ impl InspectorServer {
         let mut parts = line.split_whitespace();
         let method = parts.next().unwrap_or_default();
         let target = parts.next().unwrap_or("/");
+        #[cfg(feature = "diff-serde")]
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
+        #[cfg(not(feature = "diff-serde"))]
+        let path = target.split('?').next().unwrap_or(target);
         let is_get = method.eq_ignore_ascii_case("GET");
         let is_head = method.eq_ignore_ascii_case("HEAD");
 
@@ -416,6 +420,11 @@ impl InspectorServer {
                     String::from("install a StatsTracer to use /tree\n"),
                 ),
             },
+            (true, "/status.json") => (
+                "200 OK",
+                "application/json; charset=utf-8",
+                render_status_json(tree, stats, history),
+            ),
             (true, "/health") => ("200 OK", "text/plain; charset=utf-8", String::from("ok\n")),
             (true, _) => (
                 "404 Not Found",
@@ -956,6 +965,65 @@ fn write_node_header(
     }
 }
 
+fn render_status_json<W>(
+    tree: &BehaviorTree<W>,
+    stats: Option<&StatsTracer>,
+    history: Option<&DiffHistory>,
+) -> String {
+    let description = tree.describe();
+    let services = tree.describe_services();
+    let nodes = count_nodes(&description) + services.iter().map(count_nodes).sum::<usize>();
+    let node_stats: BTreeMap<Vec<usize>, NodeStats> = stats
+        .map(|stats| stats.nodes().into_iter().collect())
+        .unwrap_or_default();
+    let (ticks, errors, aborts) =
+        node_stats
+            .values()
+            .fold((0_u64, 0_u64, 0_u64), |(ticks, errors, aborts), node| {
+                (
+                    ticks.saturating_add(node.ticks),
+                    errors.saturating_add(node.errors),
+                    aborts.saturating_add(node.aborts),
+                )
+            });
+    let root_status = node_stats
+        .get(&Vec::new())
+        .and_then(|node| node.last_status);
+    let (_, status_label) = status_parts(root_status);
+    let (latest_revision, latest_timestamp) = history
+        .and_then(DiffHistory::latest_entry)
+        .map_or((None, None), |entry| {
+            (Some(entry.revision), entry.timestamp)
+        });
+    let history_len = history.map_or(0, DiffHistory::len);
+
+    let mut out = String::with_capacity(256);
+    let _ = write!(
+        out,
+        "{{\"tree\":\"{}\",\"root_status\":\"{status_label}\",\"nodes\":{nodes},\
+         \"services\":{},\"observed\":{},\"ticks\":{ticks},\"errors\":{errors},\
+         \"aborts\":{aborts},\"history_len\":{history_len},\"latest_revision\":",
+        escape_json(tree.name()),
+        services.len(),
+        node_stats.len(),
+    );
+    match latest_revision {
+        Some(revision) => {
+            let _ = write!(out, "{revision}");
+        }
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"latest_timestamp\":");
+    match latest_timestamp {
+        Some(timestamp) => {
+            let _ = write!(out, "{timestamp}");
+        }
+        None => out.push_str("null"),
+    }
+    out.push_str("}\n");
+    out
+}
+
 fn count_nodes(node: &TreeDescription) -> usize {
     1 + node.children.iter().map(count_nodes).sum::<usize>()
 }
@@ -1002,6 +1070,24 @@ fn escape_html(value: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn escape_json(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch < ' ' => {
+                let _ = write!(out, "\\u{:04x}", ch as u32);
+            }
             _ => out.push(ch),
         }
     }
@@ -1395,6 +1481,15 @@ mod tests {
     }
 
     #[test]
+    fn escapes_json_strings() {
+        assert_eq!(escape_json("plain"), "plain");
+        assert_eq!(
+            escape_json("quote\" slash\\ line\n tab\t ctrl\u{1}"),
+            "quote\\\" slash\\\\ line\\n tab\\t ctrl\\u0001"
+        );
+    }
+
+    #[test]
     fn refresh_meta_is_opt_in() {
         let tree = tree("demo");
         let static_html = Inspector::new(&tree).render();
@@ -1464,6 +1559,26 @@ mod tests {
             "GET /tree HTTP/1.1\r\nHost: localhost\r\n\r\n",
         );
         assert!(tree_text.contains("sequence \"Sequence\" [success]"));
+
+        let status = request(
+            &mut server,
+            &tree,
+            Some(&stats),
+            addr,
+            "GET /status.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        assert!(status.starts_with("HTTP/1.1 200 OK"));
+        assert!(status.contains("application/json"));
+        let body = status.split("\r\n\r\n").nth(1).expect("status body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("status json");
+        assert_eq!(value["tree"], "server");
+        assert_eq!(value["root_status"], "success");
+        assert_eq!(value["nodes"], 3);
+        assert_eq!(value["services"], 0);
+        assert_eq!(value["observed"], 3);
+        assert_eq!(value["history_len"], 0);
+        assert!(value["latest_revision"].is_null());
+        assert!(value["latest_timestamp"].is_null());
 
         let missing = request(
             &mut server,
@@ -1611,6 +1726,21 @@ mod tests {
             "GET /diffs.json?since=bad HTTP/1.1\r\nHost: localhost\r\n\r\n",
         );
         assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+
+        let response = request_with_history(
+            &mut server,
+            &second,
+            None,
+            &history,
+            addr,
+            "GET /status.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("status json");
+        assert_eq!(value["root_status"], "unknown");
+        assert_eq!(value["history_len"], 2);
+        assert_eq!(value["latest_revision"], 2);
+        assert_eq!(value["latest_timestamp"], 1_600_000_000_000_u64);
 
         let response = request_with_history(
             &mut server,
