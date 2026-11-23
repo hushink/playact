@@ -114,8 +114,43 @@ let mut tree = spec.build_with_resolver(&registry, &resolver)?;
 [`examples/config_migration.rs`](../examples/config_migration.rs) 会迁移 v0 根配置与
 include，然后构建并 tick。
 
-`playact` CLI 校验当前 `TreeSpec` 结构，无法执行应用提供的迁移。请在应用中运行
-`ConfigMigrator`，或只对已达到 `CURRENT_VERSION` 的文件使用 lint/convert。
+### 声明式清单
+
+`playact migrate` 无需应用代码即可执行声明式迁移。清单文件与配置一样按扩展名解析，
+支持 JSON、TOML、YAML 与 RON：
+
+```json
+{
+  "version": 1,
+  "migrations": [
+    {
+      "from": 0,
+      "operations": [
+        {"op": "rename_field", "from": "tree", "to": "root"},
+        {"op": "rename_field", "where": {"type": "wait"}, "from": "seconds", "to": "duration_ms"},
+        {"op": "remove_field", "where": {"type": "wait"}, "field": "legacy"},
+        {"op": "set_field", "at": "/root", "field": "name", "value": "migrated", "overwrite": false}
+      ]
+    }
+  ]
+}
+```
+
+- `version` 是清单格式版本（`1`），不是配置版本。
+- `from` 是源配置版本。规则使用与 `ConfigMigrator` 相同的链式执行与版本写入语义，
+  直到 `CURRENT_VERSION`。
+- `rename_field` 在源字段不存在时无操作，目标字段已存在时报错；`remove_field` 在字段
+  不存在时无操作；`set_field` 只在字段缺失时插入，`"overwrite": true` 时覆盖。
+- 目标选择：
+  - 不写 `at` 或 `where`：仅根对象。
+  - `at`：指向单个对象的 JSON Pointer（`""` 为根，`"/root"` 为根节点）。
+  - `where`：递归匹配所有字段与给定值相等的对象，例如 `{"type": "wait"}`。`at` 与
+    `where` 互斥。
+- 每个根文件与 include 文件都会迁移，然后按 schema 校验；include 图按迁移后的路径
+  重新解析。所有文件均有效后才写入；写入具备事务回滚。
+- 迁移后的文件按源格式规范化序列化；已处于 `CURRENT_VERSION` 的文件保持字节不变。
+- `--check` 只报告将要变更的文件；`--json` 输出逐根报告。任意 Rust 变换仍需应用中
+  的 `ConfigMigrator` 闭包。
 
 ## 名称、参数与 ID
 
@@ -440,14 +475,16 @@ cargo run -p playact-cli -- fmt --recursive --schema schema.json config/root.jso
 cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
+cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
+cargo run -p playact-cli -- migrate --check --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
 `schema` 输出基础 `TreeSpec` schema。`catalog`、`lint`、`convert`、`bundle`、
-`fmt`、`check` 与 `diff` 接受 `NodeRegistry::json_schema()` 生成的注册表感知
-schema；通过 `--schema` 传入即可包含注册名称、描述与参数 schema；未传入时使用基础
-schema。`lint` 会解析并校验限制，但没有应用注册表，因此不会构建树；需要应用内构建
-预检时使用 `config_lint` 示例。
+`fmt`、`check`、`migrate` 与 `diff` 接受 `NodeRegistry::json_schema()` 生成的
+注册表感知 schema；通过 `--schema` 传入即可包含注册名称、描述与参数 schema；未传入
+时使用基础 schema。`lint` 会解析并校验限制，但没有应用注册表，因此不会构建树；需要
+应用内构建预检时使用 `config_lint` 示例。
 `include` 节点会递归解析；路径限制在 `--include-base` 内，未指定时使用每个根文件的
 父目录。include 格式按扩展名选择，无法识别时回退到包含它的文件格式。被包含文件的
 错误在 JSON 报告中带有 `file` 字段。`--watch` 在根配置、被包含文件或 schema 变化时
@@ -466,9 +503,11 @@ include 基准目录内或自行调整。`convert --recursive --format FORMAT` �
 `--check` 不写文件，存在需要格式化的文件时非零退出。`check` 把 include 感知的校验
 与只读格式检查结合：所有通过 lint 的根文件和被包含文件必须已经是规范格式。存在 lint
 错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint 报告
-与逐文件格式状态。RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法
-反序列化为 `TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径
-报告节点、参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
+与逐文件格式状态。`migrate` 对每个根文件及其 include 应用声明式清单，校验迁移后的
+图，所有文件有效时才原地写入；`--check` 只报告待迁移文件，`--json` 输出逐根报告。
+RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法反序列化为
+`TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
+参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
 重排会报告为 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，
 其变化带有 `file` 字段。存在差异时非零退出并支持 `--json`；include 文件集合使用
 `--include-base`，未指定时使用各自输入文件的父目录。

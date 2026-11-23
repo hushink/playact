@@ -102,7 +102,7 @@ fn main() -> Result<(), BuildError> {
 | 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe`、结构化 `TreeDiff`、HTML inspector |
 | 持久化 | 带版本的结构快照与按 `NodeId` 的快照，以及可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
-| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、应用提供的版本迁移、注册表感知 JSON Schema（含描述、参数与 key 值）、Markdown 节点目录、校验、热重载、远程加载 |
+| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、应用提供与声明式版本迁移、注册表感知 JSON Schema（含描述、参数与 key 值）、Markdown 节点目录、校验、热重载、远程加载 |
 | 异步 | 运行时无关 `AsyncTask`、`ThreadTask`、可选 `TokioTask` |
 | 可移植性 | `no_std + alloc` 核心；可选集成按 feature 门控 |
 | 开发体验 | `bt!` DSL、`BtNode` derive、两个完整战斗 AI 示例、基准与确定性压力测试 |
@@ -169,15 +169,18 @@ cargo run -p playact-cli -- fmt --recursive config/root.json
 cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json config/root.json
+cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
 
 `schema` 输出基础 `TreeSpec` schema。把 `NodeRegistry::json_schema()` 生成的
 注册表感知 schema 通过 `--schema` 传入，即可包含注册名称、描述与参数 schema；
-`catalog`、`lint`、`convert`、`bundle`、`fmt`、`check` 与 `diff` 均支持该选项。
-`lint` 支持 JSON/TOML/YAML/RON，递归解析并校验 `include`（基准目录默认为根文件
-父目录，也可用 `--include-base` 指定），支持多文件与 watch，任一文件无效时非零退出。`convert` 在写入目标格式前先校验输入及其 include；
+`catalog`、`lint`、`convert`、`bundle`、`fmt`、`check`、`migrate` 与 `diff` 均支持
+该选项。`lint` 支持 JSON/TOML/YAML/RON，递归解析并校验 `include`（基准目录默认为
+根文件父目录，也可用 `--include-base` 指定），支持多文件与 watch，任一文件无效时
+非零退出。`convert` 在写入目标格式前先校验输入及其 include；
 TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。不使用
 `--recursive` 时 include 路径会被保留而不会复制文件，转换后应保持在相同 include
 基准目录内或自行调整路径。`bundle` 在验证根配置及 include 图后，把根文件与所有被
@@ -192,10 +195,13 @@ TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可�
 `fmt --check` 不写文件，存在需要格式化的文件时非零退出。`check` 把 include 感知的
 校验与只读格式检查结合：所有通过 lint 的根文件和被包含文件必须已经是规范格式。存在
 lint 错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint
-报告与逐文件格式状态。`diff` 先校验两个配置，再按路径报告节点、参数与 include 文件
-集合变化；子节点按 type 与 name/kind/key 匹配，插入与重排会报告为 moved，而不是后续
-索引全部变化。相对路径相同的 include 文件会递归比较，其变化带有 `file` 字段。存在
-差异时非零退出，并支持 `--json` 供审阅工具使用。
+报告与逐文件格式状态。`migrate` 按声明式清单对根配置及其 include 图执行字段重命名、
+删除与默认值规则，校验迁移结果后原地写入变更文件。`--check` 只报告不写文件，`--json`
+输出逐根报告。声明式规则无法表达任意 Rust 迁移；这类逻辑仍应使用应用内的
+`ConfigMigrator`。`diff` 先校验两个配置，再按路径报告节点、参数与 include 文件集合
+变化；子节点按 type 与 name/kind/key 匹配，插入与重排会报告为 moved，而不是后续索引
+全部变化。相对路径相同的 include 文件会递归比较，其变化带有 `file` 字段。存在差异时
+非零退出，并支持 `--json` 供审阅工具使用。
 
 ## Feature 矩阵
 

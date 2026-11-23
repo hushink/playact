@@ -121,6 +121,19 @@ jobs:
           grep -q 'shared/grand.yaml' "$convert_dir/out/shared/child.yaml"
           cargo run -p playact-cli --quiet -- lint "$convert_dir/out/root.yaml"
           rm -rf "$convert_dir"
+          migrate_dir=$(mktemp -d)
+          printf '%s\n' '{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}' > "$migrate_dir/root.json"
+          printf '%s\n' '{"version":0,"tree":{"type":"action","name":"anything"}}' > "$migrate_dir/shared.json"
+          printf '%s\n' '{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"tree","to":"root"}]}]}' > "$migrate_dir/migrations.json"
+          if cargo run -p playact-cli --quiet -- migrate --check --manifest "$migrate_dir/migrations.json" "$migrate_dir/root.json"; then
+            echo "migrate --check should report pending migrations"
+            exit 1
+          fi
+          cargo run -p playact-cli --quiet -- migrate --manifest "$migrate_dir/migrations.json" "$migrate_dir/root.json"
+          grep -q '"version": 1' "$migrate_dir/root.json"
+          grep -q '"root"' "$migrate_dir/root.json"
+          cargo run -p playact-cli --quiet -- lint "$migrate_dir/root.json"
+          rm -rf "$migrate_dir"
           bundle_parent=$(mktemp -d)
           bundle_dir="$bundle_parent/bundle"
           cargo run -p playact-cli --quiet -- bundle crates/playact/examples/battle_ai.json "$bundle_dir"

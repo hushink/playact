@@ -743,8 +743,8 @@ are rebuilt with the tree on hot reload and remote refresh, and
   `target/playact-schema.json`; the
   [configuration reference](docs/config.md#editor-completion) shows a VS Code mapping.
   The workspace `playact-cli` crate also provides `schema`, `catalog`, `lint`,
-  `convert`, `bundle`, `graph`, `fmt`, `check`, and `diff` commands that accept
-  a registry-aware schema file where applicable.
+  `convert`, `bundle`, `graph`, `fmt`, `check`, `migrate`, and `diff` commands
+  that accept a registry-aware schema file where applicable.
 - Wrap a configuration node in `identified` to assign a stable `NodeId`:
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
@@ -792,6 +792,11 @@ let watcher =
 - `TreeWatcher::with_migrator` / `with_migrator_and_resolver` and
   `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` re-run the
   pipeline on every reload or refresh.
+- `playact migrate --manifest migrations.json CONFIG...` applies declarative
+  `rename_field`, `remove_field`, and `set_field` rules to a root and its
+  includes, validates the migrated result, and writes files in place. Use
+  `--check` for a dry run. Arbitrary migrations still belong in a
+  `ConfigMigrator` closure inside the application.
 - See [`examples/config_migration.rs`](examples/config_migration.rs) for a v0
   root and include that are migrated, built, and ticked.
 

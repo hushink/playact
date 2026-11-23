@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use playact::config::{MAX_INCLUDE_DEPTH, ValidationLimits};
+use playact::config::{MAX_INCLUDE_DEPTH, TreeSpec, ValidationLimits};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -382,6 +382,38 @@ fn collect_node_includes(node: &Value, path: &str, includes: &mut Vec<(String, S
             }
         }
     }
+}
+
+/// Validates a raw document against the schema and current `TreeSpec` limits.
+///
+/// Include traversal is the caller's responsibility. Used by migration after
+/// applying version rules and before writing.
+pub(crate) fn validate_value(schema: &Value, document: &Value) -> Vec<LintIssue> {
+    let mut issues = schema_issues(schema, document);
+    match serde_json::to_string(document) {
+        Ok(text) => match TreeSpec::from_json_str(&text) {
+            Ok(spec) => {
+                if let Err(error) = spec.validate(&ValidationLimits::default()) {
+                    issues.push(LintIssue::new(
+                        "limits",
+                        error.path().unwrap_or(""),
+                        error.message(),
+                    ));
+                }
+            }
+            Err(error) => issues.push(LintIssue::new(
+                "parse",
+                error.path().unwrap_or(""),
+                error.message(),
+            )),
+        },
+        Err(error) => issues.push(LintIssue::new(
+            "parse",
+            "",
+            format!("serialize migrated document: {error}"),
+        )),
+    }
+    issues
 }
 
 fn schema_issues(schema: &Value, document: &Value) -> Vec<LintIssue> {

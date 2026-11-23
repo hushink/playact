@@ -76,6 +76,13 @@ fn run(arguments: &[&str]) -> Output {
         .expect("run playact")
 }
 
+fn rename_manifest(directory: &TempDir) -> PathBuf {
+    directory.write(
+        "migrations.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"tree","to":"root"}]}]}"#,
+    )
+}
+
 fn registry_schema() -> String {
     let mut registry = NodeRegistry::<()>::new();
     registry
@@ -1197,6 +1204,261 @@ fn check_reports_includes_that_cannot_be_formatted() {
         fs::read_to_string(&child).expect("unchanged child"),
         original_child
     );
+}
+
+#[test]
+fn migrate_applies_manifest_to_root_and_includes() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}"#,
+    );
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let stdout = String::from_utf8_lossy(&migrated.stdout);
+    assert!(stdout.contains("migrated 2 file(s)"), "{stdout}");
+
+    for path in [&root, &shared] {
+        let text = fs::read_to_string(path).expect("migrated file");
+        let value: Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(value["version"], 1, "{text}");
+        assert!(value.get("root").is_some(), "{text}");
+        assert!(value.get("tree").is_none(), "{text}");
+    }
+
+    let linted = run(&["lint", root.to_str().expect("root path")]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn migrate_check_reports_without_writing() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original = fs::read_to_string(&root).expect("original");
+
+    let checked = run(&[
+        "migrate",
+        "--check",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("would migrate"), "{stderr}");
+    assert!(stderr.contains("1 file(s) would be migrated"), "{stderr}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_leaves_current_documents_byte_identical() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original = fs::read_to_string(&root).expect("original");
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let stdout = String::from_utf8_lossy(&migrated.stdout);
+    assert!(stdout.contains("nothing to migrate"), "{stdout}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_writes_nothing_when_validation_fails() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}"#,
+    );
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "break.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"},
+            {"op":"set_field","where":{"type":"sequence"},"field":"type","value":"no_such_node","overwrite":true}
+        ]}]}"#,
+    );
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_shared = fs::read_to_string(&shared).expect("original shared");
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!migrated.status.success(), "{migrated:?}");
+    let stderr = String::from_utf8_lossy(&migrated.stderr);
+    assert!(stderr.contains("no_such_node"), "{stderr}");
+    assert!(stderr.contains("no files were written"), "{stderr}");
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&shared).expect("shared"),
+        original_shared
+    );
+}
+
+#[test]
+fn migrate_reports_missing_includes_without_writing() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"include","path":"missing.json"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original = fs::read_to_string(&root).expect("original");
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!migrated.status.success(), "{migrated:?}");
+    let stderr = String::from_utf8_lossy(&migrated.stderr);
+    assert!(stderr.contains("missing.json"), "{stderr}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_json_reports_migrated_files() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}"#,
+    );
+    directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+
+    let migrated = run(&[
+        "migrate",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let report: Value = serde_json::from_slice(&migrated.stdout).expect("valid JSON report");
+    assert_eq!(report[0]["valid"], true);
+    assert_eq!(
+        report[0]["migrated"].as_array().map(Vec::len),
+        Some(2),
+        "{report}"
+    );
+}
+
+#[test]
+fn migrate_requires_a_manifest_and_valid_operations() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+
+    let missing = run(&["migrate", root.to_str().expect("root path")]);
+    assert!(!missing.status.success(), "{missing:?}");
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("--manifest"), "{stderr}");
+
+    let manifest = directory.write(
+        "invalid.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"x","to":"x"}]}]}"#,
+    );
+    let invalid = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!invalid.status.success(), "{invalid:?}");
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(stderr.contains("must differ"), "{stderr}");
+}
+
+#[test]
+fn migrate_detects_include_cycles_without_writing() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"include","path":"a.json"}}"#,
+    );
+    let included = directory.write(
+        "a.json",
+        r#"{"version":0,"tree":{"type":"include","path":"root.json"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_included = fs::read_to_string(&included).expect("original include");
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!migrated.status.success(), "{migrated:?}");
+    let stderr = String::from_utf8_lossy(&migrated.stderr);
+    assert!(stderr.contains("include cycle"), "{stderr}");
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&included).expect("include"),
+        original_included
+    );
+}
+
+#[test]
+fn migrate_accepts_yaml_manifests() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.yaml",
+        "version: 1\nmigrations:\n  - from: 0\n    operations:\n      - op: rename_field\n        from: tree\n        to: root\n",
+    );
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let value: Value =
+        serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
+    assert_eq!(value["version"], 1);
+    assert!(value.get("root").is_some());
 }
 
 #[test]

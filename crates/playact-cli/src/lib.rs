@@ -15,6 +15,7 @@
 //!   across the entire include graph;
 //! - `check`: validate configurations and verify canonical formatting without
 //!   writing;
+//! - `migrate`: apply declarative version migrations from a manifest;
 //! - `diff`: compare node structure, parameters, and include file sets.
 //!
 //! Registry-aware schemas produced by `NodeRegistry::json_schema()` can be
@@ -28,8 +29,9 @@ mod diff;
 mod format;
 mod graph;
 mod lint;
+mod migrate;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
@@ -58,6 +60,7 @@ Commands:
   graph    Render node structure and includes as Mermaid or DOT
   fmt      Validate and rewrite configurations (and includes) in canonical form
   check    Validate configurations and verify canonical formatting
+  migrate  Apply declarative version migrations from a manifest
   diff     Compare two configurations and their include file sets
 
 Run `playact <COMMAND> --help` for command options.";
@@ -118,6 +121,15 @@ Validates each configuration and its include graph, then checks canonical
 formatting for every lint-valid file. Writes nothing and exits nonzero when any
 file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
+const MIGRATE_USAGE: &str = "\
+usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--check] [--json] CONFIG...
+
+Applies versioned declarative field operations from a manifest to each
+configuration and its include graph, then validates every result. Operations
+are rename_field, remove_field, and set_field, targeted by `at` (JSON Pointer)
+or `where` (recursive object match). Files are written in place only when the
+whole graph is valid. --check reports files that would change without writing;
+--json prints per-root reports.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -153,6 +165,7 @@ pub fn main_entry() -> ExitCode {
         Some("graph") => run_graph(arguments),
         Some("fmt") => run_fmt(arguments),
         Some("check") => run_check(arguments),
+        Some("migrate") => run_migrate(arguments),
         Some("diff") => run_diff(arguments),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
@@ -583,7 +596,7 @@ fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
 
     let mut pending = Vec::new();
     for path in targets.values() {
-        match pending_format(path) {
+        match pending_write(path) {
             Ok(Some(item)) => pending.push(item),
             Ok(None) => {}
             Err(error) => {
@@ -610,7 +623,7 @@ fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         return Ok(Outcome::Success);
     }
 
-    apply_formats(&pending)?;
+    apply_writes(&pending)?;
     for item in &pending {
         println!("formatted {}", item.display);
     }
@@ -620,11 +633,11 @@ fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     Ok(Outcome::Success)
 }
 
-struct PendingFormat {
-    path: PathBuf,
-    display: String,
-    original: Vec<u8>,
-    formatted: Vec<u8>,
+pub(crate) struct PendingWrite {
+    pub(crate) path: PathBuf,
+    pub(crate) display: String,
+    pub(crate) original: Vec<u8>,
+    pub(crate) formatted: Vec<u8>,
 }
 
 fn add_target(targets: &mut BTreeMap<PathBuf, PathBuf>, path: &Path) {
@@ -632,7 +645,7 @@ fn add_target(targets: &mut BTreeMap<PathBuf, PathBuf>, path: &Path) {
     targets.entry(key).or_insert_with(|| path.to_path_buf());
 }
 
-fn pending_format(path: &Path) -> Result<Option<PendingFormat>, String> {
+fn pending_write(path: &Path) -> Result<Option<PendingWrite>, String> {
     let text =
         fs::read_to_string(path).map_err(|error| format!("read `{}`: {error}", path.display()))?;
     let format = format::Format::from_path(path)?;
@@ -645,7 +658,7 @@ fn pending_format(path: &Path) -> Result<Option<PendingFormat>, String> {
     if formatted == original {
         return Ok(None);
     }
-    Ok(Some(PendingFormat {
+    Ok(Some(PendingWrite {
         path: path.to_path_buf(),
         display: lint::display_path(path),
         original,
@@ -653,8 +666,8 @@ fn pending_format(path: &Path) -> Result<Option<PendingFormat>, String> {
     }))
 }
 
-fn apply_formats(pending: &[PendingFormat]) -> Result<(), String> {
-    let mut written: Vec<&PendingFormat> = Vec::new();
+pub(crate) fn apply_writes(pending: &[PendingWrite]) -> Result<(), String> {
+    let mut written: Vec<&PendingWrite> = Vec::new();
     for item in pending {
         if let Err(error) = fs::write(&item.path, &item.formatted) {
             let mut rollback_errors = Vec::new();
@@ -766,7 +779,7 @@ fn run_check(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         if invalid_files.contains(&display) {
             continue;
         }
-        match pending_format(path) {
+        match pending_write(path) {
             Ok(None) => {}
             Ok(Some(_)) => formatting.push(FormatFinding {
                 file: display,
@@ -825,6 +838,135 @@ fn print_format_findings(findings: &[FormatFinding]) {
     if would_reformat > 0 {
         eprintln!("{would_reformat} file(s) would be reformatted");
     }
+}
+
+fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
+    let mut manifest_path = None;
+    let mut schema_path = None;
+    let mut include_base = None;
+    let mut check = false;
+    let mut json_output = false;
+    let mut options_done = false;
+    let mut files = Vec::new();
+    let mut arguments = arguments.into_iter();
+
+    while let Some(argument) = arguments.next() {
+        if !options_done {
+            match argument.to_str() {
+                Some("-h" | "--help") => {
+                    println!("{MIGRATE_USAGE}");
+                    return Ok(Outcome::Success);
+                }
+                Some("--check") => {
+                    check = true;
+                    continue;
+                }
+                Some("--json") => {
+                    json_output = true;
+                    continue;
+                }
+                Some("-m" | "--manifest") => {
+                    manifest_path = Some(next_path(&mut arguments, "--manifest")?);
+                    continue;
+                }
+                Some("-s" | "--schema") => {
+                    schema_path = Some(next_path(&mut arguments, "--schema")?);
+                    continue;
+                }
+                Some("-b" | "--include-base") => {
+                    include_base = Some(next_path(&mut arguments, "--include-base")?);
+                    continue;
+                }
+                Some("--") => {
+                    options_done = true;
+                    continue;
+                }
+                Some(option) if option.starts_with('-') => {
+                    return Err(format!("unknown option `{option}`").into());
+                }
+                _ => {}
+            }
+        }
+        files.push(PathBuf::from(argument));
+    }
+    if files.is_empty() {
+        return Err(String::from("migrate requires at least one configuration path").into());
+    }
+    let manifest_path =
+        manifest_path.ok_or_else(|| String::from("migrate requires --manifest PATH"))?;
+
+    let schema = load_schema(schema_path.as_deref())?;
+    jsonschema::validator_for(&schema).map_err(|error| format!("invalid schema: {error}"))?;
+    let migrator = migrate::load_manifest(&manifest_path)?;
+    let outcome = migrate::migrate_files(&migrator, &schema, &files, include_base.as_deref());
+    let migrated = unique_migrated(&outcome.reports);
+    let invalid = outcome
+        .reports
+        .iter()
+        .filter(|report| !report.valid)
+        .count();
+    let has_issues = invalid > 0;
+
+    if !has_issues && !check && !outcome.writes.is_empty() {
+        apply_writes(&outcome.writes)?;
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&outcome.reports)?);
+    } else {
+        for report in outcome.reports.iter().filter(|report| !report.valid) {
+            print_labeled_issues(&report.file, &report.issues);
+        }
+        if invalid > 0 && outcome.reports.len() > 1 {
+            eprintln!(
+                "{invalid} of {} configuration(s) invalid",
+                outcome.reports.len()
+            );
+        }
+        if has_issues {
+            if !check && !migrated.is_empty() {
+                eprintln!("no files were written because validation failed");
+            }
+        } else if check {
+            for file in &migrated {
+                eprintln!("would migrate {file}");
+            }
+            if migrated.is_empty() {
+                println!(
+                    "{} configuration(s) valid; nothing to migrate",
+                    outcome.reports.len()
+                );
+            } else {
+                eprintln!("{} file(s) would be migrated", migrated.len());
+            }
+        } else {
+            for file in &migrated {
+                println!("migrated {file}");
+            }
+            if migrated.is_empty() {
+                println!(
+                    "{} configuration(s) valid; nothing to migrate",
+                    outcome.reports.len()
+                );
+            } else {
+                println!("migrated {} file(s)", migrated.len());
+            }
+        }
+    }
+
+    Ok(if has_issues || (check && !migrated.is_empty()) {
+        Outcome::Invalid
+    } else {
+        Outcome::Success
+    })
+}
+
+fn unique_migrated(reports: &[migrate::MigrationReport]) -> Vec<String> {
+    let mut files = BTreeSet::new();
+    for report in reports {
+        files.extend(report.migrated.iter().cloned());
+    }
+    files.into_iter().collect()
 }
 
 fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
@@ -904,8 +1046,12 @@ fn print_human_reports(reports: &[LintReport]) {
 }
 
 fn print_report_issues(report: &LintReport) {
-    eprintln!("{}:", report.file);
-    for issue in &report.issues {
+    print_labeled_issues(&report.file, &report.issues);
+}
+
+fn print_labeled_issues(label: &str, issues: &[LintIssue]) {
+    eprintln!("{label}:");
+    for issue in issues {
         if let Some(file) = &issue.file {
             eprintln!(
                 "  {} error in `{file}` at `{}`: {}",
@@ -1038,11 +1184,11 @@ fn write_output(path: Option<&Path>, contents: &[u8]) -> Result<(), Box<dyn Erro
 
 #[cfg(test)]
 mod tests {
-    use super::{PendingFormat, apply_formats};
+    use super::{PendingWrite, apply_writes};
     use std::fs;
 
     #[test]
-    fn apply_formats_restores_files_after_a_write_failure() {
+    fn apply_writes_restores_files_after_a_write_failure() {
         let root =
             std::env::temp_dir().join(format!("playact-cli-fmt-rollback-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -1053,20 +1199,20 @@ mod tests {
         fs::create_dir(&blocked).expect("create blocking directory");
 
         let pending = vec![
-            PendingFormat {
+            PendingWrite {
                 path: first.clone(),
                 display: String::from("first.json"),
                 original: b"old".to_vec(),
                 formatted: b"new".to_vec(),
             },
-            PendingFormat {
+            PendingWrite {
                 path: blocked,
                 display: String::from("blocked"),
                 original: b"old".to_vec(),
                 formatted: b"new".to_vec(),
             },
         ];
-        let error = apply_formats(&pending).expect_err("writing a directory fails");
+        let error = apply_writes(&pending).expect_err("writing a directory fails");
         assert!(error.contains("write `blocked`"), "{error}");
         assert!(error.contains("rollback failed for"), "{error}");
         assert_eq!(fs::read(&first).expect("read restored file"), b"old");

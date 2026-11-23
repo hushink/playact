@@ -707,8 +707,8 @@ let mut tree = spec.build(&registry)?;
 - [`examples/schema_export.rs`](examples/schema_export.rs) 可把该 schema 写到
   `target/playact-schema.json`；[配置参考](docs/config.zh-CN.md#编辑器补全) 给出
   VS Code 映射示例。工作区 `playact-cli` crate 还提供 `schema`、`catalog`、
-  `lint`、`convert`、`bundle`、`graph`、`fmt`、`check` 与 `diff` 命令，可读取
-  注册表感知的 schema 文件。
+  `lint`、`convert`、`bundle`、`graph`、`fmt`、`check`、`migrate` 与 `diff`
+  命令，可读取注册表感知的 schema 文件。
 - 用 `identified` 包装配置节点可指定稳定 `NodeId`：
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
@@ -755,6 +755,10 @@ let watcher =
 - `TreeWatcher::with_migrator` / `with_migrator_and_resolver` 与
   `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` 会在每次重载或
   刷新时重新执行迁移。
+- `playact migrate --manifest migrations.json CONFIG...` 按声明式
+  `rename_field`、`remove_field` 与 `set_field` 规则迁移根配置及其 include，校验
+  结果后原地写入；`--check` 可用于 dry run。任意复杂迁移仍应在应用内使用
+  `ConfigMigrator` 闭包。
 - 完整示例见 [`examples/config_migration.rs`](examples/config_migration.rs)：迁移
   v0 根配置与 include，构建并 tick。
 
