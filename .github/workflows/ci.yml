@@ -75,3 +75,7 @@ jobs:
       - name: Example reload_audit
         if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde --quiet > /dev/null
+
+      - name: Example save_game
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde --quiet > /dev/null

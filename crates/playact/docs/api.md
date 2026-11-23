@@ -1178,6 +1178,14 @@ Use `TestDriver` for virtual time, `StatsTracer` for counters,
 for state restoration. Fixed seeds on random/probability nodes make runs
 reproducible.
 
+### G. Save and resume
+
+With `snapshot-serde` and `blackboard-serde`, persist `TreeSnapshot::to_json()`
+and `BlackboardCodec::encode()` to files. On startup, rebuild the same tree,
+`restore()` the snapshot, `decode()` the blackboard, and resume ticking. World
+state is application-specific and must be saved separately. See
+[`examples/save_game.rs`](../examples/save_game.rs).
+
 ## 16. Module map
 
 | Module | Main types |

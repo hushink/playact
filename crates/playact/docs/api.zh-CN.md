@@ -1131,6 +1131,13 @@ shared.tick(&mut goblin_b, &mut world, time);
 用 `TestDriver` 控制虚拟时间，`StatsTracer` 统计计数，`TraceRecorder::diff` 比较节点级行为，
 `NodeIdSnapshot` 恢复状态。随机/概率节点使用固定 seed 即可复现。
 
+### G. 存档与恢复
+
+启用 `snapshot-serde` 与 `blackboard-serde` 后，把 `TreeSnapshot::to_json()` 与
+`BlackboardCodec::encode()` 写入文件。启动时重建同一棵树，调用 `restore()` 恢复
+节点状态、`decode()` 恢复黑板，再继续 tick。世界状态由应用自行保存。参考
+[`examples/save_game.rs`](../examples/save_game.rs)。
+
 ## 16. 模块索引
 
 | 模块 | 主要类型 |

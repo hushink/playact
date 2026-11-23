@@ -950,6 +950,7 @@ cargo run -p playact --example battle_ai_config --features config
 cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
+cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 ```
 
 - `battle_ai`：确定性的 1D 玩家 vs 三只哥布林战斗，展示 ReactiveSelector 打断、
@@ -964,6 +965,8 @@ cargo run -p playact --example reload_audit --features hot-reload,inspector,diff
 - `reload_audit`：嵌套 include 热重载、状态保持、revision 与时间戳历史、
   `/status.json` 以及增量 `/diffs.json?since=` 的端到端演示。设置
   `PLAYACT_AUDIT_SERVE=1` 可在持续修改配置时保留 inspector 服务。
+- `save_game`：把有状态树与 typed 黑板保存为 JSON，重建树后恢复两者，并验证
+  行为从保存进度继续、已完成的步骤不会重跑。
 
 ## 测试与基准
 

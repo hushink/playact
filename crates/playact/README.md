@@ -998,6 +998,7 @@ cargo run -p playact --example battle_ai_config --features config
 cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
+cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Shows
@@ -1013,6 +1014,9 @@ cargo run -p playact --example reload_audit --features hot-reload,inspector,diff
 - `reload_audit`: nested include hot reload with state preservation, revision and
   timestamp history, `/status.json`, and incremental `/diffs.json?since=`. Set
   `PLAYACT_AUDIT_SERVE=1` to keep the inspector running while you edit the config.
+- `save_game`: persists a stateful tree and typed blackboard to JSON, rebuilds the
+  tree, restores both, and verifies that progress resumes without re-running a
+  completed step.
 
 ## Testing and benchmarks
 

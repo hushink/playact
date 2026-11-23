@@ -84,6 +84,10 @@ name = "reload_audit"
 required-features = ["hot-reload", "inspector", "diff-serde"]
 
 [[example]]
+name = "save_game"
+required-features = ["blackboard-serde", "snapshot-serde"]
+
+[[example]]
 name = "battle_ai_showcase"
 required-features = ["hot-reload"]
 
