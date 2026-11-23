@@ -997,7 +997,8 @@ cargo run -p playact --example config_lint --features config,schema -- crates/pl
 - `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
   predicate、key、custom 与 subtree 名称，并演示描述、派生参数 schema、key 值类型与
   Markdown 节点目录。
-- `config_lint`：先用注册表 schema 校验配置，再构建树；错误带路径，失败时非零退出。
+- `config_lint`：先用注册表 schema 校验配置，再构建树；错误带字段路径，支持多文件与
+  `--json` 报告，任一文件失败时非零退出。
 
 ## 测试与基准
 

@@ -1054,8 +1054,9 @@ registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
 let catalog = registry.markdown_catalog(); // Markdown 节点目录
 ```
 
-`examples/config_lint.rs` 把 schema 校验与 `TreeSpec::build` 组合为部署前预检。
-完整编辑器配置见[配置参考](config.zh-CN.md#编辑器补全)。
+`examples/config_lint.rs` 把逐节点 schema 校验与 `TreeSpec::build` 组合为部署前
+预检，支持多文件与 JSON 报告。完整编辑器配置见
+[配置参考](config.zh-CN.md#编辑器补全)。
 
 ### 热重载
 

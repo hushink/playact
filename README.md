@@ -152,8 +152,9 @@ cargo run -p playact --example config_lint --features config,schema -- crates/pl
   action, condition, predicate, key, custom, and subtree names, with optional
   descriptions, derived parameter schemas, typed key values, and a Markdown
   node catalog.
-- `config_lint`: validates a configuration against the registry schema and then
-  builds it, reporting paths and exiting nonzero on failure.
+- `config_lint`: validates configurations against the registry schema and then
+  builds them, reporting field paths, accepting multiple files, and emitting a
+  JSON report with `--json`. Exits nonzero when any file is invalid.
 
 ## Feature flags
 
