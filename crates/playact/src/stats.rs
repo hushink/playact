@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::node::Kind;
+use crate::node::{Kind, NodeId};
 use crate::status::Status;
 use crate::trace::{TraceEvent, Tracer};
 
@@ -23,6 +23,8 @@ use crate::trace::{TraceEvent, Tracer};
 pub struct NodeStats {
     /// Node name from the most recent event.
     pub name: String,
+    /// Stable identity, when assigned.
+    pub id: Option<NodeId>,
     /// Node type.
     pub kind: Kind,
     /// Number of completed ticks.
@@ -49,6 +51,7 @@ impl NodeStats {
     fn new(name: &str, kind: Kind) -> Self {
         Self {
             name: String::from(name),
+            id: None,
             kind,
             ticks: 0,
             successes: 0,
@@ -131,6 +134,16 @@ impl StatsTracer {
         self.lock().nodes.get(path).cloned()
     }
 
+    /// Snapshot of the statistics for the given stable identity.
+    #[must_use]
+    pub fn node_by_id(&self, id: &NodeId) -> Option<NodeStats> {
+        self.lock()
+            .nodes
+            .values()
+            .find(|stats| stats.id.as_ref() == Some(id))
+            .cloned()
+    }
+
     /// Number of nodes tracked so far.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -158,6 +171,7 @@ impl StatsTracer {
 
     fn entry<'a>(
         inner: &'a mut Inner,
+        id: Option<&NodeId>,
         name: &str,
         kind: Kind,
         path: &[usize],
@@ -166,6 +180,7 @@ impl StatsTracer {
             .nodes
             .entry(path.to_vec())
             .or_insert_with(|| NodeStats::new(name, kind));
+        stats.id = id.cloned();
         stats.name = String::from(name);
         stats.kind = kind;
         stats
@@ -185,13 +200,18 @@ impl Tracer for StatsTracer {
         let mut inner = self.lock();
         match event {
             TraceEvent::Enter {
-                name, kind, path, ..
+                id,
+                name,
+                kind,
+                path,
+                ..
             } => {
                 let path = path.to_vec();
-                Self::entry(&mut inner, name, kind, &path);
+                Self::entry(&mut inner, id, name, kind, &path);
                 inner.active.insert(path, Instant::now());
             }
             TraceEvent::Exit {
+                id,
                 name,
                 kind,
                 path,
@@ -203,20 +223,28 @@ impl Tracer for StatsTracer {
                     .active
                     .remove(&path)
                     .map_or(Duration::ZERO, |start| start.elapsed());
-                Self::entry(&mut inner, name, kind, &path).record(status, elapsed);
+                Self::entry(&mut inner, id, name, kind, &path).record(status, elapsed);
             }
             TraceEvent::Abort {
-                name, kind, path, ..
+                id,
+                name,
+                kind,
+                path,
+                ..
             } => {
                 let path = path.to_vec();
                 inner.active.remove(&path);
-                Self::entry(&mut inner, name, kind, &path).aborts += 1;
+                Self::entry(&mut inner, id, name, kind, &path).aborts += 1;
             }
             TraceEvent::Error {
-                name, kind, path, ..
+                id,
+                name,
+                kind,
+                path,
+                ..
             } => {
                 let path = path.to_vec();
-                Self::entry(&mut inner, name, kind, &path).errors += 1;
+                Self::entry(&mut inner, id, name, kind, &path).errors += 1;
             }
         }
     }
@@ -293,6 +321,25 @@ mod tests {
         assert_eq!(root.errors, 1);
         assert_eq!(root.failures, 1);
         assert_eq!(root.last_status, Some(Status::Failure));
+    }
+
+    #[test]
+    fn stats_are_queryable_by_stable_id() {
+        let stats = StatsTracer::new();
+        let mut tree = BehaviorTreeBuilder::<()>::new("ids")
+            .sequence(|b| b.action("work", |_| Status::Success).id("worker"))
+            .build()
+            .expect("tree");
+        tree.set_tracer(Some(Box::new(stats.clone())));
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+
+        let worker = stats
+            .node_by_id(&NodeId::new("worker"))
+            .expect("worker stats");
+        assert_eq!(worker.name, "work");
+        assert_eq!(worker.last_status, Some(Status::Success));
     }
 
     #[test]

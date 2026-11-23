@@ -368,10 +368,12 @@ for (path, node) in stats.nodes() {
 tree.last_status(); // Option<Status>
 ```
 
-- `Tracer` receives `Enter` / `Exit` / `Abort` / `Error` events with a child-index path.
+- `Tracer` receives `Enter` / `Exit` / `Abort` / `Error` events with a child-index path
+  and the node's optional stable `NodeId`.
 - `MultiTracer` fans events out to multiple tracers.
 - `StatsTracer` tracks per-path tick counts, status counts, aborts, reported errors,
-  last status, and wall-clock time (requires `std`).
+  last status, and wall-clock time (requires `std`); query a specific node with
+  `node_by_id`.
 - `last_status()` and `is_running()` expose the last top-level result.
 - `describe()` renders an ASCII tree or Graphviz DOT; builder/app-config IDs appear in
   `TreeDescription::id` and DOT labels.

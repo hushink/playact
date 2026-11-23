@@ -360,10 +360,11 @@ for (path, node) in stats.nodes() {
 tree.last_status(); // Option<Status>
 ```
 
-- `Tracer` 接收 `Enter` / `Exit` / `Abort` / `Error` 事件，路径是子索引路径。
+- `Tracer` 接收 `Enter` / `Exit` / `Abort` / `Error` 事件，携带子索引路径与可选的
+  稳定 `NodeId`。
 - `MultiTracer` 将事件按注册顺序广播。
 - `StatsTracer` 按路径统计 tick、终态、abort、错误、最后状态与 wall-clock 耗时，
-  需要 `std`。
+  需要 `std`；可用 `node_by_id` 按稳定 ID 查询。
 - `last_status()` / `is_running()` 暴露上一次顶层结果。
 - `describe()` 输出 ASCII 树或 Graphviz DOT；builder/配置中的 `NodeId` 会出现在
   `TreeDescription::id` 和 DOT 标签中。

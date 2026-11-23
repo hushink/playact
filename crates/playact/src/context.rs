@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use crate::blackboard::Blackboard;
-use crate::node::{BoxedNode, Kind};
+use crate::node::{BoxedNode, Kind, NodeId};
 use crate::status::Status;
 use crate::time::Time;
 use crate::trace::{AbortReason, TraceEvent, Tracer};
@@ -12,6 +12,7 @@ use crate::trace::{AbortReason, TraceEvent, Tracer};
 struct TraceState<'a> {
     tracer: Option<&'a mut (dyn Tracer + Send)>,
     path: Vec<usize>,
+    current_id: Option<NodeId>,
 }
 
 impl<'a> TraceState<'a> {
@@ -19,6 +20,7 @@ impl<'a> TraceState<'a> {
         Self {
             tracer,
             path: Vec::new(),
+            current_id: None,
         }
     }
 }
@@ -103,9 +105,11 @@ impl<'a, W> Context<'a, W> {
 
         let message = alloc::format!("{error}");
         let path = &self.trace.path;
+        let id = self.trace.current_id.as_ref();
         let time = self.time;
         if let Some(tracer) = self.trace.tracer.as_mut() {
             tracer.event(TraceEvent::Error {
+                id,
                 name,
                 kind,
                 path,
@@ -125,11 +129,18 @@ impl<'a, W> Context<'a, W> {
         let kind = child.kind();
         let time = self.time;
         let tracing = self.trace.tracer.is_some();
+        let previous_id = if tracing {
+            core::mem::replace(&mut self.trace.current_id, child.id().cloned())
+        } else {
+            None
+        };
 
         if tracing {
             self.trace.path.push(index);
+            let id = self.trace.current_id.as_ref();
             if let Some(tracer) = self.trace.tracer.as_mut() {
                 tracer.event(TraceEvent::Enter {
+                    id,
                     name: child.name(),
                     kind,
                     path: &self.trace.path,
@@ -141,8 +152,10 @@ impl<'a, W> Context<'a, W> {
         let status = child.tick(self);
 
         if tracing {
+            let id = self.trace.current_id.as_ref();
             if let Some(tracer) = self.trace.tracer.as_mut() {
                 tracer.event(TraceEvent::Exit {
+                    id,
                     name: child.name(),
                     kind,
                     path: &self.trace.path,
@@ -151,6 +164,7 @@ impl<'a, W> Context<'a, W> {
                 });
             }
             self.trace.path.pop();
+            self.trace.current_id = previous_id;
         }
 
         status
@@ -165,11 +179,18 @@ impl<'a, W> Context<'a, W> {
         let kind = child.kind();
         let time = self.time;
         let tracing = self.trace.tracer.is_some();
+        let previous_id = if tracing {
+            core::mem::replace(&mut self.trace.current_id, child.id().cloned())
+        } else {
+            None
+        };
 
         if tracing {
             self.trace.path.push(index);
+            let id = self.trace.current_id.as_ref();
             if let Some(tracer) = self.trace.tracer.as_mut() {
                 tracer.event(TraceEvent::Abort {
+                    id,
                     name: child.name(),
                     kind,
                     path: &self.trace.path,
@@ -184,15 +205,23 @@ impl<'a, W> Context<'a, W> {
 
         if tracing {
             self.trace.path.pop();
+            self.trace.current_id = previous_id;
         }
     }
 
     pub(crate) fn tick_root(&mut self, root: &mut BoxedNode<W>) -> Status {
         let kind = root.kind();
         let time = self.time;
+        let tracing = self.trace.tracer.is_some();
+        let previous_id = if tracing {
+            core::mem::replace(&mut self.trace.current_id, root.id().cloned())
+        } else {
+            None
+        };
 
         if let Some(tracer) = self.trace.tracer.as_mut() {
             tracer.event(TraceEvent::Enter {
+                id: self.trace.current_id.as_ref(),
                 name: root.name(),
                 kind,
                 path: &[],
@@ -204,12 +233,16 @@ impl<'a, W> Context<'a, W> {
 
         if let Some(tracer) = self.trace.tracer.as_mut() {
             tracer.event(TraceEvent::Exit {
+                id: self.trace.current_id.as_ref(),
                 name: root.name(),
                 kind,
                 path: &[],
                 status,
                 time,
             });
+        }
+        if tracing {
+            self.trace.current_id = previous_id;
         }
 
         status
@@ -232,9 +265,16 @@ impl<'a, W> Context<'a, W> {
     pub(crate) fn abort_root(&mut self, root: &mut BoxedNode<W>, reason: AbortReason) {
         let kind = root.kind();
         let time = self.time;
+        let tracing = self.trace.tracer.is_some();
+        let previous_id = if tracing {
+            core::mem::replace(&mut self.trace.current_id, root.id().cloned())
+        } else {
+            None
+        };
 
         if let Some(tracer) = self.trace.tracer.as_mut() {
             tracer.event(TraceEvent::Abort {
+                id: self.trace.current_id.as_ref(),
                 name: root.name(),
                 kind,
                 path: &[],
@@ -245,5 +285,8 @@ impl<'a, W> Context<'a, W> {
 
         root.abort(self);
         root.reset();
+        if tracing {
+            self.trace.current_id = previous_id;
+        }
     }
 }

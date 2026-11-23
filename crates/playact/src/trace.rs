@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::node::Kind;
+use crate::node::{Kind, NodeId};
 use crate::status::Status;
 use crate::time::Time;
 
@@ -39,13 +39,16 @@ impl fmt::Display for AbortReason {
 ///
 /// `path` is the child-index path from the root to the current node: the root is
 /// `[]`, its first child is `[0]`, and the third child of the second child is
-/// `[1, 2]`. Events carry no wall-clock durations, preserving determinism under
-/// virtual time.
+/// `[1, 2]`. Each event also carries the node's optional stable [`NodeId`].
+/// Events carry no wall-clock durations, preserving determinism under virtual
+/// time.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub enum TraceEvent<'a> {
     /// The node started ticking.
     Enter {
+        /// Stable node identity, when assigned.
+        id: Option<&'a NodeId>,
         /// Node name.
         name: &'a str,
         /// Node type.
@@ -57,6 +60,8 @@ pub enum TraceEvent<'a> {
     },
     /// The node finished ticking.
     Exit {
+        /// Stable node identity, when assigned.
+        id: Option<&'a NodeId>,
         /// Node name.
         name: &'a str,
         /// Node type.
@@ -70,6 +75,8 @@ pub enum TraceEvent<'a> {
     },
     /// A Running subtree was abandoned.
     Abort {
+        /// Stable node identity, when assigned.
+        id: Option<&'a NodeId>,
         /// Node name.
         name: &'a str,
         /// Node type.
@@ -83,6 +90,8 @@ pub enum TraceEvent<'a> {
     },
     /// A node reported a recoverable error.
     Error {
+        /// Stable node identity, when assigned.
+        id: Option<&'a NodeId>,
         /// Node name.
         name: &'a str,
         /// Node type.
@@ -167,12 +176,14 @@ impl Tracer for TracingTracer {
     fn event(&mut self, event: TraceEvent<'_>) {
         match event {
             TraceEvent::Enter {
+                id,
                 name,
                 kind,
                 path,
                 time,
             } => tracing::debug!(
                 target: "playact",
+                id = ?id,
                 node = name,
                 kind = kind.as_str(),
                 ?path,
@@ -180,6 +191,7 @@ impl Tracer for TracingTracer {
                 "enter"
             ),
             TraceEvent::Exit {
+                id,
                 name,
                 kind,
                 path,
@@ -187,6 +199,7 @@ impl Tracer for TracingTracer {
                 time,
             } => tracing::debug!(
                 target: "playact",
+                id = ?id,
                 node = name,
                 kind = kind.as_str(),
                 ?path,
@@ -195,6 +208,7 @@ impl Tracer for TracingTracer {
                 "exit"
             ),
             TraceEvent::Abort {
+                id,
                 name,
                 kind,
                 path,
@@ -202,6 +216,7 @@ impl Tracer for TracingTracer {
                 time,
             } => tracing::debug!(
                 target: "playact",
+                id = ?id,
                 node = name,
                 kind = kind.as_str(),
                 ?path,
@@ -210,6 +225,7 @@ impl Tracer for TracingTracer {
                 "abort"
             ),
             TraceEvent::Error {
+                id,
                 name,
                 kind,
                 path,
@@ -217,6 +233,7 @@ impl Tracer for TracingTracer {
                 time,
             } => tracing::error!(
                 target: "playact",
+                id = ?id,
                 node = name,
                 kind = kind.as_str(),
                 ?path,
@@ -255,6 +272,7 @@ mod tests {
         multi.push(Box::new(second.clone()));
 
         multi.event(TraceEvent::Enter {
+            id: None,
             name: "node",
             kind: Kind::Action,
             path: &[],
