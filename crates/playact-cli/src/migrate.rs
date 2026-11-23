@@ -206,19 +206,27 @@ impl Operation {
     }
 
     fn target_description(&self) -> String {
+        self.plan_target().description()
+    }
+
+    fn plan_target(&self) -> PlanTarget {
         let (at, matcher) = self.target();
         if let Some(at) = at {
             if at.is_empty() {
-                String::from("root object")
+                PlanTarget::Root
             } else {
-                format!("at {at}")
+                PlanTarget::At {
+                    pointer: at.to_owned(),
+                }
             }
         } else if let Some(matcher) = matcher {
-            format!("where {}", compact_json(matcher))
+            PlanTarget::Where {
+                fields: matcher.clone(),
+            }
         } else if matches!(self, Self::MapValues { .. }) {
-            String::from("every object")
+            PlanTarget::EveryObject
         } else {
-            String::from("root object")
+            PlanTarget::Root
         }
     }
 
@@ -582,6 +590,56 @@ struct ManifestData {
     operations: BTreeMap<u32, Vec<LoadedOperation>>,
 }
 
+#[derive(Debug, Serialize)]
+struct ManifestPlan {
+    manifest: String,
+    sources: Vec<PlanSource>,
+    versions: Vec<PlanVersion>,
+}
+
+#[derive(Debug, Serialize)]
+struct PlanSource {
+    path: String,
+    depth: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct PlanVersion {
+    from: u32,
+    to: u32,
+    operations: Vec<PlanOperation>,
+}
+
+#[derive(Debug, Serialize)]
+struct PlanOperation {
+    index: usize,
+    op: &'static str,
+    source: String,
+    source_index: usize,
+    description: String,
+    target: PlanTarget,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+enum PlanTarget {
+    Root,
+    EveryObject,
+    At { pointer: String },
+    Where { fields: BTreeMap<String, Value> },
+}
+
+impl PlanTarget {
+    fn description(&self) -> String {
+        match self {
+            Self::Root => String::from("root object"),
+            Self::EveryObject => String::from("every object"),
+            Self::At { pointer } => format!("at {pointer}"),
+            Self::Where { fields } => format!("where {}", compact_json(fields)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct OperationSnapshot {
     runs: usize,
@@ -824,6 +882,46 @@ pub(crate) fn explain_manifest(path: &Path) -> Result<String, String> {
     Ok(render_plan(&load_manifest_data(path)?))
 }
 
+/// Builds the machine-readable migration plan.
+pub(crate) fn explain_manifest_json(path: &Path) -> Result<Value, String> {
+    serde_json::to_value(plan_from_data(&load_manifest_data(path)?))
+        .map_err(|error| format!("serialize migration plan: {error}"))
+}
+
+fn plan_from_data(data: &ManifestData) -> ManifestPlan {
+    ManifestPlan {
+        manifest: display_path(&data.root),
+        sources: data
+            .sources
+            .iter()
+            .map(|source| PlanSource {
+                path: source.path.clone(),
+                depth: source.depth,
+            })
+            .collect(),
+        versions: data
+            .operations
+            .iter()
+            .map(|(from, operations)| PlanVersion {
+                from: *from,
+                to: from + 1,
+                operations: operations
+                    .iter()
+                    .enumerate()
+                    .map(|(index, loaded)| PlanOperation {
+                        index: index + 1,
+                        op: loaded.operation.name(),
+                        source: loaded.source.clone(),
+                        source_index: loaded.source_index,
+                        description: loaded.operation.describe(),
+                        target: loaded.operation.plan_target(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 fn render_plan(data: &ManifestData) -> String {
     let mut output = String::new();
     output.push_str(&format!("manifest: {}\n", display_path(&data.root)));
@@ -869,16 +967,19 @@ fn render_plan(data: &ManifestData) -> String {
 }
 
 /// Type of a field-level migration change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ChangeKind {
+    /// The field was added.
     Added,
+    /// The field was removed.
     Removed,
+    /// The field value changed.
     Changed,
 }
 
 /// One field-level difference between the original and migrated document.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct FieldChange {
     /// File containing the field.
     pub file: String,
@@ -895,7 +996,7 @@ pub(crate) struct FieldChange {
 }
 
 /// One manifest operation that ran on a root's configuration graph.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct OperationReport {
     /// Source configuration version.
     pub from: u32,
@@ -915,7 +1016,7 @@ pub(crate) struct OperationReport {
 }
 
 /// Result of migrating one root configuration and its include graph.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct MigrationReport {
     /// Root path as provided on the command line.
     pub file: String,
@@ -968,6 +1069,15 @@ pub(crate) fn manifest_schema() -> Value {
         version["const"] = Value::from(MANIFEST_VERSION);
         version["default"] = Value::from(MANIFEST_VERSION);
     }
+    schema
+}
+
+/// JSON Schema for `--json` migration reports.
+pub(crate) fn report_schema() -> Value {
+    let mut schema = serde_json::to_value(schemars::schema_for!(Vec<MigrationReport>))
+        .expect("report schema serialization cannot fail");
+    schema["title"] = Value::from("MigrationReports");
+    schema["description"] = Value::from("Per-root reports emitted by `playact migrate --json`.");
     schema
 }
 

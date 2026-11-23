@@ -1091,10 +1091,11 @@ diffs, and `--output DIR` stages the complete include graph. `--json` includes
 per-operation `matched`/`changed` counts and relative source manifest paths, and
 `--strict` rejects operations that match no objects or change none before
 writing. `--manifest-schema` and `--init PATH` provide editor completion and a
-starter manifest. Manifests can include reusable fragments; operations for the
-same version merge in depth-first include order before local operations.
-`--explain --manifest` prints the resolved sources and merged operation plan
-without configuration files.
+starter manifest, and `--report-schema` describes the `--json` report shape.
+Manifests can include reusable fragments; operations for the same version merge
+in depth-first include order before local operations.
+`--explain [--json] --manifest` prints the resolved sources and merged operation
+plan without configuration files.
 
 ### Validation and schema
 

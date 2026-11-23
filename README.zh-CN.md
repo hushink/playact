@@ -170,12 +170,14 @@ cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json config/root.json
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
 cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
@@ -206,10 +208,11 @@ DIR` 暂存完整 include 图。`--check` 只报告不写文件，`--diff` 输�
 `--patch` 输出 unified diff，`--json` 输出包含变更、逐操作 `matched`/`changed`
 计数与相对来源清单路径的逐根报告。`--strict` 在写入前要求每条已执行操作至少匹配
 并修改一个对象，否则失败；不加该选项时，这类操作只在人类可读输出中产生警告。
-`--manifest-schema` 输出供编辑器补全的清单 JSON Schema，`--init PATH` 按扩展名生成
-starter 清单。清单可通过 `include` 复用片段；片段按版本合并操作、每个文件只加载一次，
-且必须位于根清单所在目录内。`--explain --manifest migrations.json` 不读取配置，直接
-输出解析后的片段来源与合并操作顺序。声明式规则无法表达任意 Rust 迁移；这类逻辑仍应
+`--manifest-schema` 输出供编辑器补全的清单 JSON Schema，`--report-schema` 输出
+`--json` 逐根报告的 schema；`--init PATH` 按扩展名生成 starter 清单。清单可通过
+`include` 复用片段；片段按版本合并操作、每个文件只加载一次，且必须位于根清单所在
+目录内。`--explain [--json] --manifest migrations.json` 不读取配置，直接输出人类可读
+或 JSON 格式的片段来源与合并操作顺序。声明式规则无法表达任意 Rust 迁移；这类逻辑仍应
 使用应用内的 `ConfigMigrator`。`diff` 先校验两个配置，再按路径报告节点、参数与
 include 文件集合变化；子节点按 type 与 name/kind/key 匹配，插入与重排会报告为
 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，其变化带有

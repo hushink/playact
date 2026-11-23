@@ -1844,6 +1844,52 @@ fn migrate_manifest_schema_and_init_template() {
 }
 
 #[test]
+fn migrate_report_schema_matches_json_reports() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let migrated = run(&[
+        "migrate",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let report: Value = serde_json::from_slice(&migrated.stdout).expect("valid JSON report");
+
+    let schema_output = run(&["migrate", "--report-schema"]);
+    assert!(schema_output.status.success(), "{schema_output:?}");
+    let schema: Value = serde_json::from_slice(&schema_output.stdout).expect("valid report schema");
+    assert_eq!(
+        schema["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert!(
+        schema
+            .pointer("/$defs/OperationReport/properties/source")
+            .is_some(),
+        "{schema}"
+    );
+    assert!(
+        schema
+            .pointer("/$defs/OperationReport/properties/source_index")
+            .is_some(),
+        "{schema}"
+    );
+    let validator = jsonschema::validator_for(&schema).expect("valid report schema");
+    validator.validate(&report).expect("report follows schema");
+
+    let conflict = run(&["migrate", "--report-schema", "--manifest-schema"]);
+    assert!(!conflict.status.success(), "{conflict:?}");
+    let stderr = String::from_utf8_lossy(&conflict.stderr);
+    assert!(stderr.contains("cannot be combined"), "{stderr}");
+}
+
+#[test]
 fn migrate_init_supports_yaml_manifests() {
     let directory = TempDir::new();
     let template_path = directory.path.join("migrations.yaml");
@@ -2082,6 +2128,46 @@ fn migrate_explain_prints_resolved_plan() {
     }
     assert_eq!(stdout.matches("source: ").count(), 3, "{stdout}");
     assert_eq!(stdout.matches("(operation 1)").count(), 3, "{stdout}");
+
+    let json = run(&[
+        "migrate",
+        "--explain",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+    ]);
+    assert!(json.status.success(), "{json:?}");
+    let plan: Value = serde_json::from_slice(&json.stdout).expect("valid plan JSON");
+    assert!(
+        plan["manifest"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("migrations.json")),
+        "{plan}"
+    );
+    let sources = plan["sources"].as_array().expect("plan sources");
+    assert_eq!(sources[0]["path"], "migrations.json", "{plan}");
+    assert_eq!(sources[0]["depth"], 0);
+    let source_paths: Vec<_> = sources
+        .iter()
+        .filter_map(|source| source["path"].as_str())
+        .collect();
+    assert!(source_paths.contains(&"fragments/base.json"), "{plan}");
+    assert!(source_paths.contains(&"fragments/common.json"), "{plan}");
+    assert!(source_paths.contains(&"fragments/extra.yaml"), "{plan}");
+    let version = &plan["versions"][0];
+    assert_eq!(version["from"], 0, "{plan}");
+    assert_eq!(version["to"], 1, "{plan}");
+    let operations = version["operations"].as_array().expect("plan operations");
+    assert_eq!(operations.len(), 3, "{plan}");
+    assert_eq!(operations[0]["op"], "rename_field");
+    assert_eq!(operations[0]["source"], "fragments/common.json");
+    assert_eq!(operations[0]["source_index"], 1);
+    assert_eq!(operations[0]["description"], "rename_field tree -> root");
+    assert_eq!(operations[0]["target"]["scope"], "root");
+    assert_eq!(operations[1]["target"]["scope"], "where");
+    assert_eq!(operations[1]["target"]["fields"]["type"], "legacy");
+    assert_eq!(operations[2]["target"]["scope"], "at");
+    assert_eq!(operations[2]["target"]["pointer"], "/root");
 
     let with_config = run(&[
         "migrate",

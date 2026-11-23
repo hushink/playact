@@ -153,10 +153,11 @@ include，然后构建并 tick。
 片段使用相同结构，并可继续 include 其他片段。路径相对于包含它的清单文件，并按扩展名
 选择 JSON、TOML、YAML 或 RON。
 
-生成清单 schema 与 starter 清单：
+生成清单 schema、`--json` 报告 schema 与 starter 清单：
 
 ```text
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
 cargo run -p playact-cli -- migrate --init migrations.json
 ```
 
@@ -176,7 +177,14 @@ cargo run -p playact-cli -- migrate --init migrations.json
 
 ```text
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 ```
+
+`--explain --json` 输出 `manifest`（规范化的根清单路径）、带 `path` / `depth` 的
+`sources`，以及带 `from` / `to` / `operations` 的 `versions`。每条操作包含合并后的
+`index`、`op`、相对 `source`、`source_index`、`description` 与结构化 `target`：
+`scope` 为 `root`、`every_object`、`at` 或 `where`；`at` 附带 `pointer`，`where`
+附带 `fields`。
 
 - `version` 是清单格式版本（`1`），不是配置版本。
 - `include` 是可选的片段清单数组。路径必须为相对路径、位于根清单所在目录内，并解析到
@@ -214,8 +222,9 @@ cargo run -p playact-cli -- migrate --explain --manifest migrations.json
   `--strict` 在写入前拒绝未匹配任何对象或未修改任何对象的已执行操作；未启用时这类操作
   只在人类可读输出中产生警告，并包含相对来源清单路径。任意 Rust 变换仍需应用中的
   `ConfigMigrator` 闭包。
-- `--explain --manifest migrations.json` 输出片段来源树、合并后的操作顺序、来源位置与
-  目标选择器。它只读取清单，不接受配置路径，也不写文件。
+- `--explain [--json] --manifest migrations.json` 输出片段来源树、合并后的操作顺序、
+  来源位置与目标选择器。它只读取清单，不接受配置路径，也不写文件。
+- `--report-schema` 输出 `--json` 数组的 Draft 2020-12 schema，包含来源与操作计数。
 - `--output DIR` 只接受一个根配置，不能与 `--check` 组合，并把完整 include 图写入
   新的或空的目录而不修改源文件。include 字符串保持不变，且必须像 `bundle` 一样在
   词法上位于 include 基准目录内；加载暂存根文件时以 `DIR` 作为 include 基准目录。
@@ -545,6 +554,7 @@ cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
 cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
@@ -552,6 +562,7 @@ cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json co
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -582,9 +593,10 @@ include 基准目录内或自行调整。`convert --recursive --format FORMAT` �
 图，所有文件有效时才原地写入；`--check` 只报告待迁移文件，`--diff` 输出字段级变化，
 `--patch` 输出 unified diff，`--output DIR` 暂存完整图，`--json` 输出包含变更、操作
 命中计数与来源清单路径的逐根报告。`--strict` 在写入前拒绝未匹配任何对象或未修改任何
-对象的已执行操作。`--manifest-schema` 输出清单 JSON Schema，`--init PATH` 写入 starter
-清单，`--explain` 不读取配置，直接输出解析后的来源与合并操作。RON 格式化使用解析后的
-spec 序列化，因为 RON 的通用 map 语法无法反序列化为
+对象的已执行操作。`--manifest-schema` 输出清单 JSON Schema，`--report-schema` 输出
+`--json` 报告 schema，`--init PATH` 写入 starter 清单，`--explain [--json]` 不读取配置，
+直接输出解析后的来源与合并操作。RON 格式化使用解析后的 spec 序列化，因为 RON 的通用
+map 语法无法反序列化为
 `TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
 参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
 重排会报告为 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，

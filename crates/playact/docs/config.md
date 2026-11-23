@@ -161,10 +161,11 @@ Fragments use the same shape and may include further fragments. Paths are
 relative to the containing manifest and select JSON, TOML, YAML, or RON by
 extension.
 
-Generate the manifest schema and a starter manifest:
+Generate the manifest schema, the `--json` report schema, and a starter manifest:
 
 ```text
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
 cargo run -p playact-cli -- migrate --init migrations.json
 ```
 
@@ -186,7 +187,14 @@ configuration files:
 
 ```text
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 ```
+
+`--explain --json` emits `manifest` (the canonical root path), `sources` with
+`path` / `depth`, and `versions` with `from` / `to` / `operations`. Each operation
+carries its merged `index`, `op`, relative `source`, `source_index`,
+`description`, and a structured `target`: `scope` is `root`, `every_object`,
+`at`, or `where`; `at` adds `pointer` and `where` adds `fields`.
 
 - `version` is the manifest format version (`1`), not the configuration version.
 - `include` is an optional array of fragment manifests. Paths must be relative,
@@ -240,9 +248,11 @@ cargo run -p playact-cli -- migrate --explain --manifest migrations.json
   objects or changed none; without it, those operations produce warnings in human
   output with their relative source manifest path. Custom Rust transformations
   still require a `ConfigMigrator` closure in the application.
-- `--explain --manifest migrations.json` prints the fragment source tree and
-  merged operations with their source positions and target selectors. It reads
+- `--explain [--json] --manifest migrations.json` prints the fragment source tree
+  and merged operations with their source positions and target selectors. It reads
   only manifests, accepts no configuration paths, and writes nothing.
+- `--report-schema` prints a Draft 2020-12 JSON Schema for the array emitted by
+  `--json`, including source provenance and operation counters.
 - `--output DIR` requires exactly one root, cannot be combined with `--check`,
   and stages the complete include graph into a new or empty directory instead of
   modifying sources. Include strings are preserved and must stay lexically
@@ -594,6 +604,7 @@ cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
 cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
@@ -601,6 +612,7 @@ cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json co
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -644,8 +656,9 @@ prints field-level changes, `--patch` prints unified diffs, `--output DIR` stage
 the complete graph, and `--json` reports per-root results with changes, operation
 match counts, and source manifest paths. `--strict` rejects executed operations
 that match no objects or change none before writing. `--manifest-schema` prints
-the manifest JSON Schema, `--init PATH` writes a starter manifest, and `--explain`
-prints the resolved sources and merged operations without configuration files.
+the manifest JSON Schema, `--report-schema` prints the `--json` report schema,
+`--init PATH` writes a starter manifest, and `--explain [--json]` prints the
+resolved sources and merged operations without configuration files.
 RON formatting serializes the parsed spec because RON's generic map syntax does
 not deserialize as a `TreeSpec`; other formats preserve the original field
 presence. `diff` validates both inputs, then reports path-based node, parameter,

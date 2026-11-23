@@ -182,12 +182,14 @@ cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json config/root.json
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
+cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
 cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
@@ -230,13 +232,14 @@ counts, and the relative source manifest path. `--strict` fails before writing
 when an executed operation matches no objects or changes none; without it, such
 operations are warnings in human output.
 `--manifest-schema` prints the manifest JSON Schema for editor completion, and
-`--init PATH` writes a starter manifest in the format selected by the extension.
-Manifests can include reusable fragments through an `include` array; fragments
-merge operations by version, are loaded once, and must stay inside the root
-manifest's directory. `--explain --manifest migrations.json` prints the resolved
-fragment sources and merged operation order without reading configurations.
-Declarative rules cannot express arbitrary Rust migrations; use `ConfigMigrator`
-in the application for those. `diff` validates two configurations, then reports
+`--report-schema` prints the schema for `--json` per-root reports. `--init PATH`
+writes a starter manifest in the format selected by the extension. Manifests can
+include reusable fragments through an `include` array; fragments merge operations
+by version, are loaded once, and must stay inside the root manifest's directory.
+`--explain [--json] --manifest migrations.json` prints the resolved fragment
+sources and merged operation order without reading configurations. Declarative
+rules cannot express arbitrary Rust migrations; use `ConfigMigrator` in the
+application for those. `diff` validates two configurations, then reports
 path-based node, parameter, and include-file set changes; child nodes are matched
 by type and name/kind/key, so insertions and reorders report moves rather than
 changing every later index. Included files with matching relative paths are

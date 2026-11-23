@@ -124,8 +124,9 @@ file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
 usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] [--strict] CONFIG...
-       playact migrate --manifest PATH --explain
+       playact migrate --manifest PATH --explain [--json]
        playact migrate --manifest-schema
+       playact migrate --report-schema
        playact migrate --init PATH
 
 Applies versioned declarative operations from a manifest to each configuration
@@ -147,9 +148,11 @@ operation matches no objects or changes none; without it, such operations are
 warnings in human output.
 
 --explain prints the resolved fragment sources and merged operation plan without
-reading configurations or writing files. --manifest-schema prints the manifest
-JSON Schema. --init PATH writes a starter manifest, choosing JSON/TOML/YAML/RON
-from the extension and refusing to overwrite an existing file.";
+reading configurations or writing files; --json prints that plan as JSON.
+--manifest-schema prints the manifest JSON Schema, and --report-schema prints the
+schema for --json migration reports. --init PATH writes a starter manifest,
+choosing JSON/TOML/YAML/RON from the extension and refusing to overwrite an
+existing file.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -872,6 +875,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut strict = false;
     let mut explain = false;
     let mut show_manifest_schema = false;
+    let mut show_report_schema = false;
     let mut init_manifest = None;
     let mut options_done = false;
     let mut files = Vec::new();
@@ -886,6 +890,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--manifest-schema") => {
                     show_manifest_schema = true;
+                    continue;
+                }
+                Some("--report-schema") => {
+                    show_report_schema = true;
                     continue;
                 }
                 Some("--init") => {
@@ -944,9 +952,17 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         }
         files.push(PathBuf::from(argument));
     }
-    if show_manifest_schema || init_manifest.is_some() {
+    if show_manifest_schema || show_report_schema || init_manifest.is_some() {
         if show_manifest_schema && init_manifest.is_some() {
             return Err(String::from("--manifest-schema cannot be combined with --init").into());
+        }
+        if show_manifest_schema && show_report_schema {
+            return Err(
+                String::from("--manifest-schema cannot be combined with --report-schema").into(),
+            );
+        }
+        if show_report_schema && init_manifest.is_some() {
+            return Err(String::from("--report-schema cannot be combined with --init").into());
         }
         if !files.is_empty()
             || manifest_path.is_some()
@@ -969,6 +985,13 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&migrate::manifest_schema())?
+            );
+            return Ok(Outcome::Success);
+        }
+        if show_report_schema {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&migrate::report_schema())?
             );
             return Ok(Outcome::Success);
         }
@@ -995,7 +1018,6 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             || include_base.is_some()
             || output.is_some()
             || check
-            || json_output
             || diff_output
             || patch_output
             || strict
@@ -1007,7 +1029,14 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         }
         let manifest_path = manifest_path
             .ok_or_else(|| String::from("migrate --explain requires --manifest PATH"))?;
-        print!("{}", migrate::explain_manifest(&manifest_path)?);
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&migrate::explain_manifest_json(&manifest_path)?)?
+            );
+        } else {
+            print!("{}", migrate::explain_manifest(&manifest_path)?);
+        }
         return Ok(Outcome::Success);
     }
     if files.is_empty() {

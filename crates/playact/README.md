@@ -803,14 +803,15 @@ let watcher =
   and cannot be combined with `--check`). `--strict` fails before writing when an
   executed operation matches no objects or changes none; otherwise those
   operations are warnings in human output.
-  `--manifest-schema` prints the manifest JSON Schema for editor completion, and
+  `--manifest-schema` prints the manifest JSON Schema for editor completion,
+  `--report-schema` prints the schema for `--json` migration reports, and
   `--init PATH` writes a starter manifest. Manifests can include reusable
   fragments through `include`; operations for the same version merge from
   fragments before local operations, and fragment paths stay inside the root
-  manifest's directory. `--explain --manifest migrations.json` prints the
-  resolved fragment sources and merged operation plan without configuration
-  files. Arbitrary migrations still belong in a `ConfigMigrator` closure inside
-  the application.
+  manifest's directory. `--explain [--json] --manifest migrations.json` prints a
+  human-readable or JSON plan of the resolved fragment sources and merged
+  operations without configuration files. Arbitrary migrations still belong in a
+  `ConfigMigrator` closure inside the application.
 - See [`examples/config_migration.rs`](examples/config_migration.rs) for a v0
   root and include that are migrated, built, and ticked.
 

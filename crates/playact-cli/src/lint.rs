@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use playact::config::{MAX_INCLUDE_DEPTH, TreeSpec, ValidationLimits};
+use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -13,7 +14,7 @@ use crate::format::Format;
 const MAX_NODE_DEPTH: usize = 128;
 
 /// One lint finding.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct LintIssue {
     /// Origin of the issue, such as `schema`, `parse`, `limits`, `include`, `format`, or `io`.
     pub source: &'static str,
