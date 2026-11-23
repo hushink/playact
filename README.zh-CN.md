@@ -181,8 +181,9 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 
 测试覆盖所有节点、构建器、配置层、重载、远程加载、快照、异步适配器、公共 API
 集成测试、doctest、compile-fail 检查与确定性随机压力测试。基准零第三方依赖，
-覆盖 tick、黑板读写、构建与 `describe`。CI 覆盖 stable 与 MSRV 1.92、Linux 与
-Windows、嵌入式 `no_std` 检查，以及各 feature 组合的零警告构建。
+覆盖 tick、黑板读写、构建与 `describe`。另有零依赖测试校验 README 与 `docs/`
+中的相对 Markdown 链接是否存在。CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows、
+嵌入式 `no_std` 检查，以及各 feature 组合的零警告构建。
 
 ## 文档
 

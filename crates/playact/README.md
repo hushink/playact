@@ -1041,6 +1041,8 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - `tests/stress.rs` generates deterministic random trees (including services, weighted
   and utility selection, race, guard, and snapshot/restore) and checks tick, abort,
   reset, describe, and Send invariants.
+- `tests/docs_links.rs` verifies that relative Markdown links in the READMEs and
+  `docs/` resolve, skipping external URLs and fenced code.
 - `benches/engine.rs` is a dependency-free microbenchmark suite for tick paths,
   blackboard access, construction, and describe output.
 - CI runs stable and MSRV 1.92 on Linux and Windows, an embedded no_std check,

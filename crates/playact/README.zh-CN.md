@@ -989,6 +989,8 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 - 公共 API 集成测试与 doctest 以用户视角验证 crate。
 - `tests/stress.rs` 用固定 seed 生成随机树（含 services、加权/效用选择、race、
   guard 与快照恢复），验证 tick / abort / reset / describe / Send 不变量。
+- `tests/docs_links.rs` 校验 README 与 `docs/` 中的相对 Markdown 链接，跳过外链与
+  代码块。
 - `benches/engine.rs` 是零第三方依赖的微基准，覆盖 tick、黑板、构建与 describe。
 - CI 覆盖 stable 与 MSRV 1.92、Linux 与 Windows、嵌入式 no_std 检查，以及各
   feature 组合的零警告构建。
