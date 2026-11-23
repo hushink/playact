@@ -403,6 +403,19 @@ Custom nodes can opt in with `Node::save_state` / `Node::load_state`. Composite 
 nodes must encode their children recursively.
 
 > [!WARNING]
+For trees whose structure may change, assign IDs and use the order-independent snapshot:
+
+```rust
+let snapshot = tree.snapshot_by_id()?; // NodeIdSnapshot
+let mut rebuilt = build_reordered_tree();
+rebuilt.restore_by_id(&snapshot)?;
+```
+
+Built-in stateful nodes implement `save_own_state` / `load_own_state` and
+`children_mut`, so their own progress is restored by ID even if children are reordered.
+Custom nodes must implement the same methods to participate. Dynamic `SubtreeSlot`
+children and nested-tree services are not traversed by ID snapshots.
+
 > Node snapshots do not include the world, blackboard values, closure captures,
 > `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those
 > separately. Time-based nodes store absolute `Time.now` values, so restore on the same

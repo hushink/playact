@@ -200,6 +200,18 @@ impl<W> Node<W> for Wait<W> {
         Kind::Wait
     }
 
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.start))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(start) = state::decode::<Option<Duration>>(bytes) else {
+            return false;
+        };
+        self.start = start;
+        true
+    }
+
     fn save_state(&self) -> Option<Vec<u8>> {
         Some(state::encode(&self.start))
     }

@@ -16,6 +16,10 @@ fn single_child<W>(child: &BoxedNode<W>) -> &[BoxedNode<W>] {
     core::slice::from_ref(child)
 }
 
+fn single_child_mut<W>(child: &mut BoxedNode<W>) -> &mut [BoxedNode<W>] {
+    core::slice::from_mut(child)
+}
+
 fn load_child_state<W>(child: &mut BoxedNode<W>, state: Option<Vec<u8>>) -> bool {
     match state {
         Some(state) => child.load_state(&state),
@@ -76,6 +80,10 @@ impl<W> Node<W> for Inverter<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -141,6 +149,10 @@ impl<W> Node<W> for AlwaysSucceed<W> {
         single_child(&self.child)
     }
 
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
     fn save_state(&self) -> Option<Vec<u8>> {
         self.child.save_state()
     }
@@ -200,6 +212,10 @@ impl<W> Node<W> for AlwaysFail<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -302,6 +318,25 @@ impl<W> Node<W> for Repeat<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.done))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(done) = state::decode::<usize>(bytes) else {
+            return false;
+        };
+        if done > self.times.get() {
+            return false;
+        }
+        self.done = done;
+        true
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -413,6 +448,26 @@ impl<W> Node<W> for Retry<W> {
         single_child(&self.child)
     }
 
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(self.attempts, self.child_running)))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((attempts, child_running)) = state::decode::<(usize, bool)>(bytes) else {
+            return false;
+        };
+        if attempts > self.max_attempts.get() {
+            return false;
+        }
+        self.attempts = attempts;
+        self.child_running = child_running;
+        true
+    }
+
     fn save_state(&self) -> Option<Vec<u8>> {
         Some(state::encode(&(
             self.attempts,
@@ -505,6 +560,22 @@ impl<W> Node<W> for UntilSuccess<W> {
         single_child(&self.child)
     }
 
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.child_running))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(child_running) = state::decode::<bool>(bytes) else {
+            return false;
+        };
+        self.child_running = child_running;
+        true
+    }
+
     fn save_state(&self) -> Option<Vec<u8>> {
         Some(state::encode(&(
             self.child_running,
@@ -585,6 +656,22 @@ impl<W> Node<W> for UntilFailure<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.child_running))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(child_running) = state::decode::<bool>(bytes) else {
+            return false;
+        };
+        self.child_running = child_running;
+        true
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -671,6 +758,22 @@ impl<W> Node<W> for Cooldown<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.last_success))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(last_success) = state::decode::<Option<Duration>>(bytes) else {
+            return false;
+        };
+        self.last_success = last_success;
+        true
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -780,6 +883,23 @@ impl<W> Node<W> for Timeout<W> {
         single_child(&self.child)
     }
 
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(self.start, self.child_running)))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((start, child_running)) = state::decode::<(Option<Duration>, bool)>(bytes) else {
+            return false;
+        };
+        self.start = start;
+        self.child_running = child_running;
+        true
+    }
+
     fn save_state(&self) -> Option<Vec<u8>> {
         Some(state::encode(&(
             self.start,
@@ -871,6 +991,25 @@ impl<W> Node<W> for Limiter<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.used))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(used) = state::decode::<usize>(bytes) else {
+            return false;
+        };
+        if used > self.max.get() {
+            return false;
+        }
+        self.used = used;
+        true
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -969,6 +1108,22 @@ impl<W> Node<W> for Guard<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.running))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(running) = state::decode::<bool>(bytes) else {
+            return false;
+        };
+        self.running = running;
+        true
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -1073,6 +1228,26 @@ impl<W> Node<W> for Throttle<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(self.window_start, self.used)))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((window_start, used)) = state::decode::<(Option<Duration>, usize)>(bytes) else {
+            return false;
+        };
+        if used > self.max.get() {
+            return false;
+        }
+        self.window_start = window_start;
+        self.used = used;
+        true
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {

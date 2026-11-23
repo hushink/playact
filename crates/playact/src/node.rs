@@ -251,6 +251,18 @@ impl<W> Node<W> for IdentifiedNode<W> {
         self.inner.children()
     }
 
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        self.inner.children_mut()
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        self.inner.save_own_state()
+    }
+
+    fn load_own_state(&mut self, state: &[u8]) -> bool {
+        self.inner.load_own_state(state)
+    }
+
     fn save_state(&self) -> Option<Vec<u8>> {
         self.inner.save_state()
     }
@@ -308,6 +320,29 @@ pub trait Node<W>: Send {
     /// tooling.
     fn children(&self) -> &[BoxedNode<W>] {
         &[]
+    }
+
+    /// Mutable direct children; empty by default.
+    ///
+    /// Required for ID-keyed snapshot traversal. Custom composites that want
+    /// their children restored from [`NodeIdSnapshot`] must implement it.
+    ///
+    /// [`NodeIdSnapshot`]: crate::NodeIdSnapshot
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        &mut []
+    }
+
+    /// Export only this node's own state, excluding child state.
+    ///
+    /// Used by ID-keyed snapshots. The default is `None`; stateful custom nodes
+    /// must implement this together with [`Node::load_own_state`].
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Load state produced by [`Node::save_own_state`].
+    fn load_own_state(&mut self, _state: &[u8]) -> bool {
+        false
     }
 
     /// Export the node's internal state; unsupported by default, returns `None`.

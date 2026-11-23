@@ -5,14 +5,18 @@
 //! `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or external resources.
 //! Restore into the same tree structure; each node owns its custom state format.
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::node::BoxedNode;
+use crate::node::{BoxedNode, Node, NodeId};
 
-/// Current snapshot format version.
+/// Current structural snapshot format version.
 pub const SNAPSHOT_VERSION: u32 = 1;
+
+/// Current ID-keyed snapshot format version.
+pub const NODE_ID_SNAPSHOT_VERSION: u32 = 1;
 
 /// A state snapshot of a behavior tree.
 ///
@@ -29,6 +33,57 @@ pub struct TreeSnapshot {
     /// Service node states, in service registration order.
     pub services: Vec<Option<Vec<u8>>>,
 }
+
+/// A snapshot keyed by stable [`NodeId`].
+///
+/// Unlike [`TreeSnapshot`], this format is independent of child order: every
+/// stateful node with an ID stores its own state in `nodes`. Nodes without IDs
+/// or without [`Node::save_own_state`] support are not included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeIdSnapshot {
+    /// Snapshot format version, normally [`NODE_ID_SNAPSHOT_VERSION`].
+    pub version: u32,
+    /// Own state for each stateful node that has an ID.
+    pub nodes: BTreeMap<NodeId, Vec<u8>>,
+}
+
+/// Errors produced while capturing or restoring an ID-keyed snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NodeIdSnapshotError {
+    /// The snapshot version is not supported.
+    UnsupportedVersion {
+        /// Version found in the snapshot.
+        found: u32,
+        /// Currently supported version.
+        supported: u32,
+    },
+    /// The tree contains the same [`NodeId`] more than once.
+    DuplicateId(String),
+    /// The snapshot contains an ID that does not exist in the tree.
+    UnknownId(String),
+    /// A node rejected its own state.
+    InvalidState {
+        /// Node identity.
+        id: String,
+    },
+}
+
+impl fmt::Display for NodeIdSnapshotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedVersion { found, supported } => write!(
+                f,
+                "unsupported ID snapshot version {found}; supported is {supported}"
+            ),
+            Self::DuplicateId(id) => write!(f, "duplicate node id `{id}`"),
+            Self::UnknownId(id) => write!(f, "ID snapshot contains unknown node `{id}`"),
+            Self::InvalidState { id } => write!(f, "node `{id}` rejected its own snapshot state"),
+        }
+    }
+}
+
+impl core::error::Error for NodeIdSnapshotError {}
 
 /// Errors found while restoring a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +204,102 @@ pub(crate) fn load_children<W>(children: &mut [BoxedNode<W>], states: &[Option<V
     }
 
     true
+}
+
+pub(crate) fn capture_by_id<W>(
+    root: &BoxedNode<W>,
+    services: &[BoxedNode<W>],
+) -> Result<NodeIdSnapshot, NodeIdSnapshotError> {
+    let mut nodes = BTreeMap::new();
+    let mut seen = BTreeSet::new();
+
+    capture_node_by_id(root.as_ref(), &mut nodes, &mut seen)?;
+    for service in services {
+        capture_node_by_id(service.as_ref(), &mut nodes, &mut seen)?;
+    }
+
+    Ok(NodeIdSnapshot {
+        version: NODE_ID_SNAPSHOT_VERSION,
+        nodes,
+    })
+}
+
+fn capture_node_by_id<W>(
+    node: &(dyn Node<W> + Send),
+    nodes: &mut BTreeMap<NodeId, Vec<u8>>,
+    seen: &mut BTreeSet<NodeId>,
+) -> Result<(), NodeIdSnapshotError> {
+    if let Some(id) = node.id() {
+        if !seen.insert(id.clone()) {
+            return Err(NodeIdSnapshotError::DuplicateId(String::from(id.as_str())));
+        }
+        if let Some(state) = node.save_own_state() {
+            nodes.insert(id.clone(), state);
+        }
+    }
+
+    for child in node.children() {
+        capture_node_by_id(child.as_ref(), nodes, seen)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn apply_by_id<W>(
+    root: &mut BoxedNode<W>,
+    services: &mut [BoxedNode<W>],
+    snapshot: &NodeIdSnapshot,
+) -> Result<(), NodeIdSnapshotError> {
+    if snapshot.version != NODE_ID_SNAPSHOT_VERSION {
+        return Err(NodeIdSnapshotError::UnsupportedVersion {
+            found: snapshot.version,
+            supported: NODE_ID_SNAPSHOT_VERSION,
+        });
+    }
+
+    root.reset();
+    for service in services.iter_mut() {
+        service.reset();
+    }
+
+    let mut seen = BTreeSet::new();
+    restore_node_by_id(root.as_mut(), snapshot, &mut seen)?;
+    for service in services.iter_mut() {
+        restore_node_by_id(service.as_mut(), snapshot, &mut seen)?;
+    }
+
+    for id in snapshot.nodes.keys() {
+        if !seen.contains(id) {
+            return Err(NodeIdSnapshotError::UnknownId(String::from(id.as_str())));
+        }
+    }
+
+    Ok(())
+}
+
+fn restore_node_by_id<W>(
+    node: &mut (dyn Node<W> + Send),
+    snapshot: &NodeIdSnapshot,
+    seen: &mut BTreeSet<NodeId>,
+) -> Result<(), NodeIdSnapshotError> {
+    if let Some(id) = node.id().cloned() {
+        if !seen.insert(id.clone()) {
+            return Err(NodeIdSnapshotError::DuplicateId(String::from(id.as_str())));
+        }
+        if let Some(state) = snapshot.nodes.get(&id)
+            && !node.load_own_state(state)
+        {
+            return Err(NodeIdSnapshotError::InvalidState {
+                id: String::from(id.as_str()),
+            });
+        }
+    }
+
+    for child in node.children_mut() {
+        restore_node_by_id(child.as_mut(), snapshot, seen)?;
+    }
+
+    Ok(())
 }
 
 /// Compact binary encoding/decoding of node state.
@@ -442,6 +593,152 @@ mod tests {
         let mut world = ();
         assert_eq!(
             restored.tick(&mut world, Time::from_millis(100, 100)),
+            Status::Success
+        );
+    }
+
+    #[test]
+    fn id_snapshot_restores_reordered_wait_state() {
+        let mut original = BehaviorTreeBuilder::<()>::new("original")
+            .selector(|b| {
+                b.wait(Duration::from_millis(100))
+                    .id("a")
+                    .wait(Duration::from_millis(50))
+                    .id("b")
+            })
+            .build()
+            .expect("tree");
+        let mut world = ();
+        assert_eq!(
+            original.tick(&mut world, Time::from_millis(0, 0)),
+            Status::Running
+        );
+
+        let snapshot = original.snapshot_by_id().expect("snapshot");
+        assert_eq!(snapshot.nodes.len(), 2);
+        assert!(snapshot.nodes.contains_key(&crate::NodeId::new("a")));
+        assert!(snapshot.nodes.contains_key(&crate::NodeId::new("b")));
+
+        let mut reordered = BehaviorTreeBuilder::<()>::new("reordered")
+            .selector(|b| {
+                b.wait(Duration::from_millis(50))
+                    .id("b")
+                    .wait(Duration::from_millis(100))
+                    .id("a")
+            })
+            .build()
+            .expect("tree");
+        reordered.restore_by_id(&snapshot).expect("restore");
+
+        // b must start at 50 ms; if a's state had been applied structurally,
+        // b would have started at 0 ms and already succeeded.
+        let mut world = ();
+        assert_eq!(
+            reordered.tick(&mut world, Time::from_millis(50, 50)),
+            Status::Running
+        );
+    }
+
+    #[test]
+    fn id_snapshot_restores_sequence_progress() {
+        fn build(calls: Arc<AtomicU32>) -> crate::BehaviorTree<()> {
+            BehaviorTreeBuilder::<()>::new("sequence")
+                .sequence(|b| {
+                    b.action("first", move |_| {
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        Status::Success
+                    })
+                    .id("first")
+                    .action("second", |_| Status::Running)
+                    .id("second")
+                })
+                .id("sequence")
+                .build()
+                .expect("tree")
+        }
+
+        let calls = Arc::new(AtomicU32::new(0));
+        let mut original = build(Arc::clone(&calls));
+        let mut world = ();
+        assert_eq!(original.tick(&mut world, Time::ZERO), Status::Running);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        let snapshot = original.snapshot_by_id().expect("snapshot");
+        let mut restored = build(Arc::clone(&calls));
+        restored.restore_by_id(&snapshot).expect("restore");
+        assert_eq!(restored.tick(&mut world, Time::ZERO), Status::Running);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn id_snapshot_rejects_unknown_duplicate_and_invalid_state() {
+        let mut original = BehaviorTreeBuilder::<()>::new("original")
+            .wait(Duration::from_millis(10))
+            .id("a")
+            .build()
+            .expect("tree");
+        let snapshot = original.snapshot_by_id().expect("snapshot");
+
+        let mut target = BehaviorTreeBuilder::<()>::new("target")
+            .wait(Duration::from_millis(10))
+            .id("b")
+            .build()
+            .expect("tree");
+        assert!(matches!(
+            target.restore_by_id(&snapshot),
+            Err(NodeIdSnapshotError::UnknownId(id)) if id == "a"
+        ));
+
+        let duplicate = BehaviorTreeBuilder::<()>::new("duplicate")
+            .selector(|b| {
+                b.wait(Duration::from_millis(1))
+                    .id("same")
+                    .wait(Duration::from_millis(1))
+                    .id("same")
+            })
+            .build()
+            .expect("tree");
+        assert!(matches!(
+            duplicate.snapshot_by_id(),
+            Err(NodeIdSnapshotError::DuplicateId(id)) if id == "same"
+        ));
+
+        let mut corrupt = snapshot.clone();
+        corrupt.nodes.insert(crate::NodeId::new("a"), vec![0xff]);
+        assert!(matches!(
+            original.restore_by_id(&corrupt),
+            Err(NodeIdSnapshotError::InvalidState { id }) if id == "a"
+        ));
+    }
+
+    #[test]
+    fn id_snapshot_restores_decorator_state() {
+        fn build() -> crate::BehaviorTree<()> {
+            BehaviorTreeBuilder::<()>::new("cooldown")
+                .cooldown(Duration::from_millis(100), |b| {
+                    b.action("hit", |_| Status::Success)
+                })
+                .id("cooldown")
+                .build()
+                .expect("tree")
+        }
+
+        let mut original = build();
+        let mut world = ();
+        assert_eq!(
+            original.tick(&mut world, Time::from_millis(0, 0)),
+            Status::Success
+        );
+        let snapshot = original.snapshot_by_id().expect("snapshot");
+
+        let mut restored = build();
+        restored.restore_by_id(&snapshot).expect("restore");
+        assert_eq!(
+            restored.tick(&mut world, Time::from_millis(50, 50)),
+            Status::Failure
+        );
+        assert_eq!(
+            restored.tick(&mut world, Time::from_millis(150, 100)),
             Status::Success
         );
     }

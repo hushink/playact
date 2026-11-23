@@ -156,7 +156,10 @@ pub use persistence::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCo
 pub use remote_config::{MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
-pub use snapshot::{RestoreError, SNAPSHOT_VERSION, TreeSnapshot};
+pub use snapshot::{
+    NODE_ID_SNAPSHOT_VERSION, NodeIdSnapshot, NodeIdSnapshotError, RestoreError, SNAPSHOT_VERSION,
+    TreeSnapshot,
+};
 #[cfg(feature = "std")]
 pub use stats::{NodeStats, StatsTracer};
 pub use status::Status;
@@ -187,12 +190,13 @@ pub mod prelude {
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
         Cooldown, EventKey, EventQueue, Guard, IdentifiedNode, IfThenElse, Inverter, Key, Kind,
-        Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer, Node, NodeId, Parallel, Race,
-        RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, RestoreError, Retry,
-        SNAPSHOT_VERSION, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot,
-        Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot,
-        TryAction, UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent,
-        WaitUntil, WeightedChild, WeightedRandomSelector,
+        Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer, NODE_ID_SNAPSHOT_VERSION,
+        Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, Parallel, Race, RandomSelector,
+        ReactiveSelector, ReactiveSequence, Repeat, RestoreError, Retry, SNAPSHOT_VERSION,
+        Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot, Threshold, Throttle,
+        Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot, TryAction, UntilFailure,
+        UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent, WaitUntil, WeightedChild,
+        WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
     pub use crate::{

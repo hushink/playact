@@ -100,7 +100,7 @@ fn main() -> Result<(), BuildError> {
 | 叶子节点 | `Action`、`Condition`、`Wait`、`WaitUntil`、`WaitForEvent`、`SetValue`、`TryAction`、`AsyncAction` |
 | 组合复用 | typestate 构建器、`SubtreeFactory`、`SubtreeSlot`、嵌套 `BehaviorTree`、服务 |
 | 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、错误事件、`last_status`、ASCII/DOT `describe` |
-| 持久化 | 带版本的节点状态快照与可选 typed 黑板序列化 |
+| 持久化 | 带版本的结构快照与按 `NodeId` 的快照，以及可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
 | 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、JSON Schema、校验、热重载、远程加载 |
 | 异步 | 运行时无关 `AsyncTask`、`ThreadTask`、可选 `TokioTask` |

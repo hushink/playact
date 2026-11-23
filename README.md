@@ -104,7 +104,7 @@ fn main() -> Result<(), BuildError> {
 | Leaves | `Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`, `AsyncAction` |
 | Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, nested `BehaviorTree`, services |
 | Observability | `Tracer`, `MultiTracer`, `StatsTracer`, error events, `last_status`, ASCII/DOT `describe` |
-| Persistence | Versioned node-state snapshots plus opt-in typed blackboard serialization |
+| Persistence | Versioned structural and ID-keyed node snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |
 | Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, JSON Schema, validation, hot reload, remote loading |
 | Async | Runtime-agnostic `AsyncTask`, `ThreadTask`, optional `TokioTask` |

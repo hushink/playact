@@ -333,6 +333,33 @@ impl<W> BehaviorTree<W> {
         result
     }
 
+    /// Exports state keyed by stable [`NodeId`].
+    ///
+    /// Only nodes that have an ID and implement
+    /// [`Node::save_own_state`] contribute entries. The result is independent of
+    /// child order, so it can be restored into a reordered configuration.
+    pub fn snapshot_by_id(
+        &self,
+    ) -> Result<crate::snapshot::NodeIdSnapshot, crate::snapshot::NodeIdSnapshotError> {
+        crate::snapshot::capture_by_id(&self.root, &self.services)
+    }
+
+    /// Restores state from an ID-keyed snapshot.
+    ///
+    /// The tree is reset first, then each node with a matching ID loads its own
+    /// state. Snapshot IDs not present in the tree, duplicate IDs, or rejected
+    /// state return an error. Nodes without IDs or without own-state support are
+    /// left in their reset state.
+    pub fn restore_by_id(
+        &mut self,
+        snapshot: &crate::snapshot::NodeIdSnapshot,
+    ) -> Result<(), crate::snapshot::NodeIdSnapshotError> {
+        let result = crate::snapshot::apply_by_id(&mut self.root, &mut self.services, snapshot);
+        self.last_status = None;
+        self.service_status.fill(None);
+        result
+    }
+
     /// Extracts the root node so the tree can be reused as a subtree.
     ///
     /// Note: this discards the blackboard, tracer, and service nodes, but keeps
@@ -407,6 +434,10 @@ impl<W> Node<W> for BehaviorTree<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         core::slice::from_ref(&self.root)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        core::slice::from_mut(&mut self.root)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -600,6 +631,18 @@ impl<W> Node<W> for Named<W> {
 
     fn children(&self) -> &[BoxedNode<W>] {
         core::slice::from_ref(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        core::slice::from_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        self.child.save_own_state()
+    }
+
+    fn load_own_state(&mut self, state: &[u8]) -> bool {
+        self.child.load_own_state(state)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {

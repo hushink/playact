@@ -392,6 +392,18 @@ rebuilt.restore(&snapshot)?;
 子树状态。
 
 > [!WARNING]
+如果树结构可能变化，可为节点分配 ID 并使用与顺序无关的快照：
+
+```rust
+let snapshot = tree.snapshot_by_id()?; // NodeIdSnapshot
+let mut rebuilt = build_reordered_tree();
+rebuilt.restore_by_id(&snapshot)?;
+```
+
+内建的有状态节点实现了 `save_own_state` / `load_own_state` 与 `children_mut`，
+因此即使子节点重排，也会按 ID 恢复自身进度。自定义节点需要实现相同方法才能参与。
+ID 快照不会遍历 `SubtreeSlot` 的动态子节点或嵌套树的 services。
+
 > 节点快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot`
 > 动态子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，
 > 应在同一时间轴上恢复，或 reset 后重新建立。
