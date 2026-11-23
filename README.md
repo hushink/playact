@@ -100,7 +100,7 @@ fn main() -> Result<(), BuildError> {
 |---|---|
 | Core | `Status`, `Node`, `NodeId`, `Context`, typed `Blackboard`, `Time`, `Kind` |
 | Composites | `Sequence`, `ReactiveSequence`, `Selector`, `ReactiveSelector`, `RandomSelector`, `WeightedRandomSelector`, `UtilitySelector`, `Parallel`, `MemParallel`, `Race`, `IfThenElse` |
-| Decorators | `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`, `UntilFailure`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard` |
+| Decorators | `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`, `UntilFailure`, `While`, `Probability`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard` |
 | Leaves | `Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`, `AsyncAction` |
 | Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, nested `BehaviorTree`, services |
 | Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, error events, `last_status`, ASCII/DOT `describe` |

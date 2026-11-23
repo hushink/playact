@@ -96,7 +96,7 @@ fn main() -> Result<(), BuildError> {
 |---|---|
 | 核心 | `Status`、`Node`、`NodeId`、`Context`、类型安全 `Blackboard`、`Time`、`Kind` |
 | 组合节点 | `Sequence`、`ReactiveSequence`、`Selector`、`ReactiveSelector`、`RandomSelector`、`WeightedRandomSelector`、`UtilitySelector`、`Parallel`、`MemParallel`、`Race`、`IfThenElse` |
-| 装饰节点 | `Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard` |
+| 装饰节点 | `Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`While`、`Probability`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard` |
 | 叶子节点 | `Action`、`Condition`、`Wait`、`WaitUntil`、`WaitForEvent`、`SetValue`、`TryAction`、`AsyncAction` |
 | 组合复用 | typestate 构建器、`SubtreeFactory`、`SubtreeSlot`、嵌套 `BehaviorTree`、服务 |
 | 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、错误事件、`last_status`、ASCII/DOT `describe` |

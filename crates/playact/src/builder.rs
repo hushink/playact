@@ -20,8 +20,8 @@ use crate::composite::{
 };
 use crate::context::Context;
 use crate::decorator::{
-    AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, Repeat, Retry, Throttle,
-    Timeout, UntilFailure, UntilSuccess,
+    AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, Probability, Repeat, Retry,
+    Throttle, Timeout, UntilFailure, UntilSuccess, While,
 };
 use crate::error::BuildError;
 use crate::event::EventKey;
@@ -590,6 +590,30 @@ where
         F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
     {
         self.decorator(f, move |child| Box::new(Guard::new(condition, child)))
+    }
+
+    /// Runs the child with a deterministic probability.
+    pub fn probability(
+        self,
+        chance: f64,
+        seed: u64,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+    ) -> BehaviorTreeBuilder<W, S::Next> {
+        self.decorator(f, move |child| {
+            Box::new(Probability::new(chance, seed, child))
+        })
+    }
+
+    /// Repeats the child while the condition holds.
+    pub fn while_do<F>(
+        self,
+        condition: F,
+        f: impl FnOnce(BranchBuilder<W, Empty>) -> BranchBuilder<W, One>,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        self.decorator(f, move |child| Box::new(While::new(condition, child)))
     }
 
     /// Cooldown after success.

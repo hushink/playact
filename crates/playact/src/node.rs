@@ -57,6 +57,10 @@ pub enum Kind {
     UntilSuccess,
     /// Repeats until failure.
     UntilFailure,
+    /// Probability-gated child execution.
+    Probability,
+    /// Repeats the child while a condition holds.
+    While,
     /// Cooldown after success.
     Cooldown,
     /// Execution timeout.
@@ -113,6 +117,8 @@ impl Kind {
             Self::Retry => "retry",
             Self::UntilSuccess => "until_success",
             Self::UntilFailure => "until_failure",
+            Self::Probability => "probability",
+            Self::While => "while",
             Self::Cooldown => "cooldown",
             Self::Timeout => "timeout",
             Self::Limiter => "limiter",

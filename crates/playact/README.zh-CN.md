@@ -209,7 +209,8 @@ let tree = BehaviorTreeBuilder::<World>::new("player")
 ### 装饰节点
 
 `Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、
-`UntilFailure`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard`。
+`UntilFailure`、`While`、`Probability`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、
+`Guard`。
 
 - `Cooldown` 只在子节点成功后开始计时。
 - `Timeout` 只对 Running 计时；`duration = 0` 时首次 tick 直接失败，不 tick 子节点。
@@ -219,6 +220,10 @@ let tree = BehaviorTreeBuilder::<World>::new("player")
 - `Throttle` 按时间窗口限制终态次数；Running 不消耗配额。
 - `Guard` 条件为假时直接失败，并 abort 之前 Running 的子节点；它是反应式
   `condition → child` 的直接形式。
+- `While` 每个 tick 最多执行一次子节点；子节点成功后返回 `Running`，条件为假时
+  返回 `Success`，并先 abort 仍为 Running 的子节点。
+- `Probability` 每次激活用确定性种子掷一次概率；子节点 Running 期间保持同一决定，
+  下次激活重新掷骰。
 
 ### 叶子节点
 
@@ -464,7 +469,7 @@ let mut tree = spec.build(&registry)?;
 - JSON、TOML、YAML、RON 解析器随对应 feature 提供。
 - 配置拒绝未知字段；错误路径形如 `root.children[0]`。
 - 支持 sequence、selector、随机/加权选择、race、parallel、mem_parallel、装饰器
-  （含 throttle）、wait、action、condition 与 custom 工厂。
+  （含 throttle 与 probability）、wait、action、condition 与 custom 工厂。
 - `Guard`、`IfThenElse`、`UtilitySelector` 的谓词/评分属于业务逻辑，保留在代码或
   `custom` 工厂中。
 - `TreeSpec::validate(&ValidationLimits)` 可在构建前校验版本、最大深度与节点数，

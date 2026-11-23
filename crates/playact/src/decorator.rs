@@ -693,6 +693,274 @@ impl<W> Node<W> for UntilFailure<W> {
     }
 }
 
+// ==================== Probability ====================
+
+/// Runs the child with a fixed probability on each new activation.
+///
+/// The decision is rolled once when the child starts; if the child returns
+/// `Running`, the same decision is kept. A new roll happens only after the child
+/// finishes or the node is aborted/reset.
+pub struct Probability<W> {
+    name: String,
+    child: BoxedNode<W>,
+    chance: f64,
+    seed: u64,
+    rng: u64,
+    active: Option<bool>,
+}
+
+impl<W> Probability<W> {
+    /// Creates the node from a probability in `[0, 1]`, a deterministic seed,
+    /// and a child.
+    #[must_use]
+    pub fn new(chance: f64, seed: u64, child: BoxedNode<W>) -> Self {
+        let chance = if chance.is_nan() {
+            0.0
+        } else {
+            chance.clamp(0.0, 1.0)
+        };
+        let seed = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
+        Self {
+            name: String::from("Probability"),
+            child,
+            chance,
+            seed,
+            rng: seed,
+            active: None,
+        }
+    }
+
+    /// Overrides the display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut value = self.rng;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.rng = value;
+        value.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn roll(&mut self) -> bool {
+        if self.chance <= 0.0 {
+            false
+        } else if self.chance >= 1.0 {
+            true
+        } else {
+            let value = (self.next_u64() >> 11) as f64 / (1_u64 << 53) as f64;
+            value < self.chance
+        }
+    }
+}
+
+impl<W> Node<W> for Probability<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.active.is_none() {
+            if !self.roll() {
+                return Status::Failure;
+            }
+            self.active = Some(true);
+        }
+
+        let status = ctx.tick_child(0, &mut self.child);
+        if !status.is_running() {
+            self.active = None;
+        }
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        if self.active.is_some() {
+            ctx.abort_child(0, &mut self.child, AbortReason::Preempted);
+        }
+        self.active = None;
+    }
+
+    fn reset(&mut self) {
+        self.rng = self.seed;
+        self.active = None;
+        self.child.reset();
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Probability
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(self.rng, self.active)))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((rng, active)) = state::decode::<(u64, Option<bool>)>(bytes) else {
+            return false;
+        };
+        if active == Some(false) {
+            return false;
+        }
+        self.rng = rng;
+        self.active = active;
+        true
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.rng,
+            self.active,
+            self.child.save_state(),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((rng, active, child)) =
+            state::decode::<(u64, Option<bool>, Option<Vec<u8>>)>(bytes)
+        else {
+            return false;
+        };
+        if active == Some(false) || !load_child_state(&mut self.child, child) {
+            return false;
+        }
+        self.rng = rng;
+        self.active = active;
+        true
+    }
+}
+
+// ==================== While ====================
+
+/// Repeats the child while a condition holds.
+///
+/// At most one child step is performed per tick; a successful child makes the
+/// node return `Running` and the condition is checked again next tick. When the
+/// condition becomes false the node returns `Success`, aborting a still-Running
+/// child first.
+pub struct While<W> {
+    name: String,
+    condition: GuardFn<W>,
+    child: BoxedNode<W>,
+    child_running: bool,
+}
+
+impl<W> While<W> {
+    /// Creates the node from a condition and a child.
+    pub fn new<F>(condition: F, child: BoxedNode<W>) -> Self
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        Self {
+            name: String::from("While"),
+            condition: Box::new(condition),
+            child,
+            child_running: false,
+        }
+    }
+
+    /// Overrides the display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W> Node<W> for While<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if !(self.condition)(ctx) {
+            if self.child_running {
+                ctx.abort_child(0, &mut self.child, AbortReason::Preempted);
+                self.child_running = false;
+            }
+            return Status::Success;
+        }
+
+        let status = ctx.tick_child(0, &mut self.child);
+        self.child_running = status.is_running();
+        match status {
+            Status::Failure => Status::Failure,
+            Status::Running => Status::Running,
+            Status::Success => Status::Running,
+        }
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        if self.child_running {
+            ctx.abort_child(0, &mut self.child, AbortReason::Preempted);
+        }
+        self.child_running = false;
+    }
+
+    fn reset(&mut self) {
+        self.child_running = false;
+        self.child.reset();
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::While
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        single_child(&self.child)
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        single_child_mut(&mut self.child)
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.child_running))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(child_running) = state::decode::<bool>(bytes) else {
+            return false;
+        };
+        self.child_running = child_running;
+        true
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(
+            self.child_running,
+            self.child.save_state(),
+        )))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((child_running, child)) = state::decode::<(bool, Option<Vec<u8>>)>(bytes) else {
+            return false;
+        };
+        if !load_child_state(&mut self.child, child) {
+            return false;
+        }
+        self.child_running = child_running;
+        true
+    }
+}
+
 // ==================== Cooldown ====================
 
 /// Enters cooldown after the child succeeds; during cooldown it returns Failure without ticking the child.
@@ -1286,6 +1554,102 @@ mod tests {
 
     fn context<'a>(world: &'a mut (), board: &'a mut Blackboard) -> Context<'a, ()> {
         Context::new(world, board, Time::ZERO)
+    }
+
+    #[test]
+    fn probability_zero_and_one_are_deterministic() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+        let mut never = Probability::<()>::new(
+            0.0,
+            1,
+            Box::new(Action::new("child", move |_| {
+                calls_in_action.fetch_add(1, Ordering::Relaxed);
+                Status::Success
+            })),
+        );
+        let mut world = ();
+        let mut board = Blackboard::new();
+        let mut ctx = context(&mut world, &mut board);
+        assert_eq!(never.tick(&mut ctx), Status::Failure);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        let mut always = Probability::<()>::new(
+            1.0,
+            1,
+            Box::new(Action::<()>::new("child", |_| Status::Success)),
+        );
+        assert_eq!(always.tick(&mut ctx), Status::Success);
+        assert_eq!(always.tick(&mut ctx), Status::Success);
+    }
+
+    #[test]
+    fn probability_is_reproducible_after_reset() {
+        fn run(seed: u64) -> Vec<Status> {
+            let mut node = Probability::<()>::new(
+                0.5,
+                seed,
+                Box::new(Action::<()>::new("child", |_| Status::Success)),
+            );
+            let mut world = ();
+            let mut board = Blackboard::new();
+            let mut ctx = context(&mut world, &mut board);
+            (0..16).map(|_| node.tick(&mut ctx)).collect()
+        }
+
+        let first = run(42);
+        assert_eq!(run(42), first);
+        node_reset_check();
+    }
+
+    fn node_reset_check() {
+        let mut node = Probability::<()>::new(
+            0.5,
+            42,
+            Box::new(Action::<()>::new("child", |_| Status::Success)),
+        );
+        let mut world = ();
+        let mut board = Blackboard::new();
+        let mut ctx = context(&mut world, &mut board);
+        let first: Vec<Status> = (0..8).map(|_| node.tick(&mut ctx)).collect();
+        node.reset();
+        let second: Vec<Status> = (0..8).map(|_| node.tick(&mut ctx)).collect();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn while_repeats_and_aborts_on_condition_end() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let aborts = Arc::new(AtomicU32::new(0));
+        let calls_in_action = Arc::clone(&calls);
+        let aborts_in_action = Arc::clone(&aborts);
+        let mut node = While::<bool>::new(
+            |ctx| *ctx.world_ref(),
+            Box::new(
+                Action::<bool>::new("step", move |_| {
+                    calls_in_action.fetch_add(1, Ordering::Relaxed);
+                    Status::Running
+                })
+                .with_abort(move |_| {
+                    aborts_in_action.fetch_add(1, Ordering::Relaxed);
+                }),
+            ),
+        );
+
+        let mut world = true;
+        let mut board = Blackboard::new();
+        let mut ctx = Context::new(&mut world, &mut board, Time::ZERO);
+        assert_eq!(node.tick(&mut ctx), Status::Running);
+        assert_eq!(node.tick(&mut ctx), Status::Running);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+
+        *ctx.world() = false;
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+
+        let calls_after_end = calls.load(Ordering::Relaxed);
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+        assert_eq!(calls.load(Ordering::Relaxed), calls_after_end);
     }
 
     #[test]

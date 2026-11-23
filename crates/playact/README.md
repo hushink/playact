@@ -214,7 +214,8 @@ Key details:
 ### Decorators
 
 `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`,
-`UntilFailure`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard`.
+`UntilFailure`, `While`, `Probability`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`,
+`Guard`.
 
 - `Cooldown` starts only after the child succeeds.
 - `Timeout` times only Running children; `duration = 0` fails on the first tick without
@@ -225,6 +226,11 @@ Key details:
 - `Throttle` limits terminal results per time window; `Running` does not consume quota.
 - `Guard` fails immediately when its condition is false and aborts a previously Running
   child. It is the direct form of a reactive `condition → child` sequence.
+- `While` performs at most one child step per tick; it returns `Running` after a
+  successful step and `Success` once its condition is false (aborting a still-Running
+  child first).
+- `Probability` rolls once per activation with a deterministic seed; a `Running` child
+  keeps the same decision, and the next activation rolls again.
 
 ### Leaves
 
@@ -477,8 +483,8 @@ let mut tree = spec.build(&registry)?;
 - JSON, TOML, YAML, and RON parsers are available behind format features.
 - Unknown fields are rejected; errors carry paths such as `root.children[0]`.
 - Supported node types include sequences, selectors, random/weighted selection, race,
-  parallel, mem-parallel, decorators (including throttle), waits, actions, conditions,
-  and custom factories.
+  parallel, mem-parallel, decorators (including throttle and probability), waits,
+  actions, conditions, and custom factories.
 - Predicates and scores for `Guard`, `IfThenElse`, and `UtilitySelector` are business
   logic and stay in code or `custom` factories.
 - `TreeSpec::validate(&ValidationLimits)` checks version, maximum depth, and node count

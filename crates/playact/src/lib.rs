@@ -142,7 +142,7 @@ pub use config::{TreeParser, ValidationLimits};
 pub use context::Context;
 pub use decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK,
-    Repeat, Retry, Throttle, Timeout, UntilFailure, UntilSuccess,
+    Probability, Repeat, Retry, Throttle, Timeout, UntilFailure, UntilSuccess, While,
 };
 pub use error::BuildError;
 pub use event::{EventKey, EventQueue};
@@ -193,12 +193,12 @@ pub mod prelude {
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
         Cooldown, EventKey, EventQueue, Guard, IdentifiedNode, IfThenElse, Inverter, Key, Kind,
         Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer, NODE_ID_SNAPSHOT_VERSION,
-        Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, Parallel, Race, RandomSelector,
-        ReactiveSelector, ReactiveSequence, Repeat, RestoreError, Retry, SNAPSHOT_VERSION,
-        Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot, Threshold, Throttle,
-        Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot, TryAction, UntilFailure,
-        UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent, WaitUntil, WeightedChild,
-        WeightedRandomSelector,
+        Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, Parallel, Probability, Race,
+        RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, RestoreError, Retry,
+        SNAPSHOT_VERSION, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot,
+        Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot,
+        TryAction, UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent,
+        WaitUntil, WeightedChild, WeightedRandomSelector, While,
     };
     #[cfg(feature = "std")]
     pub use crate::{

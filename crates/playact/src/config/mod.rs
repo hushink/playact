@@ -243,6 +243,18 @@ pub enum SpecNode {
         /// Child nodes.
         child: Box<SpecNode>,
     },
+    /// Probability-gated child execution.
+    Probability {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Probability in `[0, 1]`.
+        chance: f64,
+        /// Deterministic seed.
+        seed: u64,
+        /// Child node.
+        child: Box<SpecNode>,
+    },
     /// Cooldown after success.
     Cooldown {
         /// Display name.
@@ -387,6 +399,7 @@ impl SpecNode {
             | Self::Timeout { child, .. }
             | Self::Limiter { child, .. }
             | Self::Throttle { child, .. }
+            | Self::Probability { child, .. }
             | Self::Identified { child, .. } => vec![child.as_ref()],
             Self::Wait { .. }
             | Self::Action { .. }
@@ -635,6 +648,41 @@ mod tests {
             error.kind(),
             ConfigBuildErrorKind::InvalidTree { .. }
         ));
+    }
+
+    #[test]
+    fn builds_probability_from_json_and_rejects_invalid_chance() {
+        let registry = action_registry();
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "root": {
+                    "type": "probability",
+                    "chance": 1.0,
+                    "seed": 7,
+                    "child": {"type": "action", "name": "ok"}
+                }
+            }"#,
+        )
+        .unwrap();
+        let mut tree = spec.build(&registry).expect("tree");
+        let mut world = ();
+        assert_eq!(
+            tree.tick(&mut world, crate::time::Time::ZERO),
+            Status::Success
+        );
+
+        let invalid = TreeSpec::from_json_str(
+            r#"{
+                "root": {
+                    "type": "probability",
+                    "chance": 2.0,
+                    "seed": 7,
+                    "child": {"type": "action", "name": "ok"}
+                }
+            }"#,
+        )
+        .unwrap();
+        assert!(invalid.build(&registry).is_err());
     }
 
     #[test]

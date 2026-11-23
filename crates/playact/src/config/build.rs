@@ -7,8 +7,8 @@ use crate::composite::{
     Sequence, Threshold, WeightedChild, WeightedRandomSelector,
 };
 use crate::decorator::{
-    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Repeat, Retry, Throttle, Timeout,
-    UntilFailure, UntilSuccess,
+    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Probability, Repeat, Retry, Throttle,
+    Timeout, UntilFailure, UntilSuccess,
 };
 use crate::leaf::Wait;
 use crate::node::{BoxedNode, IdentifiedNode};
@@ -203,6 +203,24 @@ fn build_node<W: 'static>(
         SpecNode::UntilFailure { name, child } => {
             let child = build_node(child, ctx, &child_path(path))?;
             Ok(Box::new(with_name(UntilFailure::new(child), name)))
+        }
+        SpecNode::Probability {
+            name,
+            chance,
+            seed,
+            child,
+        } => {
+            if !chance.is_finite() || !(0.0..=1.0).contains(chance) {
+                return Err(ConfigBuildError::new(ConfigBuildErrorKind::InvalidTree {
+                    message: format!("probability chance must be in [0, 1], got {chance}"),
+                })
+                .at(path));
+            }
+            let child = build_node(child, ctx, &child_path(path))?;
+            Ok(Box::new(with_name(
+                Probability::new(*chance, *seed, child),
+                name,
+            )))
         }
         SpecNode::Cooldown {
             name,
@@ -399,6 +417,7 @@ impl_named_node!(
     Retry,
     UntilSuccess,
     UntilFailure,
+    Probability,
     Cooldown,
     Timeout,
     Limiter,
