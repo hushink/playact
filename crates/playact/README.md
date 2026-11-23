@@ -652,6 +652,16 @@ This records the tree's observable behavior, not the world. Reproduce the same w
 inputs and use node snapshots / `BlackboardCodec` for stateful replay. Trace events are
 owned, so they can be stored for regression tests.
 
+With `trace-serde`, export and reload a baseline across processes:
+
+```rust
+let json = recorder.to_json();
+let baseline = TraceRecorder::from_json(&json)?;
+if let Some(diff) = recorder.diff(&baseline.records()) {
+    eprintln!("diverged at {}", diff.index);
+}
+```
+
 ## Configuration
 
 The optional `config` feature builds trees from data while keeping parameters typed.
@@ -969,6 +979,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
+| `trace-serde` | `TraceRecorder` JSON export/import (requires `trace-record`) |
 | `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std` + `trace-record`) |
 | `inspector` | HTML report with live statuses/timings and a zero-dependency debug HTTP server (requires `std`) |
 | `diff-serde` | `TreeDiff::to_json()` serialization (requires `std`) |

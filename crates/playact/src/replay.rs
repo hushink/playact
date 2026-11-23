@@ -17,6 +17,11 @@ use crate::trace::{AbortReason, TraceEvent, Tracer};
 
 /// An owned trace event.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "trace-serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum TraceRecord {
     /// The node started ticking.
@@ -180,6 +185,27 @@ impl TraceRecorder {
         self.lock().clear();
     }
 
+    /// Serializes recorded events as compact JSON.
+    ///
+    /// Requires the `trace-serde` feature.
+    #[cfg(feature = "trace-serde")]
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(&*self.lock()).expect("TraceRecorder serialization cannot fail")
+    }
+
+    /// Creates a recorder from JSON produced by [`TraceRecorder::to_json`].
+    ///
+    /// Requires the `trace-serde` feature. Custom node kinds cannot be
+    /// deserialized because [`crate::Kind::Custom`] borrows a static name.
+    #[cfg(feature = "trace-serde")]
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        let records: Vec<TraceRecord> = serde_json::from_str(json)?;
+        let recorder = Self::new();
+        recorder.lock().extend(records);
+        Ok(recorder)
+    }
+
     /// Compares recorded events with an expected trace.
     ///
     /// Returns the first differing event, including length mismatches, or
@@ -237,6 +263,7 @@ impl Tracer for TraceRecorder {
 
 /// The first difference between two traces.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "trace-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TraceDiff {
     /// Zero-based event index.
     pub index: usize,
@@ -298,6 +325,26 @@ mod tests {
         assert_eq!(diff.index, 0);
         assert!(diff.expected.is_some());
         assert!(diff.actual.is_some());
+    }
+
+    #[cfg(feature = "trace-serde")]
+    #[test]
+    fn trace_json_roundtrip() {
+        let mut tree = action_tree("work");
+        let recorder = TraceRecorder::new();
+        tree.set_tracer(Some(Box::new(recorder.clone())));
+        let mut world = ();
+        assert_eq!(
+            tree.tick(&mut world, Time::from_millis(250, 250)),
+            Status::Success
+        );
+
+        let json = recorder.to_json();
+        assert!(json.contains("\"enter\""));
+        assert!(json.contains("\"success\""));
+        let parsed = TraceRecorder::from_json(&json).expect("parse trace");
+        assert_eq!(parsed.records(), recorder.records());
+        assert!(parsed.diff(&recorder.records()).is_none());
     }
 
     #[test]

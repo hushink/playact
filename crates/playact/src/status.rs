@@ -8,6 +8,11 @@ use core::fmt;
 /// and execution nodes: composites orchestrate control flow solely from it and
 /// do not care about the concrete business logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "trace-serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "snake_case")
+)]
 pub enum Status {
     /// This execution completed successfully.
     Success,

@@ -624,6 +624,16 @@ if let Some(diff) = recorder.diff(&expected) {
 它记录的是树的可见行为，不是 world。复现时需要提供相同的 world 输入，并用节点
 快照 / `BlackboardCodec` 处理有状态数据。事件是 owned 的，可保存用于回归测试。
 
+启用 `trace-serde` 后，可以跨进程保存并加载基线：
+
+```rust
+let json = recorder.to_json();
+let baseline = TraceRecorder::from_json(&json)?;
+if let Some(diff) = recorder.diff(&baseline.records()) {
+    eprintln!("diverged at {}", diff.index);
+}
+```
+
 ## 配置驱动
 
 可选 `config` feature 从数据构建行为树，同时保持参数类型安全。所有节点与字段见
@@ -923,6 +933,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |
+| `trace-serde` | `TraceRecorder` 的 JSON 导出/导入（依赖 `trace-record`） |
 | `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std` + `trace-record`） |
 | `inspector` | 带实时状态/耗时的 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
 | `diff-serde` | `TreeDiff::to_json()` 序列化（依赖 `std`） |

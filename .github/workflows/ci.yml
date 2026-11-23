@@ -48,7 +48,7 @@ jobs:
           RUSTFLAGS: "-D warnings"
         run: |
           set -euo pipefail
-          for features in config,schema diff-serde snapshot-serde inspector inspector,diff-serde hot-reload remote-config; do
+          for features in config,schema diff-serde snapshot-serde trace-serde inspector inspector,diff-serde hot-reload remote-config; do
             echo "::group::features=$features"
             cargo check -p playact --no-default-features --features "$features" --lib
             echo "::endgroup::"

@@ -158,6 +158,7 @@ cargo run -p playact --example save_game --features blackboard-serde,snapshot-se
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |
+| `trace-serde` | `TraceRecorder` JSON export/import (requires `trace-record`) |
 | `test-util` | Deterministic `TestDriver` with virtual time (requires `std` and `trace-record`) |
 | `inspector` | Self-contained HTML report and zero-dependency debug HTTP server (requires `std`) |
 | `diff-serde` | `TreeDiff` and `DiffHistory` JSON serialization and parsing (requires `std`) |

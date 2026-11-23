@@ -51,6 +51,7 @@ impl Default for World {
 | `blackboard-serde` | `BlackboardCodec` 类型化黑板持久化 |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化 |
 | `trace-record` | `TraceRecorder` / `TraceRecord` 与 trace 对比 |
+| `trace-serde` | `TraceRecorder` 的 JSON 导出/导入 |
 | `tracing` | `TracingTracer` 集成 |
 | `tokio` | `TokioTask` 异步适配 |
 | `macros` | `bt!` 过程宏 DSL 与 `#[derive(BtNode)]` |
@@ -730,7 +731,9 @@ if let Some(divergence) = recorder.diff(&baseline) {
 }
 ```
 
-`TraceDiff` 报告第一个不同的事件（包括长度不一致）。回放比较的是可观测节点行为，而不是世界状态。
+`TraceDiff` 报告第一个不同的事件（包括长度不一致）。回放比较的是可观测节点行为，
+而不是世界状态。启用 `trace-serde` 后，可用 `recorder.to_json()` 与
+`TraceRecorder::from_json()` 跨进程保存基线；自定义节点类型无法反序列化。
 
 ## 12. 可观测性
 

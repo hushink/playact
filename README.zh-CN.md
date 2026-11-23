@@ -150,6 +150,7 @@ cargo run -p playact --example save_game --features blackboard-serde,snapshot-se
 | `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | 结构化 trace 录制与 replay 对比（依赖 `std`） |
+| `trace-serde` | `TraceRecorder` 的 JSON 导出/导入（依赖 `trace-record`） |
 | `test-util` | 确定性虚拟时间 `TestDriver`（依赖 `std` 与 `trace-record`） |
 | `inspector` | 自包含 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
 | `diff-serde` | `TreeDiff` 与 `DiffHistory` 的 JSON 序列化与解析（依赖 `std`） |

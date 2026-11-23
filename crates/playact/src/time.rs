@@ -14,6 +14,7 @@ use core::time::Duration;
 /// [`crate::BehaviorTree::abort`], otherwise nodes based on absolute time will
 /// observe time moving backwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "trace-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Time {
     /// The current point in time.
     pub now: Duration,

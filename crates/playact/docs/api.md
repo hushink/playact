@@ -56,6 +56,7 @@ modules and methods:
 | `blackboard-serde` | `BlackboardCodec` typed blackboard persistence |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization |
 | `trace-record` | `TraceRecorder` / `TraceRecord` and trace diffing |
+| `trace-serde` | `TraceRecorder` JSON export/import |
 | `tracing` | `TracingTracer` integration |
 | `tokio` | `TokioTask` async adapter |
 | `macros` | `bt!` proc-macro DSL and `#[derive(BtNode)]` |
@@ -761,7 +762,9 @@ if let Some(divergence) = recorder.diff(&baseline) {
 ```
 
 `TraceDiff` reports the first differing event (including length mismatch).
-Replay compares observable node behavior, not world state.
+Replay compares observable node behavior, not world state. With `trace-serde`,
+`recorder.to_json()` and `TraceRecorder::from_json()` persist a baseline across
+processes; custom node kinds cannot be deserialized.
 
 ## 12. Observability
 

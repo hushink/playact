@@ -15,6 +15,7 @@ readme = "README.md"
 default = ["std"]
 std = []
 trace-record = ["std"]
+trace-serde = ["trace-record", "dep:serde", "dep:serde_json", "serde/std"]
 test-util = ["std", "trace-record"]
 inspector = ["std"]
 diff-serde = ["std", "dep:serde", "dep:serde_json"]
@@ -33,6 +34,7 @@ macros = ["dep:playact-macros"]
 full = [
     "std",
     "trace-record",
+    "trace-serde",
     "test-util",
     "inspector",
     "diff-serde",

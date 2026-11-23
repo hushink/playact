@@ -209,7 +209,7 @@ impl fmt::Display for Kind {
     }
 }
 
-#[cfg(feature = "diff-serde")]
+#[cfg(any(feature = "diff-serde", feature = "trace-serde"))]
 impl serde::Serialize for Kind {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -219,7 +219,7 @@ impl serde::Serialize for Kind {
     }
 }
 
-#[cfg(feature = "diff-serde")]
+#[cfg(any(feature = "diff-serde", feature = "trace-serde"))]
 impl<'de> serde::Deserialize<'de> for Kind {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -254,7 +254,11 @@ impl<'de> serde::Deserialize<'de> for Kind {
 /// recognize the same logical node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(
-    any(feature = "diff-serde", feature = "snapshot-serde"),
+    any(
+        feature = "diff-serde",
+        feature = "snapshot-serde",
+        feature = "trace-serde"
+    ),
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct NodeId(String);
