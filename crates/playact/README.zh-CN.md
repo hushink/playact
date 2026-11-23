@@ -703,7 +703,7 @@ let mut tree = spec.build(&registry)?;
   `NodeRegistry::describe` 添加悬停描述，`NodeRegistry::describe_params::<P>`
   添加派生参数 schema，包含字段描述与校验关键字；`describe_switch_key` 与
   `describe_set_value_key` 还会为 key 值提供类型，`markdown_catalog()` 可把元数据
-  渲染为 Markdown 节点目录。
+  渲染为 Markdown 节点目录。测试套件会用注册表生成的 schema 校验仓库示例配置。
 - [`examples/schema_export.rs`](examples/schema_export.rs) 可把该 schema 写到
   `target/playact-schema.json`；[配置参考](docs/config.zh-CN.md#编辑器补全) 给出
   VS Code 映射示例。

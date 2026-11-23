@@ -67,6 +67,7 @@ tokio = { workspace = true, optional = true }
 playact-macros = { version = "0.1.2", path = "../playact-macros", optional = true }
 
 [dev-dependencies]
+jsonschema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
@@ -96,6 +97,10 @@ required-features = ["config", "schema"]
 [[example]]
 name = "battle_ai_showcase"
 required-features = ["hot-reload"]
+
+[[test]]
+name = "config_schema"
+required-features = ["config", "schema"]
 
 [[bench]]
 name = "engine"

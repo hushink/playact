@@ -341,4 +341,5 @@ std::fs::write("docs/node-catalog.md", registry.markdown_catalog())?;
 分类中；它仍可作为 predicate 使用，但不会在 Predicates 中重复。
 
 [`examples/schema_export.rs`](../examples/schema_export.rs) 会同时写出 schema 与
-节点目录。
+节点目录。测试套件使用 JSON Schema 校验器验证仓库中的示例配置，确保 schema 与解析器
+保持一致。

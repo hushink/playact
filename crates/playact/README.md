@@ -737,7 +737,8 @@ are rebuilt with the tree on hot reload and remote refresh, and
   `NodeRegistry::describe_params::<P>` adds a derived params schema with field
   descriptions and validation keywords. `describe_switch_key` and
   `describe_set_value_key` also type key values, and `markdown_catalog()`
-  renders the metadata as a Markdown node catalog.
+  renders the metadata as a Markdown node catalog. The test suite validates the
+  shipped example configurations against a registry-generated schema.
 - [`examples/schema_export.rs`](examples/schema_export.rs) writes that schema to
   `target/playact-schema.json`; the
   [configuration reference](docs/config.md#editor-completion) shows a VS Code mapping.

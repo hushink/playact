@@ -17,6 +17,7 @@ syn = { version = "3", features = ["full"] }
 proc-macro-crate = "3"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "gzip", "brotli", "deflate", "zstd"] }
 schemars = "1"
+jsonschema = { version = "0.63", default-features = false }
 tokio = { version = "1", features = ["rt", "sync"] }
 
 

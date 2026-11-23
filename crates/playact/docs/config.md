@@ -359,4 +359,6 @@ summary from `describe_params`, `describe_switch_key`, and
 remain usable as predicates without being repeated under Predicates.
 
 [`examples/schema_export.rs`](../examples/schema_export.rs) writes both the
-schema and the catalog.
+schema and the catalog. The test suite validates the shipped example
+configurations against a registry-generated schema with a JSON Schema
+validator, so the schema and the parser stay aligned.
