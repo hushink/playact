@@ -364,7 +364,8 @@ tree.last_status(); // Option<Status>
   稳定 `NodeId`。
 - `MultiTracer` 将事件按注册顺序广播。
 - `StatsTracer` 按路径统计 tick、终态、abort、错误、最后状态与 wall-clock 耗时，
-  需要 `std`；可用 `node_by_id` 按稳定 ID 查询。
+  需要 `std`；可用 `node_by_id` 按稳定 ID 查询，或用 `render_prometheus()` 导出
+  可抓取的 Prometheus 文本。
 - `last_status()` / `is_running()` 暴露上一次顶层结果。
 - `describe()` 输出 ASCII 树或 Graphviz DOT；builder/配置中的 `NodeId` 会出现在
   `TreeDescription::id` 和 DOT 标签中。
@@ -535,6 +536,28 @@ include 使用 `json_with_resolver` / `with_client_and_resolver`。
 
 响应体限制为 `MAX_REMOTE_CONFIG_BYTES`（1 MiB），必须是 UTF-8，并在构建前通过
 `TreeSpec::validate`（默认 `ValidationLimits`）校验；过大或结构过深的配置会被拒绝。
+
+可以用 `ResponseVerifier` 在解析前执行签名、MAC 或 allowlist 校验：
+
+```rust
+struct SignatureVerifier;
+
+impl playact::ResponseVerifier for SignatureVerifier {
+    fn verify(
+        &self,
+        headers: &playact::remote_config::reqwest::header::HeaderMap,
+        body: &[u8],
+    ) -> Result<(), String> {
+        // 校验 header 中对 body 的 Ed25519/HMAC 签名
+        Ok(())
+    }
+}
+
+let mut loader =
+    RemoteTreeLoader::<World>::json_with_verifier(url, registry, SignatureVerifier)?;
+```
+
+首次请求与每次刷新都会执行校验；未通过校验的 payload 不会进入解析。
 
 ## 异步动作
 

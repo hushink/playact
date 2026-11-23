@@ -153,7 +153,9 @@ pub use node::{BoxedNode, IdentifiedNode, Kind, Node, NodeId};
 #[cfg(feature = "blackboard-serde")]
 pub use persistence::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
 #[cfg(feature = "remote-config")]
-pub use remote_config::{MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader};
+pub use remote_config::{
+    MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader, ResponseVerifier,
+};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
 pub use snapshot::{
@@ -208,7 +210,9 @@ pub mod prelude {
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]
-    pub use crate::{MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader};
+    pub use crate::{
+        MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader, ResponseVerifier,
+    };
     #[cfg(feature = "config")]
     pub use crate::{TreeParser, ValidationLimits};
 }

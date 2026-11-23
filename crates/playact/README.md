@@ -373,7 +373,7 @@ tree.last_status(); // Option<Status>
 - `MultiTracer` fans events out to multiple tracers.
 - `StatsTracer` tracks per-path tick counts, status counts, aborts, reported errors,
   last status, and wall-clock time (requires `std`); query a specific node with
-  `node_by_id`.
+  `node_by_id`, or export scrapable text with `render_prometheus()`.
 - `last_status()` and `is_running()` expose the last top-level result.
 - `describe()` renders an ASCII tree or Graphviz DOT; builder/app-config IDs appear in
   `TreeDescription::id` and DOT labels.
@@ -554,6 +554,29 @@ available through `json_with_resolver` / `with_client_and_resolver`.
 Response bodies are limited to `MAX_REMOTE_CONFIG_BYTES` (1 MiB), must be UTF-8, and
 are checked with `TreeSpec::validate` using `ValidationLimits::default()` before build.
 Oversized or structurally excessive configurations are rejected.
+
+Install a `ResponseVerifier` to enforce signatures, MACs, or allowlists before parsing:
+
+```rust
+struct SignatureVerifier;
+
+impl playact::ResponseVerifier for SignatureVerifier {
+    fn verify(
+        &self,
+        headers: &playact::remote_config::reqwest::header::HeaderMap,
+        body: &[u8],
+    ) -> Result<(), String> {
+        // verify an Ed25519/HMAC signature from a header over `body`
+        Ok(())
+    }
+}
+
+let mut loader =
+    RemoteTreeLoader::<World>::json_with_verifier(url, registry, SignatureVerifier)?;
+```
+
+The verifier runs on the initial request and every refresh; no unverified payload is
+parsed.
 
 ## Async actions
 

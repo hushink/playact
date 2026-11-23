@@ -10,6 +10,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt::Write as _;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -156,6 +157,155 @@ impl StatsTracer {
         self.lock().nodes.is_empty()
     }
 
+    /// Renders current statistics in Prometheus text exposition format.
+    ///
+    /// Each node is labelled by child path, display name, kind, and stable ID.
+    /// The output is suitable for a textfile collector or a scrape endpoint.
+    #[must_use]
+    pub fn render_prometheus(&self) -> String {
+        let nodes = self.nodes();
+        let mut out = String::new();
+
+        write_metric_header(
+            &mut out,
+            "playact_node_ticks",
+            "counter",
+            "Completed ticks.",
+        );
+        for (path, node) in &nodes {
+            write_node_metric(&mut out, "playact_node_ticks", path, node, node.ticks);
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_successes_total",
+            "counter",
+            "Successful completions.",
+        );
+        for (path, node) in &nodes {
+            write_node_metric(
+                &mut out,
+                "playact_node_successes_total",
+                path,
+                node,
+                node.successes,
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_failures_total",
+            "counter",
+            "Failed completions.",
+        );
+        for (path, node) in &nodes {
+            write_node_metric(
+                &mut out,
+                "playact_node_failures_total",
+                path,
+                node,
+                node.failures,
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_running_total",
+            "counter",
+            "Running results.",
+        );
+        for (path, node) in &nodes {
+            write_node_metric(
+                &mut out,
+                "playact_node_running_total",
+                path,
+                node,
+                node.running,
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_aborts_total",
+            "counter",
+            "Aborted Running subtrees.",
+        );
+        for (path, node) in &nodes {
+            write_node_metric(
+                &mut out,
+                "playact_node_aborts_total",
+                path,
+                node,
+                node.aborts,
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_errors_total",
+            "counter",
+            "Reported node errors.",
+        );
+        for (path, node) in &nodes {
+            write_node_metric(
+                &mut out,
+                "playact_node_errors_total",
+                path,
+                node,
+                node.errors,
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_total_time_seconds",
+            "gauge",
+            "Cumulative wall-clock time spent in the node.",
+        );
+        for (path, node) in &nodes {
+            let _ = writeln!(
+                out,
+                "playact_node_total_time_seconds{{{}}} {}",
+                node_labels(path, node),
+                node.total_time.as_secs_f64()
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_max_time_seconds",
+            "gauge",
+            "Longest observed node tick.",
+        );
+        for (path, node) in &nodes {
+            let _ = writeln!(
+                out,
+                "playact_node_max_time_seconds{{{}}} {}",
+                node_labels(path, node),
+                node.max_time.as_secs_f64()
+            );
+        }
+
+        write_metric_header(
+            &mut out,
+            "playact_node_last_status",
+            "gauge",
+            "Last completed tick status, encoded as a labelled info metric.",
+        );
+        for (path, node) in &nodes {
+            if let Some(status) = node.last_status {
+                let _ = writeln!(
+                    out,
+                    "playact_node_last_status{{{},status=\"{}\"}} 1",
+                    node_labels(path, node),
+                    status_label(status)
+                );
+            }
+        }
+
+        out
+    }
+
     /// Clear the statistics and any in-progress timings.
     pub fn clear(&self) {
         let mut inner = self.lock();
@@ -184,6 +334,52 @@ impl StatsTracer {
         stats.name = String::from(name);
         stats.kind = kind;
         stats
+    }
+}
+
+fn write_metric_header(out: &mut String, name: &str, kind: &str, help: &str) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} {kind}");
+}
+
+fn write_node_metric(out: &mut String, name: &str, path: &[usize], node: &NodeStats, value: u64) {
+    let _ = writeln!(out, "{name}{{{}}} {value}", node_labels(path, node));
+}
+
+fn node_labels(path: &[usize], node: &NodeStats) -> String {
+    let path = path
+        .iter()
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    let id = node.id.as_ref().map_or("", NodeId::as_str);
+    format!(
+        "path=\"{}\",name=\"{}\",kind=\"{}\",id=\"{}\"",
+        escape_label(&path),
+        escape_label(&node.name),
+        node.kind.as_str(),
+        escape_label(id)
+    )
+}
+
+fn escape_label(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn status_label(status: Status) -> &'static str {
+    match status {
+        Status::Success => "success",
+        Status::Failure => "failure",
+        Status::Running => "running",
     }
 }
 
@@ -340,6 +536,29 @@ mod tests {
             .expect("worker stats");
         assert_eq!(worker.name, "work");
         assert_eq!(worker.last_status, Some(Status::Success));
+    }
+
+    #[test]
+    fn renders_prometheus_metrics() {
+        let stats = StatsTracer::new();
+        let mut tree = BehaviorTreeBuilder::<()>::new("metrics")
+            .action("work", |_| Status::Success)
+            .id("worker")
+            .build()
+            .expect("tree");
+        tree.set_tracer(Some(Box::new(stats.clone())));
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+
+        let text = stats.render_prometheus();
+        assert!(text.contains("# TYPE playact_node_ticks counter"));
+        assert!(text.contains(
+            "playact_node_ticks{path=\"\",name=\"work\",kind=\"action\",id=\"worker\"} 1"
+        ));
+        assert!(text.contains(
+            "playact_node_last_status{path=\"\",name=\"work\",kind=\"action\",id=\"worker\",status=\"success\"} 1"
+        ));
     }
 
     #[test]

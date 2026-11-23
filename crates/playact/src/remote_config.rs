@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 pub use reqwest;
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
-use reqwest::header::{IF_MODIFIED_SINCE, IF_NONE_MATCH};
+use reqwest::header::{HeaderMap, IF_MODIFIED_SINCE, IF_NONE_MATCH};
 
 use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
@@ -34,6 +34,16 @@ use crate::tree::BehaviorTree;
 
 /// Maximum response body accepted from a remote configuration endpoint.
 pub const MAX_REMOTE_CONFIG_BYTES: usize = 1024 * 1024;
+
+/// Verifies remote configuration responses before parsing.
+///
+/// Implement this for signatures, MACs, allowlists, or other transport-level
+/// checks. The verifier runs on the initial load and every refresh, before any
+/// configuration is deserialized.
+pub trait ResponseVerifier: Send + Sync {
+    /// Returns an error message when the response must be rejected.
+    fn verify(&self, headers: &HeaderMap, body: &[u8]) -> Result<(), String>;
+}
 
 /// Remote configuration error.
 #[derive(Debug)]
@@ -48,6 +58,8 @@ pub enum RemoteConfigError {
         /// Maximum accepted body size.
         limit: usize,
     },
+    /// A [`ResponseVerifier`] rejected the response.
+    Verification(String),
     /// Failed to parse or validate the configuration text.
     Parse(ConfigError),
     /// Configuration parsed but building the behavior tree failed.
@@ -64,6 +76,9 @@ impl std::fmt::Display for RemoteConfigError {
             Self::ResponseTooLarge { limit } => {
                 write!(f, "remote-config response exceeds {limit} bytes")
             }
+            Self::Verification(message) => {
+                write!(f, "remote-config response verification failed: {message}")
+            }
             Self::Parse(error) => write!(f, "remote-config parse error: {error}"),
             Self::Build(error) => write!(f, "remote-config build error: {error}"),
             Self::NotModified => f.write_str("remote-config initial response was 304 Not Modified"),
@@ -78,7 +93,7 @@ impl std::error::Error for RemoteConfigError {
             Self::Io(error) => Some(error),
             Self::Parse(error) => Some(error),
             Self::Build(error) => Some(error),
-            Self::ResponseTooLarge { .. } | Self::NotModified => None,
+            Self::ResponseTooLarge { .. } | Self::Verification(_) | Self::NotModified => None,
         }
     }
 }
@@ -110,6 +125,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     registry: NodeRegistry<W>,
     parser: TreeParser,
     resolver: Option<Box<dyn IncludeResolver>>,
+    verifier: Option<Box<dyn ResponseVerifier>>,
     tree: BehaviorTree<W>,
     refresh_interval: Duration,
     last_refresh: Instant,
@@ -125,7 +141,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_parser_impl(url, registry, parser, None)
+        Self::with_parser_impl(url, registry, parser, None, None)
     }
 
     /// Creates a loader with a custom parser and include resolver.
@@ -139,7 +155,19 @@ impl<W: 'static> RemoteTreeLoader<W> {
         parser: TreeParser,
         resolver: impl IncludeResolver + 'static,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_parser_impl(url, registry, parser, Some(Box::new(resolver)))
+        Self::with_parser_impl(url, registry, parser, Some(Box::new(resolver)), None)
+    }
+
+    /// Creates a loader with a response verifier.
+    ///
+    /// The verifier runs on the initial fetch and every refresh, before parsing.
+    pub fn with_parser_and_verifier(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        verifier: impl ResponseVerifier + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_impl(url, registry, parser, None, Some(Box::new(verifier)))
     }
 
     fn with_parser_impl(
@@ -147,9 +175,10 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
         resolver: Option<Box<dyn IncludeResolver>>,
+        verifier: Option<Box<dyn ResponseVerifier>>,
     ) -> Result<Self, RemoteConfigError> {
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
-        Self::with_client_impl(client, url, registry, parser, resolver)
+        Self::with_client_impl(client, url, registry, parser, resolver, verifier)
     }
 
     /// Creates a loader with a custom `Client`, which is convenient for
@@ -160,7 +189,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_client_impl(client, url, registry, parser, None)
+        Self::with_client_impl(client, url, registry, parser, None, None)
     }
 
     /// Creates a loader with a custom `Client` and include resolver.
@@ -171,7 +200,32 @@ impl<W: 'static> RemoteTreeLoader<W> {
         parser: TreeParser,
         resolver: impl IncludeResolver + 'static,
     ) -> Result<Self, RemoteConfigError> {
-        Self::with_client_impl(client, url, registry, parser, Some(Box::new(resolver)))
+        Self::with_client_impl(
+            client,
+            url,
+            registry,
+            parser,
+            Some(Box::new(resolver)),
+            None,
+        )
+    }
+
+    /// Creates a loader with a custom `Client` and response verifier.
+    pub fn with_client_and_verifier(
+        client: Client,
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        parser: TreeParser,
+        verifier: impl ResponseVerifier + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_client_impl(
+            client,
+            url,
+            registry,
+            parser,
+            None,
+            Some(Box::new(verifier)),
+        )
     }
 
     fn with_client_impl(
@@ -180,17 +234,19 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
         parser: TreeParser,
         resolver: Option<Box<dyn IncludeResolver>>,
+        verifier: Option<Box<dyn ResponseVerifier>>,
     ) -> Result<Self, RemoteConfigError> {
         let url = url.into();
-        let Some((tree, etag, last_modified)) = fetch(
-            &client,
-            &url,
+        let Some((tree, etag, last_modified)) = fetch(FetchRequest {
+            client: &client,
+            url: &url,
             parser,
-            &registry,
-            resolver.as_deref(),
-            None,
-            None,
-        )?
+            registry: &registry,
+            resolver: resolver.as_deref(),
+            verifier: verifier.as_deref(),
+            etag: None,
+            last_modified: None,
+        })?
         else {
             return Err(RemoteConfigError::NotModified);
         };
@@ -201,6 +257,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             registry,
             parser,
             resolver,
+            verifier,
             tree,
             refresh_interval: Duration::from_secs(30),
             last_refresh: Instant::now(),
@@ -215,6 +272,15 @@ impl<W: 'static> RemoteTreeLoader<W> {
         registry: NodeRegistry<W>,
     ) -> Result<Self, RemoteConfigError> {
         Self::with_parser(url, registry, TreeSpec::from_json_str)
+    }
+
+    /// Creates a JSON loader with a response verifier.
+    pub fn json_with_verifier(
+        url: impl Into<String>,
+        registry: NodeRegistry<W>,
+        verifier: impl ResponseVerifier + 'static,
+    ) -> Result<Self, RemoteConfigError> {
+        Self::with_parser_and_verifier(url, registry, TreeSpec::from_json_str, verifier)
     }
 
     /// Creates a loader for a remote JSON configuration and an include resolver.
@@ -306,15 +372,16 @@ impl<W: 'static> RemoteTreeLoader<W> {
 
         let etag = self.etag.clone();
         let last_modified = self.last_modified.clone();
-        let Some((mut new_tree, etag, last_modified)) = fetch(
-            &self.client,
-            &self.url,
-            self.parser,
-            &self.registry,
-            self.resolver.as_deref(),
-            etag.as_deref(),
-            last_modified.as_deref(),
-        )?
+        let Some((mut new_tree, etag, last_modified)) = fetch(FetchRequest {
+            client: &self.client,
+            url: &self.url,
+            parser: self.parser,
+            registry: &self.registry,
+            resolver: self.resolver.as_deref(),
+            verifier: self.verifier.as_deref(),
+            etag: etag.as_deref(),
+            last_modified: last_modified.as_deref(),
+        })?
         else {
             return Ok(false);
         };
@@ -338,15 +405,29 @@ impl<W: 'static> RemoteTreeLoader<W> {
     }
 }
 
-fn fetch<W: 'static>(
-    client: &Client,
-    url: &str,
+struct FetchRequest<'a, W: 'static> {
+    client: &'a Client,
+    url: &'a str,
     parser: TreeParser,
-    registry: &NodeRegistry<W>,
-    resolver: Option<&dyn IncludeResolver>,
-    etag: Option<&str>,
-    last_modified: Option<&str>,
-) -> Result<Fetched<W>, RemoteConfigError> {
+    registry: &'a NodeRegistry<W>,
+    resolver: Option<&'a dyn IncludeResolver>,
+    verifier: Option<&'a dyn ResponseVerifier>,
+    etag: Option<&'a str>,
+    last_modified: Option<&'a str>,
+}
+
+fn fetch<W: 'static>(request: FetchRequest<'_, W>) -> Result<Fetched<W>, RemoteConfigError> {
+    let FetchRequest {
+        client,
+        url,
+        parser,
+        registry,
+        resolver,
+        verifier,
+        etag,
+        last_modified,
+    } = request;
+
     let mut request = client.get(url);
     if let Some(etag) = etag {
         request = request.header(IF_NONE_MATCH, etag);
@@ -363,6 +444,7 @@ fn fetch<W: 'static>(
     let response = response.error_for_status()?;
     let etag = header_string(&response, "etag");
     let last_modified = header_string(&response, "last-modified");
+    let headers = response.headers().clone();
 
     let mut body = Vec::new();
     response
@@ -373,6 +455,12 @@ fn fetch<W: 'static>(
         return Err(RemoteConfigError::ResponseTooLarge {
             limit: MAX_REMOTE_CONFIG_BYTES,
         });
+    }
+
+    if let Some(verifier) = verifier {
+        verifier
+            .verify(&headers, &body)
+            .map_err(RemoteConfigError::Verification)?;
     }
 
     let text = std::str::from_utf8(&body).map_err(|error| {
@@ -459,6 +547,10 @@ mod tests {
     }
 
     fn serve_sequence(bodies: Vec<String>) -> String {
+        serve_sequence_with_headers(bodies, "")
+    }
+
+    fn serve_sequence_with_headers(bodies: Vec<String>, extra_headers: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind local server");
         let address = listener.local_addr().expect("local address");
 
@@ -468,7 +560,7 @@ mod tests {
                 let mut request = [0_u8; 4096];
                 let _ = stream.read(&mut request);
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
                     body
                 );
@@ -541,6 +633,44 @@ mod tests {
         assert!(matches!(
             error,
             RemoteConfigError::ResponseTooLarge { limit } if limit == MAX_REMOTE_CONFIG_BYTES
+        ));
+    }
+
+    struct SignatureVerifier(&'static str);
+
+    impl ResponseVerifier for SignatureVerifier {
+        fn verify(&self, headers: &HeaderMap, payload: &[u8]) -> Result<(), String> {
+            let signature = headers
+                .get("x-signature")
+                .and_then(|value| value.to_str().ok());
+            if signature == Some(self.0) && payload == body("old").as_bytes() {
+                Ok(())
+            } else {
+                Err(String::from("invalid signature"))
+            }
+        }
+    }
+
+    #[test]
+    fn response_verifier_can_accept_or_reject_payloads() {
+        let url = serve_sequence_with_headers(vec![body("old")], "X-Signature: good\r\n");
+        let mut loader =
+            RemoteTreeLoader::<()>::json_with_verifier(url, registry(), SignatureVerifier("good"))
+                .expect("verified loader");
+        let mut world = ();
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+
+        let url = serve_sequence_with_headers(vec![body("old")], "X-Signature: bad\r\n");
+        let error =
+            RemoteTreeLoader::<()>::json_with_verifier(url, registry(), SignatureVerifier("good"))
+                .err()
+                .expect("verification error");
+        assert!(matches!(
+            error,
+            RemoteConfigError::Verification(message) if message == "invalid signature"
         ));
     }
 }
