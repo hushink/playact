@@ -472,6 +472,8 @@ let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
 // After a reload, use server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
 // To show every kept diff, use server.poll_with_history(&tree, Some(&stats), watcher.diff_history())?;
+// To include restore audit metadata:
+// server.poll_with_report(&tree, Some(&stats), watcher.diff_history(), watcher.last_reload())?;
 ```
 
 The page shows the tree with last statuses, per-node counters and timings, services,
@@ -479,11 +481,12 @@ a `NodeId` audit table with structural paths, an optional reload diff, and Merma
 source, using inline CSS only. With `poll_with_history` / `with_diff_history`, the
 report renders every stored diff as a collapsible `Reload history` list with the
 newest entry expanded; entries are labeled by a monotonic revision that is never
-reused, plus their UTC timestamp when one was recorded. `/metrics`, `/tree`, and
-`/health` serve Prometheus text, the ASCII status tree, and a readiness probe;
-`/status.json` returns a machine-readable summary with the root status, node and
-statistics counts, history length, the oldest and latest revisions, and the latest
-timestamp. With
+reused, plus their UTC timestamp when one was recorded. `poll_with_report` /
+`with_reload_report` add a `Restored` card and a state-restore error panel.
+`/metrics`, `/tree`, and `/health` serve Prometheus text, the ASCII status tree,
+and a readiness probe; `/status.json` returns a machine-readable summary with the
+root status, node and statistics counts, history length, the oldest and latest
+revisions, the latest timestamp, and restore metadata. With
 `diff-serde`, `/diff.json` returns the latest diff and `/diffs.json` the whole
 `DiffHistory` as an array of `{"revision", "diff"}` entries (oldest first); append
 `?since=N` to fetch only revisions after `N`. The server has no authentication and

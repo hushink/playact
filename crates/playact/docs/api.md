@@ -830,14 +830,18 @@ Live server:
 ```rust
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll_with_history(&tree, Some(&stats), &history)?;
+
+// Include restored node count and any restore error.
+let report = watcher.last_reload();
+server.poll_with_report(watcher.tree(), Some(&stats), watcher.diff_history(), report)?;
 ```
 
 | Endpoint | Response |
 |---|---|
-| `/` | HTML report with tree, statuses, services, NodeId audit, history |
+| `/` | HTML report with tree, statuses, services, NodeId audit, history, restore metadata |
 | `/metrics` | Prometheus text |
 | `/tree` | ASCII status tree |
-| `/status.json` | root status, node/stats counts, history length, oldest/latest revision, latest timestamp |
+| `/status.json` | root status, node/stats counts, history length, oldest/latest revision, latest timestamp, restored count, restore error |
 | `/diff.json` | latest `TreeDiff` JSON (`diff-serde`) |
 | `/diffs.json[?since=N]` | revision entries, optionally only newer than N (`diff-serde`) |
 | `/health` | `ok` |

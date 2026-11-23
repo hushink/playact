@@ -457,15 +457,18 @@ let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
 // after a reload: server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
 // full history: server.poll_with_history(&tree, Some(&stats), watcher.diff_history())?;
+// 附带恢复审计信息：
+// server.poll_with_report(&tree, Some(&stats), watcher.diff_history(), watcher.last_reload())?;
 ```
 
 页面展示树结构、各节点最后状态、计数与耗时、服务节点、带结构路径的 `NodeId` 审计
 表、可选重载差异与 Mermaid 源码，仅使用内联 CSS。搭配 `poll_with_history` /
 `with_diff_history` 时，页面会以可折叠的 `Reload history` 列表展示全部保留的差异，
 最新一条默认展开；条目使用永不复用的单调 revision 编号，并在记录了时间戳时显示
-UTC 时间。`/metrics`、`/tree`、`/health` 分别提供 Prometheus 文本、ASCII 状态树与
-就绪探针；`/status.json` 返回机器可读摘要（根状态、节点与统计计数、历史长度、
-最旧与最新 revision、最新时间戳）。启用 `diff-serde` 后，
+UTC 时间。`poll_with_report` / `with_reload_report` 还会增加 `Restored` 卡片与状态
+恢复错误面板。`/metrics`、`/tree`、`/health` 分别提供 Prometheus 文本、ASCII 状态树
+与就绪探针；`/status.json` 返回机器可读摘要（根状态、节点与统计计数、历史长度、
+最旧与最新 revision、最新时间戳与恢复元数据）。启用 `diff-serde` 后，
 `/diff.json` 返回最近一次差异的 JSON，`/diffs.json` 返回整个 `DiffHistory`
 的 `{"revision", "diff"}` 条目数组（由旧到新）；追加 `?since=N` 可只取 revision
 大于 N 的条目。服务器没有鉴权，并会暴露树元数据；请只绑定 loopback，并仅在 debug

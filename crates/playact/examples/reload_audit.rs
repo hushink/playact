@@ -146,6 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         watcher.tree(),
         &stats,
         watcher.diff_history(),
+        watcher.last_reload(),
         addr,
         "/status.json",
     )?;
@@ -155,6 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         watcher.tree(),
         &stats,
         watcher.diff_history(),
+        watcher.last_reload(),
         addr,
         "/diffs.json?since=1",
     )?;
@@ -171,7 +173,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(false) => {}
                 Err(error) => eprintln!("reload failed: {error}"),
             }
-            server.poll_with_history(watcher.tree(), Some(&stats), watcher.diff_history())?;
+            server.poll_with_report(
+                watcher.tree(),
+                Some(&stats),
+                watcher.diff_history(),
+                watcher.last_reload(),
+            )?;
             watcher
                 .tree_mut()
                 .tick(&mut world, Time::from_millis(now_ms, 16));
@@ -208,6 +215,7 @@ fn request(
     tree: &BehaviorTree<World>,
     stats: &StatsTracer,
     history: &DiffHistory,
+    report: Option<ReloadReport<'_>>,
     addr: SocketAddr,
     path: &str,
 ) -> io::Result<String> {
@@ -215,7 +223,7 @@ fn request(
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     write!(stream, "GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n")?;
 
-    let served = server.poll_with_history(tree, Some(stats), history)?;
+    let served = server.poll_with_report(tree, Some(stats), history, report)?;
     if served != 1 {
         return Err(io::Error::other("expected one handled connection"));
     }

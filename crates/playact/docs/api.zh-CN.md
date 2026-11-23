@@ -797,14 +797,18 @@ Inspector::new(&tree)
 ```rust
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll_with_history(&tree, Some(&stats), &history)?;
+
+// 附带恢复节点数与恢复错误。
+let report = watcher.last_reload();
+server.poll_with_report(watcher.tree(), Some(&stats), watcher.diff_history(), report)?;
 ```
 
 | 端点 | 响应 |
 |---|---|
-| `/` | HTML 报告：树、状态、services、NodeId 审计、历史 |
+| `/` | HTML 报告：树、状态、services、NodeId 审计、历史、恢复元数据 |
 | `/metrics` | Prometheus 文本 |
 | `/tree` | ASCII 状态树 |
-| `/status.json` | 根状态、节点/统计计数、历史长度、最旧/最新 revision、最新时间戳 |
+| `/status.json` | 根状态、节点/统计计数、历史长度、最旧/最新 revision、最新时间戳、恢复节点数、恢复错误 |
 | `/diff.json` | 最近一次 `TreeDiff` JSON（`diff-serde`） |
 | `/diffs.json[?since=N]` | revision 条目，可只取 N 之后（`diff-serde`） |
 | `/health` | `ok` |

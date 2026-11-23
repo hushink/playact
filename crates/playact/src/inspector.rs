@@ -47,7 +47,10 @@
 //! Call [`InspectorServer::poll_with_history`] to show every stored reload diff:
 //! the page renders a collapsible history and `/diffs.json` serves the whole
 //! [`DiffHistory`] with each entry's monotonic revision when `diff-serde` is
-//! enabled. Append `?since=N` to fetch only revisions after `N`.
+//! enabled. Append `?since=N` to fetch only revisions after `N`. Pass a
+//! [`ReloadReport`] through [`InspectorServer::poll_with_report`] (or
+//! [`Inspector::with_reload_report`]) to include the restored node count and any
+//! restore error.
 //!
 //! The server is a debug tool: it has no authentication, and the report exposes
 //! node names, IDs, and timings. Bind it to a loopback address and never expose
@@ -63,6 +66,7 @@ use std::time::Duration;
 
 use crate::diff::{DiffHistory, TreeDiff};
 use crate::node::Kind;
+use crate::reload::ReloadReport;
 use crate::stats::{NodeStats, StatsTracer};
 use crate::status::Status;
 use crate::tree::{BehaviorTree, NodePath, TreeDescription};
@@ -86,6 +90,7 @@ pub struct Inspector<'a, W> {
     stats: Option<&'a StatsTracer>,
     diff: Option<&'a TreeDiff>,
     diff_history: Option<&'a DiffHistory>,
+    reload: Option<ReloadReport<'a>>,
     title: Option<String>,
     refresh_seconds: u64,
 }
@@ -99,6 +104,7 @@ impl<'a, W> Inspector<'a, W> {
             stats: None,
             diff: None,
             diff_history: None,
+            reload: None,
             title: None,
             refresh_seconds: 0,
         }
@@ -127,6 +133,18 @@ impl<'a, W> Inspector<'a, W> {
     #[must_use]
     pub fn with_diff_history(mut self, history: &'a DiffHistory) -> Self {
         self.diff_history = Some(history);
+        self
+    }
+
+    /// Adds reload metadata, including the restored node count and any restore
+    /// error.
+    ///
+    /// Pass `watcher.last_reload()` / `loader.last_reload()`. The diff is still
+    /// rendered through [`Inspector::with_diff`] or
+    /// [`Inspector::with_diff_history`].
+    #[must_use]
+    pub fn with_reload_report(mut self, report: ReloadReport<'a>) -> Self {
+        self.reload = Some(report);
         self
     }
 
@@ -171,7 +189,10 @@ impl<'a, W> Inspector<'a, W> {
             &description,
             &services,
             stats.as_ref(),
-            diff,
+            ReportExtras {
+                diff,
+                reload: self.reload,
+            },
             self.refresh_seconds,
         )
     }
@@ -195,7 +216,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/` | HTML report (auto-refreshes every second by default) |
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
-/// | `/status.json` | Summary JSON: tree name, root status, node/stats counts, history length, oldest/latest revision, latest timestamp |
+/// | `/status.json` | Summary JSON: tree name, root status, node/stats counts, history length, oldest/latest revision, latest timestamp, restored count, restore error |
 /// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
 /// | `/diffs.json[?since=N]` | `{"revision", "diff"}` entries as a JSON array, oldest first; `since` keeps revisions above N; requires `diff-serde` |
 /// | `/health` | `ok` |
@@ -263,7 +284,7 @@ impl InspectorServer {
         stats: Option<&StatsTracer>,
         diff: Option<&TreeDiff>,
     ) -> io::Result<usize> {
-        self.poll_with_views(tree, stats, diff, None)
+        self.poll_with_views(tree, stats, diff, None, None)
     }
 
     /// Like [`InspectorServer::poll`], and shows the full reload diff history.
@@ -279,7 +300,23 @@ impl InspectorServer {
         stats: Option<&StatsTracer>,
         history: &DiffHistory,
     ) -> io::Result<usize> {
-        self.poll_with_views(tree, stats, history.latest(), Some(history))
+        self.poll_with_views(tree, stats, history.latest(), Some(history), None)
+    }
+
+    /// Like [`InspectorServer::poll_with_history`], and includes reload audit
+    /// metadata in `/` and `/status.json`.
+    ///
+    /// Pass `watcher.last_reload()` / `loader.last_reload()`. The report's diff
+    /// is already part of the history; this adds the restored node count and any
+    /// restore error.
+    pub fn poll_with_report<W>(
+        &mut self,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        history: &DiffHistory,
+        report: Option<ReloadReport<'_>>,
+    ) -> io::Result<usize> {
+        self.poll_with_views(tree, stats, history.latest(), Some(history), report)
     }
 
     fn poll_with_views<W>(
@@ -288,12 +325,13 @@ impl InspectorServer {
         stats: Option<&StatsTracer>,
         diff: Option<&TreeDiff>,
         history: Option<&DiffHistory>,
+        report: Option<ReloadReport<'_>>,
     ) -> io::Result<usize> {
         let mut served = 0;
         while served < MAX_CONNECTIONS_PER_POLL {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    let _ = self.handle(stream, tree, stats, diff, history);
+                    let _ = self.handle(stream, tree, stats, diff, history, report);
                     served += 1;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
@@ -311,6 +349,7 @@ impl InspectorServer {
         stats: Option<&StatsTracer>,
         diff: Option<&TreeDiff>,
         history: Option<&DiffHistory>,
+        report: Option<ReloadReport<'_>>,
     ) -> io::Result<()> {
         stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT))?;
         let mut buffer = [0_u8; MAX_REQUEST_BYTES];
@@ -350,6 +389,9 @@ impl InspectorServer {
                     inspector = inspector.with_diff_history(history);
                 } else if let Some(diff) = diff {
                     inspector = inspector.with_diff(diff);
+                }
+                if let Some(report) = report {
+                    inspector = inspector.with_reload_report(report);
                 }
                 if let Some(title) = &self.title {
                     inspector = inspector.with_title(title.clone());
@@ -423,7 +465,7 @@ impl InspectorServer {
             (true, "/status.json") => (
                 "200 OK",
                 "application/json; charset=utf-8",
-                render_status_json(tree, stats, history),
+                render_status_json(tree, stats, history, report),
             ),
             (true, "/health") => ("200 OK", "text/plain; charset=utf-8", String::from("ok\n")),
             (true, _) => (
@@ -472,13 +514,19 @@ enum DiffView<'a> {
     History(&'a DiffHistory),
 }
 
+/// Optional diff and reload metadata passed to the renderer.
+struct ReportExtras<'a> {
+    diff: Option<DiffView<'a>>,
+    reload: Option<ReloadReport<'a>>,
+}
+
 fn render_report(
     title: &str,
     tree_name: &str,
     root: &TreeDescription,
     services: &[TreeDescription],
     stats: Option<&BTreeMap<Vec<usize>, NodeStats>>,
-    diff: Option<DiffView<'_>>,
+    extras: ReportExtras<'_>,
     refresh_seconds: u64,
 ) -> String {
     let nodes = count_nodes(root) + services.iter().map(count_nodes).sum::<usize>();
@@ -541,7 +589,27 @@ fn render_report(
     write_card(&mut out, "Aborts", &aborts.to_string(), "");
     let (status_class, status_label) = status_parts(root_status);
     write_card(&mut out, "Root status", status_label, status_class);
+    if let Some(report) = extras.reload {
+        let restored = report
+            .restored
+            .map_or_else(|| String::from("unknown"), |count| count.to_string());
+        let class = if report.restore_error.is_some() {
+            "failure"
+        } else {
+            ""
+        };
+        write_card(&mut out, "Restored", &restored, class);
+    }
     out.push_str("</section>\n");
+
+    if let Some(error) = extras.reload.and_then(|report| report.restore_error) {
+        out.push_str("<section>\n<h2>State restore</h2>\n<div class=\"panel\">\n");
+        out.push_str(
+            "<p class=\"muted\">State restore was rejected; the rebuilt tree was reset.</p>\n",
+        );
+        let _ = writeln!(out, "<p><code>{}</code></p>", escape_html(error));
+        out.push_str("</div>\n</section>\n");
+    }
 
     out.push_str("<section>\n<h2>Tree</h2>\n<div class=\"panel tree\">\n<ul>\n");
     let mut path = Vec::new();
@@ -606,7 +674,7 @@ fn render_report(
     }
     out.push_str("</section>\n");
 
-    match diff {
+    match extras.diff {
         Some(DiffView::History(history)) => render_diff_history(&mut out, history),
         Some(DiffView::Single(diff)) => {
             out.push_str("<section>\n<h2>Reload diff</h2>\n<div class=\"panel\">\n");
@@ -969,6 +1037,7 @@ fn render_status_json<W>(
     tree: &BehaviorTree<W>,
     stats: Option<&StatsTracer>,
     history: Option<&DiffHistory>,
+    report: Option<ReloadReport<'_>>,
 ) -> String {
     let description = tree.describe();
     let services = tree.describe_services();
@@ -1025,6 +1094,20 @@ fn render_status_json<W>(
     match latest_timestamp {
         Some(timestamp) => {
             let _ = write!(out, "{timestamp}");
+        }
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"restored\":");
+    match report.and_then(|report| report.restored) {
+        Some(restored) => {
+            let _ = write!(out, "{restored}");
+        }
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"restore_error\":");
+    match report.and_then(|report| report.restore_error) {
+        Some(error) => {
+            let _ = write!(out, "\"{}\"", escape_json(error));
         }
         None => out.push_str("null"),
     }
@@ -1444,6 +1527,40 @@ mod tests {
     }
 
     #[test]
+    fn renders_reload_report_metadata() {
+        let (first, second) = reload_trees();
+        let mut history = DiffHistory::new(4);
+        history.push_at(TreeDiff::between(&first, &second), 1_600_000_000_000);
+        let report = ReloadReport {
+            revision: 1,
+            timestamp: Some(1_600_000_000_000),
+            restored: Some(3),
+            restore_error: None,
+            diff: history.latest().expect("diff"),
+        };
+
+        let html = Inspector::new(&second)
+            .with_diff_history(&history)
+            .with_reload_report(report)
+            .render();
+        assert!(html.contains("<span class=\"card-label\">Restored</span>"));
+        assert!(html.contains("card-value\">3</span>"));
+
+        let report = ReloadReport {
+            restored: Some(0),
+            restore_error: Some("node `limit` rejected its own snapshot state"),
+            ..report
+        };
+        let html = Inspector::new(&second)
+            .with_diff_history(&history)
+            .with_reload_report(report)
+            .render();
+        assert!(html.contains("State restore"));
+        assert!(html.contains("card-value status failure\">0</span>"));
+        assert!(html.contains("node `limit` rejected its own snapshot state"));
+    }
+
+    #[test]
     fn renders_empty_diff_history_placeholder() {
         let empty = tree("empty");
         let history = DiffHistory::new(2);
@@ -1588,6 +1705,8 @@ mod tests {
         assert!(value["oldest_revision"].is_null());
         assert!(value["latest_revision"].is_null());
         assert!(value["latest_timestamp"].is_null());
+        assert!(value["restored"].is_null());
+        assert!(value["restore_error"].is_null());
 
         let missing = request(
             &mut server,
@@ -1751,6 +1870,8 @@ mod tests {
         assert_eq!(value["oldest_revision"], 1);
         assert_eq!(value["latest_revision"], 2);
         assert_eq!(value["latest_timestamp"], 1_600_000_000_000_u64);
+        assert!(value["restored"].is_null());
+        assert!(value["restore_error"].is_null());
 
         let response = request_with_history(
             &mut server,
@@ -1763,6 +1884,57 @@ mod tests {
         let body = response.split("\r\n\r\n").nth(1).expect("body");
         let value: serde_json::Value = serde_json::from_str(body).expect("latest json");
         assert_eq!(value["added"][0]["id"], "second");
+    }
+
+    #[test]
+    fn server_reports_restore_metadata() {
+        let (first, second) = reload_trees();
+        let mut history = DiffHistory::new(4);
+        history.push(TreeDiff::between(&first, &second));
+        let report = ReloadReport {
+            revision: 1,
+            timestamp: None,
+            restored: Some(2),
+            restore_error: None,
+            diff: history.latest().expect("diff"),
+        };
+
+        let mut server = InspectorServer::bind("127.0.0.1:0").expect("bind");
+        let addr = server.local_addr().expect("addr");
+
+        let response = request_with_report(
+            &mut server,
+            &second,
+            None,
+            &history,
+            Some(report),
+            addr,
+            "GET /status.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("status json");
+        assert_eq!(value["latest_revision"], 1);
+        assert_eq!(value["restored"], 2);
+        assert!(value["restore_error"].is_null());
+
+        let report = ReloadReport {
+            restored: Some(0),
+            restore_error: Some("quoted \"boom\""),
+            ..report
+        };
+        let response = request_with_report(
+            &mut server,
+            &second,
+            None,
+            &history,
+            Some(report),
+            addr,
+            "GET /status.json HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let body = response.split("\r\n\r\n").nth(1).expect("body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("status json");
+        assert_eq!(value["restored"], 0);
+        assert_eq!(value["restore_error"], "quoted \"boom\"");
     }
 
     fn request<W>(
@@ -1810,6 +1982,31 @@ mod tests {
         assert_eq!(
             server
                 .poll_with_history(tree, stats, history)
+                .expect("poll"),
+            1
+        );
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        response
+    }
+
+    fn request_with_report<W>(
+        server: &mut InspectorServer,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        history: &DiffHistory,
+        report: Option<ReloadReport<'_>>,
+        addr: SocketAddr,
+        request: &str,
+    ) -> String {
+        let mut stream = TcpStream::connect(addr).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        stream.write_all(request.as_bytes()).expect("write request");
+        assert_eq!(
+            server
+                .poll_with_report(tree, stats, history, report)
                 .expect("poll"),
             1
         );
