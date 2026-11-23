@@ -399,6 +399,8 @@ cargo run -p playact-cli -- lint --watch --schema schema.json config/*.toml
 cargo run -p playact-cli -- convert --schema schema.json config/a.json config/b.yaml
 cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/config
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
+cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
+cargo run -p playact-cli -- fmt --check --schema schema.json config/*.toml
 ```
 
 `schema` writes the base `TreeSpec` schema. `catalog`, `lint`, and `convert`
@@ -420,4 +422,9 @@ root and every included file into an empty output directory without rewriting
 include strings. The output directory must be outside the include base; use it as
 the include base when loading the bundled root. `graph` renders node structure
 and include relationships as Mermaid (default) or DOT; missing or invalid
-includes appear as error nodes.
+includes appear as error nodes. `fmt` validates each input and rewrites it in
+canonical form; included files are validated but not rewritten unless passed
+explicitly. `--check` writes nothing and exits nonzero when files would change.
+RON formatting serializes the parsed spec because RON's generic map syntax does
+not deserialize as a `TreeSpec`; other formats preserve the original field
+presence.

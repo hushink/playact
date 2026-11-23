@@ -78,13 +78,32 @@ impl Format {
         }
     }
 
+    /// Serializes a parsed configuration document in this format.
+    ///
+    /// This preserves which optional fields were present instead of expanding
+    /// them to nulls. A trailing newline is always added.
+    ///
+    /// # Errors
+    ///
+    /// Returns the format serializer's message.
+    pub fn serialize_document(self, document: &Value) -> Result<Vec<u8>, String> {
+        let text = match self {
+            Self::Json => serde_json::to_string_pretty(document).map_err(|error| error.to_string()),
+            Self::Toml => toml::to_string_pretty(document).map_err(|error| error.to_string()),
+            Self::Yaml => serde_yaml_ng::to_string(document).map_err(|error| error.to_string()),
+            Self::Ron => ron::ser::to_string_pretty(document, ron::ser::PrettyConfig::default())
+                .map_err(|error| error.to_string()),
+        }?;
+        Ok(ensure_newline(text))
+    }
+
     /// Serializes a `TreeSpec` in this format.
     ///
     /// # Errors
     ///
     /// Returns the format serializer's message.
     pub fn serialize_spec(self, spec: &TreeSpec) -> Result<Vec<u8>, String> {
-        match self {
+        let bytes = match self {
             Self::Json => serde_json::to_vec_pretty(spec).map_err(|error| error.to_string()),
             Self::Toml => serialize_toml(spec),
             Self::Yaml => serde_yaml_ng::to_string(spec)
@@ -93,8 +112,39 @@ impl Format {
             Self::Ron => ron::ser::to_string_pretty(spec, ron::ser::PrettyConfig::default())
                 .map(String::into_bytes)
                 .map_err(|error| error.to_string()),
+        }?;
+        Ok(ensure_newline_bytes(bytes))
+    }
+
+    /// Serializes the document for `fmt`.
+    ///
+    /// RON's generic map syntax does not deserialize as a `TreeSpec`, so RON
+    /// formatting uses the parsed spec instead. Other formats preserve the
+    /// original field presence.
+    ///
+    /// # Errors
+    ///
+    /// Returns the format serializer's message.
+    pub fn format_config(self, document: &Value, spec: &TreeSpec) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Ron => self.serialize_spec(spec),
+            _ => self.serialize_document(document),
         }
     }
+}
+
+fn ensure_newline(mut text: String) -> Vec<u8> {
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.into_bytes()
+}
+
+fn ensure_newline_bytes(mut bytes: Vec<u8>) -> Vec<u8> {
+    if !bytes.ends_with(b"\n") {
+        bytes.push(b'\n');
+    }
+    bytes
 }
 
 fn serialize_toml(spec: &TreeSpec) -> Result<Vec<u8>, String> {
@@ -140,6 +190,40 @@ mod tests {
         assert_eq!(Format::from_path(Path::new("tree.ron")), Ok(Format::Ron));
         assert!(Format::from_path(Path::new("tree.txt")).is_err());
         assert!(Format::from_path(Path::new("tree")).is_err());
+    }
+
+    #[test]
+    fn serializes_documents_back_into_parseable_specs() {
+        let cases = [
+            (
+                Format::Json,
+                r#"{"version":1,"root":{"type":"action","name":"wait"}}"#,
+            ),
+            (
+                Format::Toml,
+                "version = 1\n[root]\ntype = \"action\"\nname = \"wait\"\n",
+            ),
+            (
+                Format::Yaml,
+                "version: 1\nroot:\n  type: action\n  name: wait\n",
+            ),
+            (
+                Format::Ron,
+                "(version: 1, root: (type: \"action\", name: \"wait\"))",
+            ),
+        ];
+        for (format, text) in cases {
+            let document = format.parse_document(text).expect("parse document");
+            let spec = format.parse_spec(text).expect("parse spec");
+            let bytes = format
+                .format_config(&document, &spec)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}"));
+            let output = std::str::from_utf8(&bytes).expect("UTF-8 output");
+            format
+                .parse_spec(output)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}\n{output}"));
+            assert!(output.ends_with('\n'), "{format:?}");
+        }
     }
 
     #[test]

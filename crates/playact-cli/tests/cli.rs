@@ -551,6 +551,73 @@ fn graph_rejects_unknown_formats() {
 }
 
 #[test]
+fn fmt_rewrites_configurations_and_check_passes_afterwards() {
+    let config = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+
+    let formatted = run(&["fmt", config.as_str()]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    let text = fs::read_to_string(&config.path).expect("formatted config");
+    assert!(text.contains("\n  \"version\": 1"), "{text}");
+    assert!(text.ends_with('\n'), "{text}");
+
+    let checked = run(&["fmt", "--check", config.as_str()]);
+    assert!(checked.status.success(), "{checked:?}");
+}
+
+#[test]
+fn fmt_check_reports_unformatted_files_without_writing() {
+    let config = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let original = fs::read_to_string(&config.path).expect("original");
+
+    let checked = run(&["fmt", "--check", config.as_str()]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("would reformat"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&config.path).expect("unchanged"),
+        original
+    );
+}
+
+#[test]
+fn fmt_validates_includes_before_writing() {
+    let directory = TempDir::new();
+    directory.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"bad.json"}}"#,
+    );
+    let original = fs::read_to_string(&root).expect("original root");
+
+    let formatted = run(&["fmt", root.to_str().expect("root path")]);
+    assert!(!formatted.status.success(), "{formatted:?}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged root"), original);
+}
+
+#[test]
+fn fmt_supports_toml_and_ron() {
+    let toml = TempFile::new(
+        "toml",
+        "version=1\n[root]\ntype=\"action\"\nname=\"anything\"\n",
+    );
+    let ron = TempFile::new(
+        "ron",
+        "(version:1,root:(type:\"action\",name:\"anything\"))",
+    );
+
+    let formatted = run(&["fmt", toml.as_str(), ron.as_str()]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    let linted = run(&["lint", toml.as_str(), ron.as_str()]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
 fn lint_uses_registry_names_from_the_schema() {
     let schema = TempFile::new("json", &registry_schema());
     let bad = TempFile::new("json", r#"{"root":{"type":"action","name":"missing"}}"#);

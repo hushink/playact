@@ -115,3 +115,9 @@ jobs:
           cargo run -p playact-cli --quiet -- graph crates/playact/examples/battle_ai.json > target/cli-graph.mmd
           grep -q 'flowchart LR' target/cli-graph.mmd
           grep -q 'action: wait' target/cli-graph.mmd
+          fmt_dir=$(mktemp -d)
+          fmt_copy="$fmt_dir/battle_ai.json"
+          cp crates/playact/examples/battle_ai.json "$fmt_copy"
+          cargo run -p playact-cli --quiet -- fmt "$fmt_copy"
+          cargo run -p playact-cli --quiet -- fmt --check "$fmt_copy"
+          rm -rf "$fmt_dir"

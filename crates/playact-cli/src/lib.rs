@@ -9,10 +9,11 @@
 //! - `convert`: validate and rewrite a configuration in another format;
 //! - `bundle`: validate a configuration and copy its include graph into an
 //!   empty output directory;
-//! - `graph`: render node structure and include relationships as Mermaid or DOT.
+//! - `graph`: render node structure and include relationships as Mermaid or DOT;
+//! - `fmt`: validate and rewrite configurations in canonical form.
 //!
 //! Registry-aware schemas produced by `NodeRegistry::json_schema()` can be
-//! passed to `catalog`, `lint`, `convert`, and `bundle` with `--schema`.
+//! passed to `catalog`, `lint`, `convert`, `bundle`, and `fmt` with `--schema`.
 
 mod bundle;
 mod catalog;
@@ -45,6 +46,7 @@ Commands:
   convert  Convert a validated configuration between formats
   bundle   Copy a configuration and its includes into one directory
   graph    Render node structure and includes as Mermaid or DOT
+  fmt      Validate and rewrite configurations in canonical form
 
 Run `playact <COMMAND> --help` for command options.";
 
@@ -85,6 +87,12 @@ usage: playact graph [--include-base PATH] [--format mermaid|dot] [--output PATH
 
 Renders node structure and include relationships. Missing or invalid includes are
 shown as error nodes. Without --output the graph is written to stdout.";
+const FMT_USAGE: &str = "\
+usage: playact fmt [--schema PATH] [--include-base PATH] [--check] CONFIG...
+
+Validates configurations and rewrites each input in canonical form. Includes are
+validated but not rewritten unless passed explicitly. --check reports files that
+would change without writing them and exits nonzero.";
 
 enum Outcome {
     Success,
@@ -108,6 +116,7 @@ pub fn main_entry() -> ExitCode {
         Some("convert") => run_convert(arguments),
         Some("bundle") => run_bundle(arguments),
         Some("graph") => run_graph(arguments),
+        Some("fmt") => run_fmt(arguments),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -424,6 +433,111 @@ fn run_graph(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let rendered = graph::render(&paths[0], include_base.as_deref(), graph_format)?;
     write_output(output.as_deref(), rendered.as_bytes())?;
     Ok(Outcome::Success)
+}
+
+fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
+    let mut schema_path = None;
+    let mut include_base = None;
+    let mut check = false;
+    let mut options_done = false;
+    let mut files = Vec::new();
+    let mut arguments = arguments.into_iter();
+
+    while let Some(argument) = arguments.next() {
+        if !options_done {
+            match argument.to_str() {
+                Some("-h" | "--help") => {
+                    println!("{FMT_USAGE}");
+                    return Ok(Outcome::Success);
+                }
+                Some("--check") => {
+                    check = true;
+                    continue;
+                }
+                Some("-s" | "--schema") => {
+                    schema_path = Some(next_path(&mut arguments, "--schema")?);
+                    continue;
+                }
+                Some("-b" | "--include-base") => {
+                    include_base = Some(next_path(&mut arguments, "--include-base")?);
+                    continue;
+                }
+                Some("--") => {
+                    options_done = true;
+                    continue;
+                }
+                Some(option) if option.starts_with('-') => {
+                    return Err(format!("unknown option `{option}`").into());
+                }
+                _ => {}
+            }
+        }
+        files.push(PathBuf::from(argument));
+    }
+    if files.is_empty() {
+        return Err(String::from("fmt requires at least one configuration path").into());
+    }
+
+    let schema = load_schema(schema_path.as_deref())?;
+    jsonschema::validator_for(&schema).map_err(|error| format!("invalid schema: {error}"))?;
+    let mut changed = 0;
+    let mut failed = false;
+
+    for path in &files {
+        let report = lint::lint_file(&schema, path, include_base.as_deref());
+        if !report.valid {
+            print_human_reports(std::slice::from_ref(&report));
+            failed = true;
+            continue;
+        }
+        match format_file(path, check) {
+            Ok(false) => {}
+            Ok(true) => {
+                changed += 1;
+                if check {
+                    eprintln!("would reformat {}", path.display());
+                } else {
+                    println!("formatted {}", path.display());
+                }
+            }
+            Err(error) => {
+                eprintln!("playact: {}: {error}", path.display());
+                failed = true;
+            }
+        }
+    }
+
+    if check && changed > 0 {
+        eprintln!("{changed} of {} file(s) would be reformatted", files.len());
+        failed = true;
+    } else if !check && changed > 0 {
+        println!("formatted {changed} file(s)");
+    }
+
+    Ok(if failed {
+        Outcome::Invalid
+    } else {
+        Outcome::Success
+    })
+}
+
+fn format_file(path: &Path, check: bool) -> Result<bool, String> {
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read `{}`: {error}", path.display()))?;
+    let format = format::Format::from_path(path)?;
+    let document = format.parse_document(&text)?;
+    let spec = format
+        .parse_spec(&text)
+        .map_err(|error| error.to_string())?;
+    let formatted = format.format_config(&document, &spec)?;
+    if formatted.as_slice() == text.as_bytes() {
+        return Ok(false);
+    }
+    if !check {
+        fs::write(path, formatted)
+            .map_err(|error| format!("write `{}`: {error}", path.display()))?;
+    }
+    Ok(true)
 }
 
 fn print_human_reports(reports: &[LintReport]) {

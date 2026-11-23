@@ -171,6 +171,8 @@ cargo run -p playact-cli -- convert config/a.json config/b.yaml
 cargo run -p playact-cli -- bundle config/root.json dist/config
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- graph --format dot config/root.json
+cargo run -p playact-cli -- fmt config/*.toml
+cargo run -p playact-cli -- fmt --check config/*.toml
 ```
 
 `schema` writes the base `TreeSpec` schema. Pass a registry-aware schema
@@ -188,7 +190,9 @@ included file into an empty output directory without rewriting include strings.
 The output directory must be outside the include base; load the bundled root with
 that directory as the include base. `graph` renders node structure and include
 relationships as Mermaid (default) or DOT; missing or invalid includes appear as
-error nodes.
+error nodes. `fmt` validates each input and rewrites it in canonical form;
+included files are validated but not rewritten unless passed explicitly.
+`fmt --check` writes nothing and exits nonzero when files would change.
 
 ## Feature flags
 
