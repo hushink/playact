@@ -25,7 +25,7 @@ use crate::decorator::{
 };
 use crate::error::BuildError;
 use crate::leaf::{Action, Condition, SetValue, Wait};
-use crate::node::BoxedNode;
+use crate::node::{BoxedNode, IdentifiedNode, NodeId};
 use crate::status::Status;
 use crate::subtree::SubtreeFactory;
 use crate::tree::BehaviorTree;
@@ -234,6 +234,42 @@ where
     /// Appends a pre-built custom node or subtree.
     pub fn raw(self, node: BoxedNode<W>) -> BehaviorTreeBuilder<W, S::Next> {
         self.push_node(node)
+    }
+
+    /// Assigns a stable identity to the most recently appended node.
+    ///
+    /// The identity is metadata only; it does not change tick behavior. It is
+    /// preserved by [`crate::TreeDescription`] and is intended for snapshots,
+    /// metrics, and tooling that must recognize a node across tree edits.
+    ///
+    /// ```
+    /// use playact::{BehaviorTreeBuilder, Status};
+    ///
+    /// let tree = BehaviorTreeBuilder::<()>::new("demo")
+    ///     .action("work", |_| Status::Success)
+    ///     .id("worker")
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(
+    ///     tree.describe().id.as_ref().map(|id| id.as_str()),
+    ///     Some("worker")
+    /// );
+    /// ```
+    pub fn id(mut self, id: impl Into<NodeId>) -> Self {
+        match self.frame.children.pop() {
+            Some(node) => self
+                .frame
+                .children
+                .push(Box::new(IdentifiedNode::new(id, node))),
+            None if self.frame.error.is_none() => {
+                self.frame.error = Some(BuildError::InvalidTree {
+                    message: "id requires a preceding node",
+                });
+            }
+            None => {}
+        }
+        self
     }
 
     /// Appends a freshly instantiated subtree from a subtree factory.

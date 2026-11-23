@@ -7,7 +7,7 @@ use core::fmt::{self, Write};
 
 use crate::blackboard::Blackboard;
 use crate::context::Context;
-use crate::node::{BoxedNode, Kind, Node};
+use crate::node::{BoxedNode, Kind, Node, NodeId};
 use crate::snapshot::{load_children, save_children, state};
 use crate::status::Status;
 use crate::time::Time;
@@ -447,6 +447,8 @@ impl<W> Node<W> for BehaviorTree<W> {
 pub struct TreeDescription {
     /// The node display name.
     pub name: String,
+    /// Stable identity, when the tree author assigned one.
+    pub id: Option<NodeId>,
     /// The node kind label.
     pub kind: Kind,
     /// Descriptions of the child nodes.
@@ -457,6 +459,7 @@ impl TreeDescription {
     fn from_node<W>(node: &(dyn Node<W> + Send)) -> Self {
         Self {
             name: node.name().to_string(),
+            id: node.id().cloned(),
             kind: node.kind(),
             children: node
                 .children()
@@ -477,12 +480,13 @@ impl TreeDescription {
         ) {
             let id = *next;
             *next += 1;
-            let _ = writeln!(
-                out,
-                "  n{id} [label=\"{}: {}\"];",
-                escape_dot(node.kind.as_str()),
-                escape_dot(&node.name)
-            );
+            let label = match &node.id {
+                Some(node_id) => {
+                    alloc::format!("{}: {} ({node_id})", node.kind.as_str(), node.name)
+                }
+                None => alloc::format!("{}: {}", node.kind.as_str(), node.name),
+            };
+            let _ = writeln!(out, "  n{id} [label=\"{}\"];", escape_dot(&label));
             if let Some(parent) = parent {
                 let _ = writeln!(out, "  n{parent} -> n{id};");
             }
@@ -618,6 +622,39 @@ mod tests {
     use crate::trace::TraceEvent;
 
     use super::*;
+
+    #[test]
+    fn stable_ids_appear_in_descriptions() {
+        let tree = BehaviorTreeBuilder::<()>::new("ids")
+            .sequence(|b| {
+                b.action("first", |_| Status::Success)
+                    .id("first_id")
+                    .action("second", |_| Status::Success)
+            })
+            .id("root_id")
+            .build()
+            .expect("tree");
+
+        let description = tree.describe();
+        assert_eq!(description.id.as_ref().map(NodeId::as_str), Some("root_id"));
+        assert_eq!(
+            description.children[0].id.as_ref().map(NodeId::as_str),
+            Some("first_id")
+        );
+        assert!(description.children[1].id.is_none());
+        assert!(description.to_dot().contains("first_id"));
+    }
+
+    #[test]
+    fn id_without_a_node_is_a_build_error() {
+        let error = BehaviorTreeBuilder::<()>::new("bad")
+            .id("orphan")
+            .action("node", |_| Status::Success)
+            .build()
+            .err()
+            .expect("id requires a node");
+        assert!(error.to_string().contains("id requires"));
+    }
 
     #[test]
     fn describe_and_dot_contain_structure() {

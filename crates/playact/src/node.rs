@@ -1,6 +1,7 @@
 //! The node contract and node type tags.
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -134,6 +135,122 @@ impl fmt::Display for Kind {
     }
 }
 
+/// Stable, user-assigned node identity.
+///
+/// Names are display labels and may change; a `NodeId` is intended for
+/// snapshots, metrics, debugging tools, and configuration reloads that need to
+/// recognize the same logical node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeId(String);
+
+impl NodeId {
+    /// Creates an ID from any string-like value.
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Returns the ID as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for NodeId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for NodeId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl AsRef<str> for NodeId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A node wrapper that attaches a stable [`NodeId`] without changing behavior.
+///
+/// Existing custom nodes can opt into identities by returning
+/// [`Node::id`]; this wrapper is the built-in way to add one to any node.
+pub struct IdentifiedNode<W> {
+    id: NodeId,
+    inner: BoxedNode<W>,
+}
+
+impl<W> IdentifiedNode<W> {
+    /// Wraps a node with an identity.
+    #[must_use]
+    pub fn new(id: impl Into<NodeId>, inner: BoxedNode<W>) -> Self {
+        Self {
+            id: id.into(),
+            inner,
+        }
+    }
+
+    /// The attached identity.
+    #[must_use]
+    pub fn node_id(&self) -> &NodeId {
+        &self.id
+    }
+
+    /// Unwraps the inner node.
+    #[must_use]
+    pub fn into_inner(self) -> BoxedNode<W> {
+        self.inner
+    }
+}
+
+impl<W> Node<W> for IdentifiedNode<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        self.inner.tick(ctx)
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        self.inner.abort(ctx);
+    }
+
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+
+    fn id(&self) -> Option<&NodeId> {
+        Some(&self.id)
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        self.inner.children()
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        self.inner.save_state()
+    }
+
+    fn load_state(&mut self, state: &[u8]) -> bool {
+        self.inner.load_state(state)
+    }
+}
+
 /// The unified contract for all nodes.
 ///
 /// `W` is the world/client type supplied by the user; the engine does not care
@@ -171,6 +288,11 @@ pub trait Node<W>: Send {
     /// Node type tag.
     fn kind(&self) -> Kind {
         Kind::Custom("node")
+    }
+
+    /// Stable identity assigned by the tree author, if any.
+    fn id(&self) -> Option<&NodeId> {
+        None
     }
 
     /// Direct children; empty by default. Used by `describe()` and custom

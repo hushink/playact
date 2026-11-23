@@ -133,7 +133,7 @@ pub use composite::{
     WeightedRandomSelector,
 };
 #[cfg(feature = "config")]
-pub use config::TreeParser;
+pub use config::{TreeParser, ValidationLimits};
 pub use context::Context;
 pub use decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK,
@@ -143,7 +143,7 @@ pub use error::BuildError;
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{HotReloadError, TreeWatcher};
 pub use leaf::{Action, Condition, SetValue, Wait};
-pub use node::{BoxedNode, Kind, Node};
+pub use node::{BoxedNode, IdentifiedNode, Kind, Node, NodeId};
 #[cfg(feature = "remote-config")]
 pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
 #[cfg(feature = "std")]
@@ -167,20 +167,19 @@ pub use playact_macros::bt;
 pub mod prelude {
     #[cfg(feature = "tokio")]
     pub use crate::TokioTask;
-    #[cfg(feature = "config")]
-    pub use crate::TreeParser;
     #[cfg(feature = "macros")]
     pub use crate::bt;
     pub use crate::key;
     pub use crate::{
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
-        Cooldown, Guard, IfThenElse, Inverter, Key, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK,
-        MemParallel, MultiTracer, Node, Parallel, Race, RandomSelector, ReactiveSelector,
-        ReactiveSequence, Repeat, RestoreError, Retry, SNAPSHOT_VERSION, Selector, Sequence,
-        SetValue, Status, SubtreeFactory, SubtreeSlot, Threshold, Throttle, Time, Timeout,
-        TraceEvent, Tracer, TreeDescription, TreeSnapshot, UntilFailure, UntilSuccess,
-        UtilityChild, UtilitySelector, Wait, WeightedChild, WeightedRandomSelector,
+        Cooldown, Guard, IdentifiedNode, IfThenElse, Inverter, Key, Kind, Limiter,
+        MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer, Node, NodeId, Parallel, Race,
+        RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, RestoreError, Retry,
+        SNAPSHOT_VERSION, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot,
+        Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot,
+        UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild,
+        WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
     pub use crate::{
@@ -191,4 +190,6 @@ pub mod prelude {
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]
     pub use crate::{RemoteConfigError, RemoteTreeLoader};
+    #[cfg(feature = "config")]
+    pub use crate::{TreeParser, ValidationLimits};
 }

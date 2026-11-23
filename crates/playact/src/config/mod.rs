@@ -29,6 +29,25 @@ pub const CURRENT_VERSION: u32 = 1;
 /// cyclic configurations.
 pub const MAX_INCLUDE_DEPTH: usize = 32;
 
+/// Structural limits applied by [`TreeSpec::validate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidationLimits {
+    /// Maximum root-to-leaf depth. The root is depth 1.
+    pub max_depth: usize,
+    /// Maximum number of nodes in the specification. Includes are counted as
+    /// one node and are not expanded.
+    pub max_nodes: usize,
+}
+
+impl Default for ValidationLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 64,
+            max_nodes: 10_000,
+        }
+    }
+}
+
 fn default_version() -> u32 {
     CURRENT_VERSION
 }
@@ -43,6 +62,7 @@ fn default_failure_threshold() -> ThresholdSpec {
 
 /// Pure-data description of a complete behavior tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TreeSpec {
     /// Schema version; defaults to 1.
@@ -59,6 +79,7 @@ pub struct TreeSpec {
 ///
 /// The outer tag is `type`, for example `{"type":"sequence","children":[...]}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SpecNode {
     /// Memory sequence.
@@ -314,6 +335,7 @@ pub enum SpecNode {
 
 /// Parallel threshold in a configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ThresholdSpec {
     /// All must be satisfied.
@@ -331,6 +353,54 @@ impl From<ThresholdSpec> for Threshold {
             ThresholdSpec::Any => Self::Any,
             ThresholdSpec::AtLeast(n) => Self::AtLeast(n),
         }
+    }
+}
+
+impl SpecNode {
+    fn child_specs(&self) -> Vec<&SpecNode> {
+        match self {
+            Self::Sequence { children, .. }
+            | Self::ReactiveSequence { children, .. }
+            | Self::Selector { children, .. }
+            | Self::ReactiveSelector { children, .. }
+            | Self::RandomSelector { children, .. }
+            | Self::WeightedRandomSelector { children, .. }
+            | Self::Parallel { children, .. }
+            | Self::Race { children, .. }
+            | Self::MemParallel { children, .. }
+            | Self::Custom { children, .. } => children.iter().collect(),
+            Self::Inverter { child, .. }
+            | Self::AlwaysSucceed { child, .. }
+            | Self::AlwaysFail { child, .. }
+            | Self::Repeat { child, .. }
+            | Self::Retry { child, .. }
+            | Self::UntilSuccess { child, .. }
+            | Self::UntilFailure { child, .. }
+            | Self::Cooldown { child, .. }
+            | Self::Timeout { child, .. }
+            | Self::Limiter { child, .. }
+            | Self::Throttle { child, .. } => vec![child.as_ref()],
+            Self::Wait { .. }
+            | Self::Action { .. }
+            | Self::Condition { .. }
+            | Self::Include { .. } => Vec::new(),
+        }
+    }
+
+    fn has_many_children(&self) -> bool {
+        matches!(
+            self,
+            Self::Sequence { .. }
+                | Self::ReactiveSequence { .. }
+                | Self::Selector { .. }
+                | Self::ReactiveSelector { .. }
+                | Self::RandomSelector { .. }
+                | Self::WeightedRandomSelector { .. }
+                | Self::Parallel { .. }
+                | Self::Race { .. }
+                | Self::MemParallel { .. }
+                | Self::Custom { .. }
+        )
     }
 }
 
@@ -364,6 +434,74 @@ impl TreeSpec {
     pub fn from_ron_str(input: &str) -> Result<Self, ConfigError> {
         ron::from_str(input).map_err(|error| ConfigError::new(error.to_string()))
     }
+
+    /// Returns the JSON Schema for the configuration format.
+    ///
+    /// The schema describes the structural `TreeSpec` shape and built-in node
+    /// parameters. Registered action/condition/custom names and their parameter
+    /// schemas are application-specific and are not included.
+    #[cfg(feature = "schema")]
+    #[must_use]
+    pub fn json_schema() -> Value {
+        serde_json::to_value(schemars::schema_for!(TreeSpec))
+            .expect("TreeSpec schema serialization cannot fail")
+    }
+
+    /// Validates version, depth, and node-count limits without building a tree.
+    ///
+    /// This is useful before accepting remote configuration or before handing a
+    /// spec to a registry that may be expensive to invoke. Include nodes are
+    /// counted as one node and are not expanded; the resolver must validate the
+    /// included specs separately.
+    pub fn validate(&self, limits: &ValidationLimits) -> Result<(), ConfigError> {
+        if self.version != CURRENT_VERSION {
+            return Err(ConfigError::with_path(
+                "version",
+                format!(
+                    "unsupported version {}; supported is {CURRENT_VERSION}",
+                    self.version
+                ),
+            ));
+        }
+
+        let mut nodes = 0_usize;
+        validate_node(&self.root, "root", 1, limits, &mut nodes)
+    }
+}
+
+fn validate_node(
+    node: &SpecNode,
+    path: &str,
+    depth: usize,
+    limits: &ValidationLimits,
+    nodes: &mut usize,
+) -> Result<(), ConfigError> {
+    if depth > limits.max_depth {
+        return Err(ConfigError::with_path(
+            path,
+            format!("tree depth exceeds limit {}", limits.max_depth),
+        ));
+    }
+
+    *nodes += 1;
+    if *nodes > limits.max_nodes {
+        return Err(ConfigError::with_path(
+            path,
+            format!("node count exceeds limit {}", limits.max_nodes),
+        ));
+    }
+
+    let children = node.child_specs();
+    for (index, child) in children.iter().enumerate() {
+        let child_path = if children.len() == 1 && !node.has_many_children() {
+            format!("{path}.child")
+        } else {
+            format!("{path}.children[{index}]")
+        };
+        validate_node(child, &child_path, depth + 1, limits, nodes)?;
+    }
+
+    Ok(())
 }
 
 fn parse_with_path<'de, D>(deserializer: D) -> Result<TreeSpec, ConfigError>
@@ -620,6 +758,87 @@ mod tests {
         let description = tree.describe();
         assert_eq!(description.name, "my_custom");
         assert_eq!(description.kind, Kind::Custom("custom_leaf"));
+    }
+
+    #[test]
+    fn validate_accepts_within_limits() {
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "version": 1,
+                "root": {
+                    "type": "sequence",
+                    "children": [
+                        {"type": "wait", "duration_ms": 1},
+                        {"type": "wait", "duration_ms": 2}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        spec.validate(&ValidationLimits {
+            max_depth: 3,
+            max_nodes: 3,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_depth_and_node_count() {
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "version": 1,
+                "root": {
+                    "type": "inverter",
+                    "child": {
+                        "type": "inverter",
+                        "child": {"type": "wait", "duration_ms": 1}
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let depth_error = spec
+            .validate(&ValidationLimits {
+                max_depth: 2,
+                max_nodes: 10,
+            })
+            .expect_err("depth limit");
+        assert!(depth_error.message().contains("depth"));
+        assert_eq!(depth_error.path(), Some("root.child.child"));
+
+        let count_error = spec
+            .validate(&ValidationLimits {
+                max_depth: 10,
+                max_nodes: 2,
+            })
+            .expect_err("node limit");
+        assert!(count_error.message().contains("node count"));
+        assert_eq!(count_error.path(), Some("root.child.child"));
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_version() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"version": 2, "root": {"type": "wait", "duration_ms": 0}}"#,
+        )
+        .unwrap();
+
+        let error = spec
+            .validate(&ValidationLimits::default())
+            .expect_err("unsupported version");
+        assert_eq!(error.path(), Some("version"));
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn json_schema_contains_built_in_node_types() {
+        let schema = TreeSpec::json_schema();
+        let text = schema.to_string();
+        assert!(text.contains("\"root\""));
+        assert!(text.contains("\"sequence\""));
+        assert!(text.contains("\"wait\""));
     }
 
     #[test]
