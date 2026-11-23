@@ -1,8 +1,9 @@
-//! The proc-macro DSL for `playact`.
+//! Proc-macro DSL and derives for `playact`.
 //!
-//! The main entry point is [`bt!`]: it builds a behavior tree from nested blocks and
-//! expands to `BehaviorTreeBuilder` calls. The macro only generates code; it does not
-//! depend on an async runtime or pull in domain types.
+//! [`bt!`] builds a behavior tree from nested blocks and expands to
+//! `BehaviorTreeBuilder` calls. [`BtNode`] derives the `Node` boilerplate for a
+//! custom struct. The macros only generate code; they do not depend on an async
+//! runtime or pull in domain types.
 //!
 //! ```ignore
 //! use playact::prelude::*;
@@ -25,7 +26,9 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Ident, LitStr, Token, Type, braced, parenthesized, parse_macro_input};
+use syn::{DeriveInput, Ident, LitStr, Token, Type, braced, parenthesized, parse_macro_input};
+
+mod bt_node;
 
 struct TreeInput {
     world: Type,
@@ -109,6 +112,50 @@ impl Parse for Node {
 pub fn bt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as TreeInput);
     match expand_tree(input) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+/// Derives the `playact::Node` implementation for a custom node.
+///
+/// The struct must provide an inherent method with the same signature as
+/// `Node::tick`:
+///
+/// ```ignore
+/// #[derive(playact::BtNode)]
+/// #[bt(world = World, name = "my_node")]
+/// struct MyNode {
+///     #[bt(id)]
+///     id: playact::NodeId,
+///     #[bt(children)]
+///     children: Vec<playact::BoxedNode<World>>,
+/// }
+///
+/// impl MyNode {
+///     fn tick(&mut self, ctx: &mut playact::Context<'_, World>) -> playact::Status {
+///         playact::Status::Success
+///     }
+/// }
+/// ```
+///
+/// Struct attributes:
+/// - `world = Type` (required): the `W` in `Node<W>`
+/// - `name = "..."`: display name; defaults to the struct name
+/// - `kind = "..."`: custom kind label; defaults to the struct name
+/// - `abort`, `reset`, `own_state`, `state`: generate delegation to inherent
+///   `abort`, `reset`, `save_own_state`/`load_own_state`, or
+///   `save_state`/`load_state` methods respectively
+///
+/// Field attributes:
+/// - `#[bt(id)]`: field becomes `Node::id()`; accepts `NodeId` or `Option<NodeId>`
+/// - `#[bt(children)]`: field becomes `Node::children()`/`children_mut()`
+///
+/// The world type may be a concrete type or a generic parameter of the struct.
+#[proc_macro_derive(BtNode, attributes(bt))]
+pub fn derive_bt_node(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match bt_node::expand(input) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
     }

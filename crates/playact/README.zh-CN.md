@@ -674,6 +674,36 @@ throttle）、`action`、`condition`、`wait`、`set_value` 与 `raw(expression)
 加权/效用选择使用 `raw(...)`，因为权重与评分是代码表达式。宏展开仍走 typestate
 构建器，子节点数量错误依旧是编译错误。
 
+### 派生自定义节点
+
+`#[derive(BtNode)]` 为自定义结构体生成 `Node` 样板代码。结构体提供一个同名
+`tick` 方法：
+
+```rust
+#[derive(playact::BtNode)]
+#[bt(world = World, name = "scan")]
+struct Scan {
+    #[bt(id)]
+    id: playact::NodeId,
+    #[bt(children)]
+    children: Vec<playact::BoxedNode<World>>,
+}
+
+impl Scan {
+    fn tick(&mut self, ctx: &mut playact::Context<'_, World>) -> playact::Status {
+        // ...
+        playact::Status::Success
+    }
+}
+```
+
+- `world = Type` 必填，可以是具体类型或结构体泛型参数
+- `name` / `kind` 覆盖默认值（结构体名）
+- `#[bt(id)]` 接受 `NodeId` 或 `Option<NodeId>`
+- `#[bt(children)]` 生成 `children` / `children_mut`
+- 结构体级 flag `abort`、`reset`、`own_state`、`state` 会委托给同名 inherent
+  方法
+
 ## no_std
 
 关闭默认 feature 后，核心使用 `alloc`：
@@ -716,7 +746,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `hot-reload` | `TreeWatcher` + `notify` 文件监听 |
 | `remote-config` | `RemoteTreeLoader` + `reqwest::blocking` |
 | `tokio` | `TokioTask` 适配器 |
-| `macros` | `playact-macros` 的 `bt!` DSL |
+| `macros` | `playact-macros` 的 `bt!` DSL 与 `BtNode` derive |
 | `full` | 以上全部 |
 
 ## 线程模型

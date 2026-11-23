@@ -92,6 +92,11 @@
 
 extern crate alloc;
 
+#[doc(hidden)]
+pub mod __private {
+    pub use alloc::vec::Vec;
+}
+
 #[cfg(feature = "std")]
 pub mod async_action;
 pub mod blackboard;
@@ -182,7 +187,7 @@ pub use tree::{BehaviorTree, TreeDescription};
 pub use trace::TracingTracer;
 
 #[cfg(feature = "macros")]
-pub use playact_macros::bt;
+pub use playact_macros::{BtNode, bt};
 
 /// Centralized imports of common types and macros.
 pub mod prelude {
@@ -190,8 +195,6 @@ pub mod prelude {
     pub use crate::TestDriver;
     #[cfg(feature = "tokio")]
     pub use crate::TokioTask;
-    #[cfg(feature = "macros")]
-    pub use crate::bt;
     pub use crate::event_key;
     pub use crate::key;
     pub use crate::{
@@ -214,6 +217,8 @@ pub mod prelude {
     };
     #[cfg(feature = "blackboard-serde")]
     pub use crate::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
+    #[cfg(feature = "macros")]
+    pub use crate::{BtNode, bt};
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]

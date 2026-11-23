@@ -105,7 +105,7 @@ fn main() -> Result<(), BuildError> {
 | 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、JSON Schema、校验、热重载、远程加载 |
 | 异步 | 运行时无关 `AsyncTask`、`ThreadTask`、可选 `TokioTask` |
 | 可移植性 | `no_std + alloc` 核心；可选集成按 feature 门控 |
-| 开发体验 | `bt!` DSL、两个完整战斗 AI 示例、基准与确定性压力测试 |
+| 开发体验 | `bt!` DSL、`BtNode` derive、两个完整战斗 AI 示例、基准与确定性压力测试 |
 
 详细语义、注意事项与 API 示例见
 [crate 中文文档](crates/playact/README.zh-CN.md)。
@@ -140,7 +140,7 @@ cargo run -p playact --example battle_ai_config --features config
 | `hot-reload` | `TreeWatcher` 文件监听 |
 | `remote-config` | HTTP `RemoteTreeLoader` |
 | `tokio` | `TokioTask` 适配器 |
-| `macros` | `playact-macros` 的 `bt!` DSL |
+| `macros` | `playact-macros` 的 `bt!` DSL 与 `BtNode` derive |
 | `full` | 以上全部 |
 
 ```text

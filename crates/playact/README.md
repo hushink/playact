@@ -697,6 +697,36 @@ The DSL covers sequences, selectors, random selection, parallel, race, decorator
 weights/scores are code expressions. The macro still goes through the typestate
 builder, so child-count mistakes are compile errors.
 
+### Deriving custom nodes
+
+`#[derive(BtNode)]` generates the `Node` boilerplate for a custom struct. The struct
+provides an inherent `tick` method:
+
+```rust
+#[derive(playact::BtNode)]
+#[bt(world = World, name = "scan")]
+struct Scan {
+    #[bt(id)]
+    id: playact::NodeId,
+    #[bt(children)]
+    children: Vec<playact::BoxedNode<World>>,
+}
+
+impl Scan {
+    fn tick(&mut self, ctx: &mut playact::Context<'_, World>) -> playact::Status {
+        // ...
+        playact::Status::Success
+    }
+}
+```
+
+- `world = Type` is required and may be a concrete type or a struct generic
+- `name` / `kind` override the defaults (struct name)
+- `#[bt(id)]` accepts `NodeId` or `Option<NodeId>`
+- `#[bt(children)]` generates `children` / `children_mut`
+- Struct flags `abort`, `reset`, `own_state`, `state` generate delegation to
+  inherent methods of the same names
+
 ## no_std
 
 Disable default features to build the core with `alloc`:
@@ -741,7 +771,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `hot-reload` | `TreeWatcher` with `notify` file watching |
 | `remote-config` | `RemoteTreeLoader` with `reqwest::blocking` |
 | `tokio` | `TokioTask` adapter |
-| `macros` | `playact-macros` `bt!` proc-macro DSL |
+| `macros` | `playact-macros` `bt!` proc-macro DSL and `BtNode` derive |
 | `full` | All of the above |
 
 ## Threading model

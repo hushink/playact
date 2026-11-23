@@ -109,7 +109,7 @@ fn main() -> Result<(), BuildError> {
 | Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, JSON Schema, validation, hot reload, remote loading |
 | Async | Runtime-agnostic `AsyncTask`, `ThreadTask`, optional `TokioTask` |
 | Portability | `no_std + alloc` core; optional integrations gated by features |
-| Developer experience | `bt!` DSL, two complete battle AI examples, benchmarks, deterministic stress tests |
+| Developer experience | `bt!` DSL, `BtNode` derive, two complete battle AI examples, benchmarks, deterministic stress tests |
 
 Detailed semantics, caveats, and API examples live in the
 [crate README](crates/playact/README.md).
@@ -145,7 +145,7 @@ cargo run -p playact --example battle_ai_config --features config
 | `hot-reload` | `TreeWatcher` with file watching |
 | `remote-config` | `RemoteTreeLoader` over HTTP |
 | `tokio` | `TokioTask` adapter |
-| `macros` | `playact-macros` `bt!` DSL |
+| `macros` | `playact-macros` `bt!` DSL and `BtNode` derive |
 | `full` | All of the above |
 
 ```text

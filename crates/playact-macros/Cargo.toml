@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Proc-macro DSL for the playact behavior tree engine"
+description = "Proc-macro DSL and derives for the playact behavior tree engine"
 
 [lib]
 proc-macro = true
