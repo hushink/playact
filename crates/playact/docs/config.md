@@ -181,6 +181,13 @@ for example in VS Code:
 }
 ```
 
+Inspect the resolved fragment sources and merged operation order without
+configuration files:
+
+```text
+cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+```
+
 - `version` is the manifest format version (`1`), not the configuration version.
 - `include` is an optional array of fragment manifests. Paths must be relative,
   stay inside the root manifest's directory, and resolve to files. Fragments are
@@ -224,13 +231,18 @@ for example in VS Code:
   `changes` array whose entries carry `file`, JSON Pointer `path`, `kind`
   (`added`, `removed`, or `changed`), and optional `from` / `to` values. Reports
   also include an `operations` array with each executed operation's `from`,
-  one-based `index` in the merged version step, `op`, `matched`, and `changed`
-  counts. `matched` counts the objects selected by `at`, `where`, or the default
-  scope across the root graph; `changed` counts selected objects the operation
-  actually modified. `--strict` fails before writing when an executed operation
-  matched no objects or changed none; without it, those operations produce
-  warnings in human output. Custom Rust transformations still require a
-  `ConfigMigrator` closure in the application.
+  one-based `index` in the merged version step, `op`, `source` manifest path
+  (relative to the root manifest's directory with `/` separators), one-based
+  `source_index` within that source step, `matched`, and `changed` counts.
+  `matched` counts the objects selected by `at`, `where`, or the default scope
+  across the root graph; `changed` counts selected objects the operation actually
+  modified. `--strict` fails before writing when an executed operation matched no
+  objects or changed none; without it, those operations produce warnings in human
+  output with their relative source manifest path. Custom Rust transformations
+  still require a `ConfigMigrator` closure in the application.
+- `--explain --manifest migrations.json` prints the fragment source tree and
+  merged operations with their source positions and target selectors. It reads
+  only manifests, accepts no configuration paths, and writes nothing.
 - `--output DIR` requires exactly one root, cannot be combined with `--check`,
   and stages the complete include graph into a new or empty directory instead of
   modifying sources. Include strings are preserved and must stay lexically
@@ -588,6 +600,7 @@ cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.j
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --explain --manifest migrations.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -628,16 +641,16 @@ formatting status. `migrate` applies a declarative manifest to every root and
 included file, validates the migrated graph, and writes in place only when all
 files are valid; `--check` reports pending migrations without writing, `--diff`
 prints field-level changes, `--patch` prints unified diffs, `--output DIR` stages
-the complete graph, and `--json` reports per-root results with changes and
-operation match counts. `--strict` rejects executed operations that match no
-objects or change none before writing. `--manifest-schema` prints the manifest
-JSON Schema, and `--init PATH` writes a starter manifest. RON formatting serializes
-the parsed spec because RON's generic map syntax does not deserialize as a
-`TreeSpec`; other
-formats preserve the original field presence. `diff` validates both inputs, then
-reports
-path-based node, parameter, and include-file set changes. Child nodes are
-matched by type and name/kind/key, so insertions and reorders report moves
+the complete graph, and `--json` reports per-root results with changes, operation
+match counts, and source manifest paths. `--strict` rejects executed operations
+that match no objects or change none before writing. `--manifest-schema` prints
+the manifest JSON Schema, `--init PATH` writes a starter manifest, and `--explain`
+prints the resolved sources and merged operations without configuration files.
+RON formatting serializes the parsed spec because RON's generic map syntax does
+not deserialize as a `TreeSpec`; other formats preserve the original field
+presence. `diff` validates both inputs, then reports path-based node, parameter,
+and include-file set changes. Child nodes are matched by type and name/kind/key,
+so insertions and reorders report moves
 instead of shifting every later index. Included files with matching relative
 paths are compared recursively, and their findings include a `file` field. It
 exits nonzero when differences exist and supports `--json`; include file sets

@@ -145,6 +145,9 @@ jobs:
           printf '%s\n' '{"version":0,"tree":{"type":"action","name":"anything"}}' > "$migrate_dir/composed-root.json"
           cargo run -p playact-cli --quiet -- migrate --manifest "$migrate_dir/composed.json" "$migrate_dir/composed-root.json"
           grep -q '"root"' "$migrate_dir/composed-root.json"
+          cargo run -p playact-cli --quiet -- migrate --manifest "$migrate_dir/composed.json" --explain > target/migrate-plan.txt
+          grep -q 'merged versions:' target/migrate-plan.txt
+          grep -q 'fragment.json' target/migrate-plan.txt
           printf '%s\n' '{"version":0,"tree":{"type":"action","name":"anything"}}' > "$migrate_dir/strict-root.json"
           printf '%s\n' '{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"tree","to":"root"},{"op":"remove_field","where":{"type":"missing"},"field":"legacy"}]}]}' > "$migrate_dir/strict.json"
           if cargo run -p playact-cli --quiet -- migrate --json --strict --manifest "$migrate_dir/strict.json" "$migrate_dir/strict-root.json" > target/migrate-strict.json; then

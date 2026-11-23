@@ -759,13 +759,16 @@ let watcher =
   `rename_field`、`remove_field`、`set_field`、`rename_value`、`map_values` 与
   `scale` 规则迁移根配置及其 include，校验结果后原地写入，或用 `--output DIR`
   暂存完整 include 图（include 字符串保持不变）；`--check` 可用于 dry run，
-  `--diff` 输出字段级预览，`--patch` 输出 unified diff（`--json` 包含变更与逐操作
-  `matched`/`changed` 计数；`--patch` 与 `--json` 互斥；`--output` 只接受一个根且
-  不能与 `--check` 组合）。`--strict` 在写入前要求每条已执行操作至少匹配并修改一个
-  对象，否则失败；未启用时这类操作只在人类可读输出中产生警告。`--manifest-schema`
-  输出供编辑器补全的清单 JSON Schema，`--init PATH` 写入 starter 清单。清单可通过
-  `include` 复用片段；同一版本的操作先合并片段再执行本地操作，片段路径必须位于根清单
-  所在目录内。任意复杂迁移仍应在应用内使用 `ConfigMigrator` 闭包。
+  `--diff` 输出字段级预览，`--patch` 输出 unified diff（`--json` 包含变更、逐操作
+  `matched`/`changed` 计数与相对来源清单路径；`--patch` 与 `--json` 互斥；
+  `--output` 只接受一个根且不能与 `--check` 组合）。`--strict` 在写入前要求每条
+  已执行操作至少匹配并修改一个对象，否则失败；未启用时这类操作只在人类可读输出中产生
+  警告。
+  `--manifest-schema` 输出供编辑器补全的清单 JSON Schema，`--init PATH` 写入 starter
+  清单。清单可通过 `include` 复用片段；同一版本的操作先合并片段再执行本地操作，片段
+  路径必须位于根清单所在目录内。`--explain --manifest migrations.json` 不读取配置，
+  直接输出片段来源与合并后的操作计划。任意复杂迁移仍应在应用内使用 `ConfigMigrator`
+  闭包。
 - 完整示例见 [`examples/config_migration.rs`](examples/config_migration.rs)：迁移
   v0 根配置与 include，构建并 tick。
 

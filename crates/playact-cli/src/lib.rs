@@ -124,6 +124,7 @@ file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
 usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] [--strict] CONFIG...
+       playact migrate --manifest PATH --explain
        playact migrate --manifest-schema
        playact migrate --init PATH
 
@@ -140,13 +141,15 @@ directory with include strings preserved. --output requires exactly one
 root, cannot be combined with --check, and stages the complete include graph.
 --check reports files that would change without writing; --diff prints
 field-level changes; --patch prints unified diffs; --json prints per-root reports
-including changes and operation match counts. --patch and --json are mutually
-exclusive. --strict fails before writing when an executed operation matches no
-objects or changes none; without it, such operations are warnings in human output.
+including changes, operation match counts, and relative source manifest paths.
+--patch and --json are mutually exclusive. --strict fails before writing when an executed
+operation matches no objects or changes none; without it, such operations are
+warnings in human output.
 
---manifest-schema prints the manifest JSON Schema. --init PATH writes a starter
-manifest, choosing JSON/TOML/YAML/RON from the extension and refusing to
-overwrite an existing file.";
+--explain prints the resolved fragment sources and merged operation plan without
+reading configurations or writing files. --manifest-schema prints the manifest
+JSON Schema. --init PATH writes a starter manifest, choosing JSON/TOML/YAML/RON
+from the extension and refusing to overwrite an existing file.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -867,6 +870,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut diff_output = false;
     let mut patch_output = false;
     let mut strict = false;
+    let mut explain = false;
     let mut show_manifest_schema = false;
     let mut init_manifest = None;
     let mut options_done = false;
@@ -906,6 +910,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--strict") => {
                     strict = true;
+                    continue;
+                }
+                Some("--explain") => {
+                    explain = true;
                     continue;
                 }
                 Some("-m" | "--manifest") => {
@@ -950,6 +958,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             || diff_output
             || patch_output
             || strict
+            || explain
         {
             return Err(String::from(
                 "manifest generation options cannot be combined with other options or paths",
@@ -978,6 +987,27 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             "wrote migration manifest {}",
             lint::display_path(&init_manifest)
         );
+        return Ok(Outcome::Success);
+    }
+    if explain {
+        if !files.is_empty()
+            || schema_path.is_some()
+            || include_base.is_some()
+            || output.is_some()
+            || check
+            || json_output
+            || diff_output
+            || patch_output
+            || strict
+        {
+            return Err(String::from(
+                "migrate --explain cannot be combined with configuration paths or other migration options",
+            )
+            .into());
+        }
+        let manifest_path = manifest_path
+            .ok_or_else(|| String::from("migrate --explain requires --manifest PATH"))?;
+        print!("{}", migrate::explain_manifest(&manifest_path)?);
         return Ok(Outcome::Success);
     }
     if files.is_empty() {
@@ -1124,13 +1154,13 @@ fn operation_findings(operations: &[migrate::OperationReport]) -> Vec<String> {
         .filter_map(|operation| {
             if operation.matched == 0 {
                 Some(format!(
-                    "operation {} ({} from version {}) matched no objects",
-                    operation.index, operation.op, operation.from
+                    "operation {} ({} from version {}, source `{}`) matched no objects",
+                    operation.index, operation.op, operation.from, operation.source
                 ))
             } else if operation.changed == 0 {
                 Some(format!(
-                    "operation {} ({} from version {}) matched {} object(s) but changed none",
-                    operation.index, operation.op, operation.from, operation.matched
+                    "operation {} ({} from version {}, source `{}`) matched {} object(s) but changed none",
+                    operation.index, operation.op, operation.from, operation.source, operation.matched
                 ))
             } else {
                 None

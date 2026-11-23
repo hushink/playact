@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -162,6 +162,63 @@ impl Operation {
             | Self::RenameValue { at, r#where, .. }
             | Self::MapValues { at, r#where, .. }
             | Self::Scale { at, r#where, .. } => (at.as_deref(), r#where.as_ref()),
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Self::Rename { from, to, .. } => format!("rename_field {from} -> {to}"),
+            Self::Remove { field, .. } => format!("remove_field {field}"),
+            Self::Set {
+                field,
+                value,
+                overwrite,
+                ..
+            } => {
+                let suffix = if *overwrite { " (overwrite)" } else { "" };
+                format!("set_field {field} = {}{suffix}", compact_json(value))
+            }
+            Self::RenameValue {
+                field, from, to, ..
+            } => format!(
+                "rename_value {field}: {} -> {}",
+                compact_json(from),
+                compact_json(to)
+            ),
+            Self::MapValues { field, map, .. } => {
+                format!("map_values {field}: {}", compact_json(map))
+            }
+            Self::Scale {
+                field,
+                multiply,
+                add,
+                ..
+            } => {
+                if *add == 0.0 {
+                    format!("scale {field} by {multiply}")
+                } else if *add < 0.0 {
+                    format!("scale {field} by {multiply} - {}", -add)
+                } else {
+                    format!("scale {field} by {multiply} + {add}")
+                }
+            }
+        }
+    }
+
+    fn target_description(&self) -> String {
+        let (at, matcher) = self.target();
+        if let Some(at) = at {
+            if at.is_empty() {
+                String::from("root object")
+            } else {
+                format!("at {at}")
+            }
+        } else if let Some(matcher) = matcher {
+            format!("where {}", compact_json(matcher))
+        } else if matches!(self, Self::MapValues { .. }) {
+            String::from("every object")
+        } else {
+            String::from("root object")
         }
     }
 
@@ -484,6 +541,10 @@ fn child_pointer(pointer: &str, field: &str) -> String {
     format!("{pointer}/{field}")
 }
 
+fn compact_json(value: &impl Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| String::from("<value>"))
+}
+
 fn default_manifest_version() -> u32 {
     MANIFEST_VERSION
 }
@@ -495,11 +556,30 @@ struct OperationCounter {
     changed: AtomicUsize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct OperationDefinition {
     from: u32,
     index: usize,
     op: &'static str,
+    source: String,
+    source_index: usize,
+}
+
+struct LoadedOperation {
+    operation: Operation,
+    source: String,
+    source_index: usize,
+}
+
+struct ManifestSource {
+    path: String,
+    depth: usize,
+}
+
+struct ManifestData {
+    root: PathBuf,
+    sources: Vec<ManifestSource>,
+    operations: BTreeMap<u32, Vec<LoadedOperation>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -533,11 +613,17 @@ struct ManifestLoader {
     base: PathBuf,
     visited: HashSet<PathBuf>,
     stack: Vec<PathBuf>,
-    operations: BTreeMap<u32, Vec<Operation>>,
+    sources: Vec<ManifestSource>,
+    operations: BTreeMap<u32, Vec<LoadedOperation>>,
 }
 
 impl ManifestLoader {
     fn load(&mut self, path: &Path, depth: usize) -> Result<(), String> {
+        let source = relative_source(&self.base, path);
+        self.sources.push(ManifestSource {
+            path: source.clone(),
+            depth,
+        });
         let text = fs::read_to_string(path)
             .map_err(|error| format!("read manifest `{}`: {error}", display_path(path)))?;
         let format = Format::from_path(path)
@@ -588,7 +674,8 @@ impl ManifestLoader {
                     step.from
                 ));
             }
-            for (index, operation) in step.operations.iter().enumerate() {
+            let operations = self.operations.entry(step.from).or_default();
+            for (index, operation) in step.operations.into_iter().enumerate() {
                 operation.validate().map_err(|error| {
                     format!(
                         "manifest `{}`: migration from version {} operation {}: {error}",
@@ -597,14 +684,27 @@ impl ManifestLoader {
                         index + 1
                     )
                 })?;
+                operations.push(LoadedOperation {
+                    operation,
+                    source: source.clone(),
+                    source_index: index + 1,
+                });
             }
-            self.operations
-                .entry(step.from)
-                .or_default()
-                .extend(step.operations);
         }
         Ok(())
     }
+}
+
+fn relative_source(base: &Path, path: &Path) -> String {
+    path.strip_prefix(base)
+        .unwrap_or(path)
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn resolve_manifest_include(base: &Path, current: &Path, include: &str) -> Result<PathBuf, String> {
@@ -633,12 +733,7 @@ fn resolve_manifest_include(base: &Path, current: &Path, include: &str) -> Resul
     Ok(canonical)
 }
 
-/// Loads a declarative migration manifest and builds its version pipeline.
-///
-/// Fragments listed in `include` are loaded depth-first, and operations for the
-/// same source version are concatenated before the including manifest's own
-/// operations.
-pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
+fn load_manifest_data(path: &Path) -> Result<ManifestData, String> {
     let root = path
         .canonicalize()
         .map_err(|error| format!("canonicalize manifest `{}`: {error}", display_path(path)))?;
@@ -650,17 +745,34 @@ pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
         base,
         visited: HashSet::from([root.clone()]),
         stack: vec![root.clone()],
+        sources: Vec::new(),
         operations: BTreeMap::new(),
     };
     loader.load(&root, 0)?;
+    Ok(ManifestData {
+        root,
+        sources: loader.sources,
+        operations: loader.operations,
+    })
+}
+
+/// Loads a declarative migration manifest and builds its version pipeline.
+///
+/// Fragments listed in `include` are loaded depth-first, and operations for the
+/// same source version are concatenated before the including manifest's own
+/// operations.
+pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
+    let ManifestData { operations, .. } = load_manifest_data(path)?;
 
     let mut definitions = Vec::new();
-    for (from, operations) in &loader.operations {
-        for (index, operation) in operations.iter().enumerate() {
+    for (from, operations) in &operations {
+        for (index, loaded) in operations.iter().enumerate() {
             definitions.push(OperationDefinition {
                 from: *from,
                 index: index + 1,
-                op: operation.name(),
+                op: loaded.operation.name(),
+                source: loaded.source.clone(),
+                source_index: loaded.source_index,
             });
         }
     }
@@ -672,8 +784,13 @@ pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
 
     let mut migrator = ConfigMigrator::new();
     let mut next_operation = 0;
-    for (from, operations) in loader.operations {
-        let operations = Arc::new(operations);
+    for (from, loaded_operations) in operations {
+        let operations = Arc::new(
+            loaded_operations
+                .into_iter()
+                .map(|loaded| loaded.operation)
+                .collect::<Vec<_>>(),
+        );
         let operation_indices: Vec<usize> =
             (next_operation..next_operation + operations.len()).collect();
         next_operation += operations.len();
@@ -700,6 +817,55 @@ pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
         definitions,
         counters,
     })
+}
+
+/// Renders the resolved fragment sources and merged migration plan.
+pub(crate) fn explain_manifest(path: &Path) -> Result<String, String> {
+    Ok(render_plan(&load_manifest_data(path)?))
+}
+
+fn render_plan(data: &ManifestData) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("manifest: {}\n", display_path(&data.root)));
+    output.push_str("sources:\n");
+    let mut has_fragments = false;
+    for source in data.sources.iter().skip(1) {
+        has_fragments = true;
+        output.push_str(&"  ".repeat(source.depth));
+        output.push_str(&source.path);
+        output.push('\n');
+    }
+    if !has_fragments {
+        output.push_str("  (none)\n");
+    }
+    output.push_str("merged versions:\n");
+    if data.operations.is_empty() {
+        output.push_str("  (none)\n");
+        return output;
+    }
+    for (from, operations) in &data.operations {
+        output.push_str(&format!("  version {from} -> {}:\n", from + 1));
+        if operations.is_empty() {
+            output.push_str("    (no operations)\n");
+            continue;
+        }
+        for (index, loaded) in operations.iter().enumerate() {
+            output.push_str(&format!(
+                "    {}. {}\n",
+                index + 1,
+                loaded.operation.describe()
+            ));
+            output.push_str(&format!(
+                "       source: {} (operation {})\n",
+                loaded.source, loaded.source_index
+            ));
+            output.push_str(&format!(
+                "       target: {}\n",
+                loaded.operation.target_description()
+            ));
+        }
+    }
+    output
 }
 
 /// Type of a field-level migration change.
@@ -733,10 +899,14 @@ pub(crate) struct FieldChange {
 pub(crate) struct OperationReport {
     /// Source configuration version.
     pub from: u32,
-    /// One-based position within the migration step.
+    /// One-based position within the merged migration step.
     pub index: usize,
     /// Operation name.
     pub op: &'static str,
+    /// Manifest file that declared the operation.
+    pub source: String,
+    /// One-based position within the source manifest's step.
+    pub source_index: usize,
     /// Objects selected by the operation's `at` or `where` target, or its
     /// default scope.
     pub matched: usize,
@@ -778,6 +948,8 @@ pub(crate) fn summarize_operations(reports: &[MigrationReport]) -> Vec<Operation
                     from: operation.from,
                     index: operation.index,
                     op: operation.op,
+                    source: operation.source.clone(),
+                    source_index: operation.source_index,
                     matched: 0,
                     changed: 0,
                 });
@@ -1058,6 +1230,8 @@ fn operation_reports(
                 from: definition.from,
                 index: definition.index,
                 op: definition.op,
+                source: definition.source.clone(),
+                source_index: definition.source_index,
                 matched: after.matched.saturating_sub(before.matched),
                 changed: after.changed.saturating_sub(before.changed),
             })
@@ -1443,6 +1617,79 @@ mod tests {
                 changed: 0
             }
         );
+    }
+
+    #[test]
+    fn describes_operations_and_targets() {
+        let rename = Operation::Rename {
+            at: None,
+            r#where: Some(BTreeMap::from([(
+                String::from("type"),
+                Value::String(String::from("wait")),
+            )])),
+            from: String::from("seconds"),
+            to: String::from("duration_ms"),
+        };
+        assert_eq!(rename.describe(), "rename_field seconds -> duration_ms");
+        assert_eq!(rename.target_description(), "where {\"type\":\"wait\"}");
+
+        let set = Operation::Set {
+            at: Some(String::from("/root")),
+            r#where: None,
+            field: String::from("name"),
+            value: json!("replaced"),
+            overwrite: true,
+        };
+        assert_eq!(set.describe(), "set_field name = \"replaced\" (overwrite)");
+        assert_eq!(set.target_description(), "at /root");
+
+        let map = Operation::MapValues {
+            at: None,
+            r#where: None,
+            field: String::from("type"),
+            map: BTreeMap::from([(String::from("old"), Value::String(String::from("new")))]),
+        };
+        assert_eq!(map.describe(), "map_values type: {\"old\":\"new\"}");
+        assert_eq!(map.target_description(), "every object");
+
+        let scale = Operation::Scale {
+            at: None,
+            r#where: None,
+            field: String::from("duration"),
+            multiply: 1000.0,
+            add: 5.0,
+        };
+        assert_eq!(scale.describe(), "scale duration by 1000 + 5");
+        assert_eq!(scale.target_description(), "root object");
+
+        let scale_down = Operation::Scale {
+            at: None,
+            r#where: None,
+            field: String::from("duration"),
+            multiply: 0.5,
+            add: -2.0,
+        };
+        assert_eq!(scale_down.describe(), "scale duration by 0.5 - 2");
+
+        let rename_value = Operation::RenameValue {
+            at: Some(String::new()),
+            r#where: None,
+            field: String::from("type"),
+            from: json!("old"),
+            to: json!("new"),
+        };
+        assert_eq!(
+            rename_value.describe(),
+            "rename_value type: \"old\" -> \"new\""
+        );
+        assert_eq!(rename_value.target_description(), "root object");
+
+        let remove = Operation::Remove {
+            at: None,
+            r#where: None,
+            field: String::from("legacy"),
+        };
+        assert_eq!(remove.describe(), "remove_field legacy");
     }
 
     #[test]

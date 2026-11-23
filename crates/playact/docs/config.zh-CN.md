@@ -172,6 +172,12 @@ cargo run -p playact-cli -- migrate --init migrations.json
 }
 ```
 
+不读取配置，直接查看解析后的片段来源与合并操作顺序：
+
+```text
+cargo run -p playact-cli -- migrate --explain --manifest migrations.json
+```
+
 - `version` 是清单格式版本（`1`），不是配置版本。
 - `include` 是可选的片段清单数组。路径必须为相对路径、位于根清单所在目录内，并解析到
   文件。片段按深度优先加载，每个规范路径只合并一次，因此共享与菱形引用是安全的。
@@ -202,11 +208,14 @@ cargo run -p playact-cli -- migrate --init migrations.json
   不能与 `--json` 组合；`--json` 输出带 `changes` 数组的逐根报告，条目包含 `file`、
   JSON Pointer `path`、`kind`（`added`、`removed`、`changed`）与可选 `from` / `to`。
   报告还包含 `operations` 数组，按已执行操作给出 `from`、合并后步骤中从 1 开始的
-  `index`、`op`、`matched` 与 `changed`。`matched` 统计 `at`、`where` 或默认作用域
-  在整个根配置图中选中的对象数；`changed` 统计操作实际修改的对象数。`--strict` 在写入前
-  拒绝未匹配任何对象或未修改任何对象的已执行操作；未启用时这类操作只在人类可读输出中产生
-  警告。
-  任意 Rust 变换仍需应用中的 `ConfigMigrator` 闭包。
+  `index`、`op`、来源清单 `source`（相对根清单目录且使用 `/` 分隔）、该来源步骤中从
+  1 开始的 `source_index`、`matched` 与 `changed`。`matched` 统计 `at`、`where` 或
+  默认作用域在整个根配置图中选中的对象数；`changed` 统计操作实际修改的对象数。
+  `--strict` 在写入前拒绝未匹配任何对象或未修改任何对象的已执行操作；未启用时这类操作
+  只在人类可读输出中产生警告，并包含相对来源清单路径。任意 Rust 变换仍需应用中的
+  `ConfigMigrator` 闭包。
+- `--explain --manifest migrations.json` 输出片段来源树、合并后的操作顺序、来源位置与
+  目标选择器。它只读取清单，不接受配置路径，也不写文件。
 - `--output DIR` 只接受一个根配置，不能与 `--check` 组合，并把完整 include 图写入
   新的或空的目录而不修改源文件。include 字符串保持不变，且必须像 `bundle` 一样在
   词法上位于 include 基准目录内；加载暂存根文件时以 `DIR` 作为 include 基准目录。
@@ -542,6 +551,7 @@ cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.j
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --explain --manifest migrations.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -570,10 +580,11 @@ include 基准目录内或自行调整。`convert --recursive --format FORMAT` �
 错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint 报告
 与逐文件格式状态。`migrate` 对每个根文件及其 include 应用声明式清单，校验迁移后的
 图，所有文件有效时才原地写入；`--check` 只报告待迁移文件，`--diff` 输出字段级变化，
-`--patch` 输出 unified diff，`--output DIR` 暂存完整图，`--json` 输出包含变更与操作
-命中计数的逐根报告。`--strict` 在写入前拒绝未匹配任何对象或未修改任何对象的已执行
-操作。`--manifest-schema` 输出清单 JSON Schema，`--init PATH` 写入 starter 清单。
-RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法反序列化为
+`--patch` 输出 unified diff，`--output DIR` 暂存完整图，`--json` 输出包含变更、操作
+命中计数与来源清单路径的逐根报告。`--strict` 在写入前拒绝未匹配任何对象或未修改任何
+对象的已执行操作。`--manifest-schema` 输出清单 JSON Schema，`--init PATH` 写入 starter
+清单，`--explain` 不读取配置，直接输出解析后的来源与合并操作。RON 格式化使用解析后的
+spec 序列化，因为 RON 的通用 map 语法无法反序列化为
 `TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
 参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
 重排会报告为 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，

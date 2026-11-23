@@ -1397,6 +1397,8 @@ fn migrate_json_reports_migrated_files() {
     assert_eq!(operations[0]["from"], 0);
     assert_eq!(operations[0]["index"], 1);
     assert_eq!(operations[0]["op"], "rename_field");
+    assert_eq!(operations[0]["source"], "migrations.json", "{report}");
+    assert_eq!(operations[0]["source_index"], 1);
     assert_eq!(operations[0]["matched"], 2, "{report}");
     assert_eq!(operations[0]["changed"], 2, "{report}");
 }
@@ -1427,13 +1429,13 @@ fn migrate_warns_about_operations_with_no_effect() {
     let stderr = String::from_utf8_lossy(&migrated.stderr);
     assert!(
         stderr.contains(
-            "warning: migration operation 2 (remove_field from version 0) matched no objects"
+            "warning: migration operation 2 (remove_field from version 0, source `migrations.json`) matched no objects"
         ),
         "{stderr}"
     );
     assert!(
         stderr.contains(
-            "operation 3 (set_field from version 0) matched 1 object(s) but changed none"
+            "operation 3 (set_field from version 0, source `migrations.json`) matched 1 object(s) but changed none"
         ),
         "{stderr}"
     );
@@ -1478,12 +1480,14 @@ fn migrate_strict_rejects_operations_with_no_effect() {
         "{stderr}"
     );
     assert!(
-        stderr.contains("operation 2 (remove_field from version 0) matched no objects"),
+        stderr.contains(
+            "operation 2 (remove_field from version 0, source `migrations.json`) matched no objects"
+        ),
         "{stderr}"
     );
     assert!(
         stderr.contains(
-            "operation 3 (rename_value from version 0) matched 1 object(s) but changed none"
+            "operation 3 (rename_value from version 0, source `migrations.json`) matched 1 object(s) but changed none"
         ),
         "{stderr}"
     );
@@ -1892,7 +1896,8 @@ fn migrate_manifest_includes_fragments() {
     directory.write(
         "fragments/common.json",
         r#"{"version":1,"migrations":[{"from":0,"operations":[
-            {"op":"rename_field","from":"tree","to":"root"}
+            {"op":"rename_field","from":"tree","to":"root"},
+            {"op":"remove_field","where":{"type":"missing"},"field":"legacy"}
         ]}]}"#,
     );
     directory.write(
@@ -1913,14 +1918,27 @@ fn migrate_manifest_includes_fragments() {
     let operations = report[0]["operations"]
         .as_array()
         .expect("operation match counts");
-    assert_eq!(operations.len(), 3, "{report}");
+    assert_eq!(operations.len(), 4, "{report}");
     assert_eq!(operations[0]["op"], "rename_field");
-    assert_eq!(operations[1]["op"], "set_field");
+    assert_eq!(operations[0]["index"], 1);
+    assert_eq!(operations[0]["source"], "fragments/common.json", "{report}");
+    assert_eq!(operations[0]["source_index"], 1);
+    assert_eq!(operations[1]["op"], "remove_field");
     assert_eq!(operations[1]["index"], 2);
-    assert_eq!(operations[1]["matched"], 1, "{report}");
-    assert_eq!(operations[1]["changed"], 1, "{report}");
+    assert_eq!(operations[1]["source"], "fragments/common.json", "{report}");
+    assert_eq!(operations[1]["source_index"], 2);
+    assert_eq!(operations[1]["matched"], 0, "{report}");
+    assert_eq!(operations[1]["changed"], 0, "{report}");
     assert_eq!(operations[2]["op"], "set_field");
     assert_eq!(operations[2]["index"], 3);
+    assert_eq!(operations[2]["source"], "fragments/extra.yaml", "{report}");
+    assert_eq!(operations[2]["source_index"], 1);
+    assert_eq!(operations[2]["matched"], 1, "{report}");
+    assert_eq!(operations[2]["changed"], 1, "{report}");
+    assert_eq!(operations[3]["op"], "set_field");
+    assert_eq!(operations[3]["index"], 4);
+    assert_eq!(operations[3]["source"], "migrations.json", "{report}");
+    assert_eq!(operations[3]["source_index"], 1);
     let value: Value =
         serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
     assert_eq!(value["version"], 1);
@@ -1990,6 +2008,96 @@ fn migrate_manifest_includes_cannot_escape_the_manifest_base() {
         "{stderr}"
     );
     assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_explain_prints_resolved_plan() {
+    let directory = TempDir::new();
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,
+            "include":["fragments/base.json","fragments/extra.yaml"],
+            "migrations":[{"from":0,"operations":[
+                {"op":"set_field","at":"/root","field":"name","value":"from-local","overwrite":true}
+            ]}]}"#,
+    );
+    directory.write(
+        "fragments/base.json",
+        r#"{"version":1,"include":["common.json"],"migrations":[]}"#,
+    );
+    directory.write(
+        "fragments/common.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"}
+        ]}]}"#,
+    );
+    directory.write(
+        "fragments/extra.yaml",
+        "version: 1\nmigrations:\n  - from: 0\n    operations:\n      - op: remove_field\n        where:\n          type: legacy\n        field: old\n",
+    );
+
+    let explained = run(&[
+        "migrate",
+        "--explain",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+    ]);
+    assert!(explained.status.success(), "{explained:?}");
+    let stdout = String::from_utf8_lossy(&explained.stdout);
+    assert!(stdout.contains("manifest: "), "{stdout}");
+    assert!(stdout.contains("sources:"), "{stdout}");
+    assert!(stdout.contains("merged versions:"), "{stdout}");
+    assert!(stdout.contains("version 0 -> 1:"), "{stdout}");
+    assert!(stdout.contains("1. rename_field tree -> root"), "{stdout}");
+    assert!(stdout.contains("2. remove_field old"), "{stdout}");
+    assert!(
+        stdout.contains("3. set_field name = \"from-local\" (overwrite)"),
+        "{stdout}"
+    );
+    let rename = stdout.find("1. rename_field tree -> root").expect("rename");
+    let remove = stdout.find("2. remove_field old").expect("remove");
+    let set = stdout
+        .find("3. set_field name = \"from-local\"")
+        .expect("set");
+    assert!(rename < remove && remove < set, "{stdout}");
+    assert!(stdout.contains("target: root object"), "{stdout}");
+    assert!(
+        stdout.contains("target: where {\"type\":\"legacy\"}"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("target: at /root"), "{stdout}");
+    for source in [
+        "fragments/base.json",
+        "fragments/common.json",
+        "fragments/extra.yaml",
+    ] {
+        assert!(stdout.contains(source), "{stdout}");
+    }
+    for source in [
+        "source: fragments/common.json (operation 1)",
+        "source: fragments/extra.yaml (operation 1)",
+        "source: migrations.json (operation 1)",
+    ] {
+        assert!(stdout.contains(source), "{stdout}");
+    }
+    assert_eq!(stdout.matches("source: ").count(), 3, "{stdout}");
+    assert_eq!(stdout.matches("(operation 1)").count(), 3, "{stdout}");
+
+    let with_config = run(&[
+        "migrate",
+        "--explain",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        "root.json",
+    ]);
+    assert!(!with_config.status.success(), "{with_config:?}");
+    let stderr = String::from_utf8_lossy(&with_config.stderr);
+    assert!(stderr.contains("cannot be combined"), "{stderr}");
+
+    let missing = run(&["migrate", "--explain"]);
+    assert!(!missing.status.success(), "{missing:?}");
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("requires --manifest"), "{stderr}");
 }
 
 #[test]
