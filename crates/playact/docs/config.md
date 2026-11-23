@@ -265,3 +265,35 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
   names injected as `enum` values, so completion matches what actually builds.
 - The optional hot-reload and remote-config loaders rebuild through the same
   `TreeSpec` pipeline, so validation and path errors apply there too.
+
+## Editor completion
+
+Export the schema from the same registry that builds the tree, then point the
+editor at the generated file. The repository includes a small exporter:
+
+```text
+cargo run -p playact --example schema_export --features config,schema
+```
+
+The default output is `target/playact-schema.json`; pass a path as the first
+argument to write it elsewhere. VS Code can map it in `.vscode/settings.json`:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["config/*.json"],
+      "url": "./target/playact-schema.json"
+    }
+  ]
+}
+```
+
+With this mapping, `action`, `try_action`, `async_action`, `condition`,
+predicate fields, keys, scoped/contract keys, custom kinds, and subtree
+templates complete from the registry. Application-defined `params` shapes are
+not in the schema; they are validated when the tree is built.
+
+Regenerate the file whenever the registry changes, for example as a build or
+pre-commit step. If the schema is committed, relative `url` values resolve
+against the workspace folder.

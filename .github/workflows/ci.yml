@@ -79,3 +79,9 @@ jobs:
       - name: Example save_game
         if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde --quiet > /dev/null
+
+      - name: Example schema_export
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: |
+          cargo run -p playact --example schema_export --features config,schema --quiet > /dev/null
+          grep -q '"patrol"' target/playact-schema.json

@@ -700,6 +700,9 @@ let mut tree = spec.build(&registry)?;
 - 可选 `schema` feature 提供 `TreeSpec::json_schema()`，用于编辑器补全与外部校验。
   `NodeRegistry::json_schema()` 还会把已注册的 action、condition、predicate、score、
   key、custom 与 subtree 名称注入为 `enum` 约束，使补全内容与实际可构建内容一致。
+- [`examples/schema_export.rs`](examples/schema_export.rs) 可把该 schema 写到
+  `target/playact-schema.json`；[配置参考](docs/config.zh-CN.md#编辑器补全) 给出
+  VS Code 映射示例。
 - 用 `identified` 包装配置节点可指定稳定 `NodeId`：
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
@@ -969,6 +972,7 @@ cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
+cargo run -p playact --example schema_export --features config,schema
 ```
 
 - `battle_ai`：确定性的 1D 玩家 vs 三只哥布林战斗，展示 ReactiveSelector 打断、
@@ -985,6 +989,8 @@ cargo run -p playact --example save_game --features blackboard-serde,snapshot-se
   `PLAYACT_AUDIT_SERVE=1` 可在持续修改配置时保留 inspector 服务。
 - `save_game`：把有状态树与 typed 黑板保存为 JSON，重建树后恢复两者，并验证
   行为从保存进度继续、已完成的步骤不会重跑。
+- `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
+  predicate、key、custom 与 subtree 名称。
 
 ## 测试与基准
 

@@ -256,3 +256,33 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
   action、condition、predicate、score、key、custom 与 subtree 名称注入为 `enum`，
   使补全内容与实际可构建内容一致。
 - 可选的热重载与远程配置加载器走同一套 `TreeSpec` 流程，因此校验与路径错误同样适用。
+
+## 编辑器补全
+
+用实际构建树的同一个注册表导出 schema，再让编辑器指向生成文件。仓库自带一个
+导出示例：
+
+```text
+cargo run -p playact --example schema_export --features config,schema
+```
+
+默认输出为 `target/playact-schema.json`；把路径作为第一个参数传入可写到其他位置。
+VS Code 可在 `.vscode/settings.json` 中配置：
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["config/*.json"],
+      "url": "./target/playact-schema.json"
+    }
+  ]
+}
+```
+
+配置后，`action`、`try_action`、`async_action`、`condition`、predicate 字段、
+各类 key、scoped/contract key、custom kind 与 subtree template 都会按注册表补全。
+应用自定义的 `params` 结构不在 schema 中，而是在构建树时校验。
+
+注册表变化后重新生成即可，例如放入构建或 pre-commit 步骤。若把 schema 提交到仓库，
+相对 `url` 会按工作区目录解析。

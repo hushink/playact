@@ -90,6 +90,10 @@ name = "save_game"
 required-features = ["blackboard-serde", "snapshot-serde"]
 
 [[example]]
+name = "schema_export"
+required-features = ["config", "schema"]
+
+[[example]]
 name = "battle_ai_showcase"
 required-features = ["hot-reload"]
 

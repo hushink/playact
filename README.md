@@ -128,6 +128,7 @@ cargo run -p playact --example battle_ai_showcase --features hot-reload
 cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
+cargo run -p playact --example schema_export --features config,schema
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Demonstrates
@@ -146,6 +147,8 @@ cargo run -p playact --example save_game --features blackboard-serde,snapshot-se
 - `save_game`: persists a stateful tree and typed blackboard to JSON, rebuilds the
   tree, restores both, and verifies that progress resumes without re-running a
   completed step.
+- `schema_export`: writes a registry-aware JSON Schema for editor completion of
+  action, condition, predicate, key, custom, and subtree names.
 
 ## Feature flags
 
