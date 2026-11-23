@@ -92,7 +92,7 @@ pub trait Node<W>: Send {
     fn kind(&self) -> Kind;
     fn children(&self) -> &[BoxedNode<W>];
 
-    // 可选快照钩子
+    // Optional snapshot hooks
     fn save_state(&self) -> Option<Vec<u8>> { None }
     fn load_state(&mut self, _state: &[u8]) -> bool { false }
 }
@@ -127,7 +127,7 @@ let mut board = Blackboard::new();
 board.set(&TARGET, 42_usize);
 
 assert_eq!(board.get(&TARGET), Some(&42));
-// board.get::<u64>(&TARGET); // 编译错误
+// board.get::<u64>(&TARGET); // compile error
 ```
 
 Key 携带值类型，黑市值要求 `Send + 'static`。不提供 `DynKey`、运行时字符串查表
@@ -140,12 +140,12 @@ Key 携带值类型，黑市值要求 `Send + 'static`。不提供 `DynKey`、�
 ```rust
 static COMMANDS: Key<CommandBuffer<BattleCommand>> = playact::key!("commands");
 
-// 动作中
+// inside an action
 ctx.blackboard()
     .get_or_insert_with(&COMMANDS, CommandBuffer::new)
     .push(BattleCommand::Attack);
 
-// 驱动方
+// driver side
 let commands: Vec<_> = tree
     .blackboard_mut()
     .get_mut(&COMMANDS)
@@ -275,7 +275,7 @@ let fallible = BehaviorTreeBuilder::<World>::new("fallible")
 
 ```rust
 let leaf = SetValue::<World, u32>::new("set_hp", &HP, 100);
-// 或 builder.set_value("set_hp", &HP, 100)
+// or builder.set_value("set_hp", &HP, 100)
 ```
 
 ## 组合与复用
@@ -447,16 +447,16 @@ tree.last_status(); // Option<Status>
 ```rust
 use playact::inspector::{Inspector, InspectorServer};
 
-// 静态报告（重载后可追加 .with_diff(&diff) 或 .with_diff_history(&history)）
+// static report (add .with_diff(&diff) or .with_diff_history(&history) after a reload)
 Inspector::new(&tree)
     .with_stats(&stats)
     .write_to("tree.html")?;
 
-// 实时报告：每帧 poll 一次，然后打开 http://127.0.0.1:7878/
+// live report: poll once per frame, then open http://127.0.0.1:7878/
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
-// 重载后可用 server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
-// 展示完整历史时用 server.poll_with_history(&tree, Some(&stats), watcher.diff_history())?;
+// after a reload: server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
+// full history: server.poll_with_history(&tree, Some(&stats), watcher.diff_history())?;
 ```
 
 页面展示树结构、各节点最后状态、计数与耗时、服务节点、带结构路径的 `NodeId` 审计
@@ -519,7 +519,7 @@ HTTP 侧对应 `/diffs.json?since=rev`。`oldest_revision()` 给出保留下限�
 
 ```rust
 let snapshot = tree.snapshot();
-// 持久化 snapshot.version / snapshot.root / snapshot.services
+// persist snapshot.version / snapshot.root / snapshot.services
 
 let mut rebuilt = build_same_tree();
 rebuilt.restore(&snapshot)?;
@@ -566,7 +566,7 @@ codec.register(&COMMANDS)?;
 
 let node_state = tree.snapshot();
 let board_state = codec.encode(tree.blackboard())?;
-// 之后：tree.restore(&node_state)?; codec.decode(tree.blackboard_mut(), &board_state)?;
+// later: tree.restore(&node_state)?; codec.decode(tree.blackboard_mut(), &board_state)?;
 ```
 
 未知 key、重复注册、版本不支持和值类型错误都会返回错误；codec 不会做字符串 key
@@ -599,7 +599,7 @@ let recorder = driver.install_trace_recorder();
 let _ = driver.tick_n(100);
 let expected = recorder.records();
 
-// 之后使用相同的确定性 world 场景：
+// later, rerun the same deterministic world scenario:
 let mut driver = TestDriver::new(build_tree(), same_world);
 let recorder = driver.install_trace_recorder();
 let _ = driver.tick_n(100);
@@ -732,7 +732,7 @@ let mut loader = RemoteTreeLoader::<World>::json(
 )?
 .with_refresh_interval(Duration::from_secs(30));
 
-loader.poll()?; // 条件请求；304 不重建
+loader.poll()?; // conditional request; 304 does not rebuild
 loader.tree_mut().tick(&mut world, time);
 ```
 
@@ -758,7 +758,7 @@ impl playact::ResponseVerifier for SignatureVerifier {
         headers: &playact::remote_config::reqwest::header::HeaderMap,
         body: &[u8],
     ) -> Result<(), String> {
-        // 校验 header 中对 body 的 Ed25519/HMAC 签名
+        // verify the Ed25519/HMAC signature over the body from the headers
         Ok(())
     }
 }
@@ -783,20 +783,20 @@ pub trait AsyncTask: Send {
 `AsyncAction` 每个 tick poll 一次，被抢占时 cancel。内置两种适配器：
 
 ```rust
-// 标准库线程；协作取消
+// standard-library thread; cooperative cancellation
 let action = AsyncAction::<World>::new("fetch", |_| {
     Box::new(ThreadTask::spawn(|cancel| {
         if cancel.is_cancelled() {
             return Status::Failure;
         }
-        // 阻塞调用 / 远程请求
+        // blocking call / remote request
         Status::Success
     })) as Box<dyn AsyncTask>
 });
 ```
 
 ```rust
-// 需要 tokio feature
+// requires the tokio feature
 let action = AsyncAction::<World>::new("fetch", |_| {
     Box::new(TokioTask::spawn(async move {
         // let result = client.call().await;

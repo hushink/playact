@@ -182,8 +182,8 @@ let mut board = Blackboard::new();
 board.set(&TARGET, 42);
 assert_eq!(board.get(&TARGET), Some(&42));
 
-// 若 OTHER_KEY: Key<String>，board.get(&OTHER_KEY) 的类型不同，无法编译；
-// key 的类型直接钉死值类型。
+// `board.get(&OTHER_KEY)` where OTHER_KEY: Key<String> would not compile:
+// `get` returns `Option<&T>`, so the key type pins the value type.
 ```
 
 | 方法 | 用途 |
@@ -259,7 +259,7 @@ Service 是普通节点，每帧先于根节点执行并共享黑板，适合做
 let tree = BehaviorTreeBuilder::<World>::new("ai")
     .action("think", |_| Status::Success)
     .build()?
-    .with_service(Box::new(MyScanNode)); // 任意 BoxedNode<World>
+    .with_service(Box::new(MyScanNode)); // any BoxedNode<World>
 ```
 
 ## 4. 构建器
@@ -460,7 +460,7 @@ let mut action = Action::<World>::new("aim", |ctx| {
     ctx.world().aiming = false;
 })
 .with_reset(|| {
-    // 在此重置 tick 闭包内部状态（计数器/阶段等）
+    // reset closure-owned counters/phase here
 });
 ```
 
@@ -537,7 +537,7 @@ let mut tree = BehaviorTreeBuilder::<World>::new("ai")
     })
     .build()?;
 
-// tree.tick(...) 之后：
+// after tree.tick(...):
 for command in tree
     .blackboard_mut()
     .get_mut(&COMMANDS)
@@ -571,7 +571,7 @@ let mut tree = BehaviorTreeBuilder::<World>::new("remote")
             if cancel.is_cancelled() {
                 return Status::Failure;
             }
-            // 使用 target 做阻塞工作；期间周期性检查 token
+            // blocking work with `target`; check the token periodically
             Status::Success
         }))
     })
@@ -636,11 +636,11 @@ let tree = BehaviorTreeBuilder::<World>::new("boss")
 
 ```rust
 let strike = SubtreeContract::new("strike", attack_root())
-    .require(&TARGET)   // 缺失 -> trace error + Failure
-    .provide(&PLAN);    // 激活/abort 时清空
+    .require(&TARGET)   // missing -> trace error + Failure
+    .provide(&PLAN);    // cleared on activation/abort
 
 let isolated = ScopedSubtree::new("minion", minion_root())
-    .input(&TARGET)     // 要求 Key<T>: T: Clone
+    .input(&TARGET)     // requires Key<T>: T: Clone
     .output(&PLAN);
 ```
 
@@ -661,8 +661,8 @@ let tree = BehaviorTreeBuilder::<World>::new("minion")
 ### 结构快照
 
 ```rust
-let snapshot = tree.snapshot();          // version + root/services 字节
-tree.restore(&snapshot)?;                // 要求结构一致
+let snapshot = tree.snapshot();          // version + root/services bytes
+tree.restore(&snapshot)?;                // same structure required
 ```
 
 快照不包含世界、黑板值、闭包捕获、`AsyncAction` 任务与 `SubtreeSlot` 动态状态。
@@ -672,8 +672,8 @@ tree.restore(&snapshot)?;                // 要求结构一致
 
 ```rust
 let snapshot = tree.snapshot_by_id()?;   // BTreeMap<NodeId, Vec<u8>>
-tree.restore_by_id(&snapshot)?;          // 严格：未知 ID 报错
-let restored = tree.restore_by_id_matching(&snapshot)?; // 容忍被删除的 ID
+tree.restore_by_id(&snapshot)?;          // strict: unknown IDs are errors
+let restored = tree.restore_by_id_matching(&snapshot)?; // tolerate removed IDs
 ```
 
 节点顺序可能变化时使用 ID 快照。自定义有状态节点需实现
@@ -714,11 +714,11 @@ let (tree, world) = driver.into_parts();
 ```rust
 let recorder = TraceRecorder::new();
 tree.set_tracer(Some(Box::new(recorder.clone())));
-// 运行场景
+// run the scenario
 let baseline = recorder.records();
 
 recorder.clear();
-// 再次运行同一场景
+// run the same scenario again
 if let Some(divergence) = recorder.diff(&baseline) {
     eprintln!("trace diverged at {:?}", divergence);
 }
@@ -818,7 +818,7 @@ let diff = TreeDiff::between(&old_tree, &new_tree);
 println!("{diff}");
 
 let mut history = DiffHistory::new(16);
-history.push_now(diff);              // revision + 墙钟时间戳
+history.push_now(diff);              // revision + wall-clock timestamp
 let latest = history.latest_entry();
 ```
 
@@ -968,8 +968,8 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 ```rust
 use playact::config::ValidationLimits;
 
-spec.validate(&ValidationLimits::default())?; // 深度 64，节点 10_000
-let schema = TreeSpec::json_schema();         // 需要 `schema`
+spec.validate(&ValidationLimits::default())?; // depth 64, nodes 10_000
+let schema = TreeSpec::json_schema();         // requires `schema`
 ```
 
 ### 热重载
@@ -1008,7 +1008,7 @@ let mut loader = RemoteTreeLoader::<World>::json(url, registry)?
     .with_refresh_interval(Duration::from_secs(30))
     .with_diff_history(16);
 
-loader.poll()?;                 // 条件请求；未修改返回 false
+loader.poll()?;                 // conditional request; false if not modified
 loader.tree_mut().tick(&mut world, time);
 ```
 

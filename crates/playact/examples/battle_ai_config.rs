@@ -49,12 +49,12 @@ impl DuelWorld {
             DuelCommand::Attack(damage) => {
                 if self.enemy_hp > 0.0 {
                     self.enemy_hp = (self.enemy_hp - damage).max(0.0);
-                    self.log.push(format!("攻击敌人 (-{damage:.0})"));
+                    self.log.push(format!("attacks enemy (-{damage:.0})"));
                 }
             }
             DuelCommand::Heal(amount) => {
                 self.player_hp = (self.player_hp + amount).min(100.0);
-                self.log.push(format!("治疗自己 (+{amount:.0})"));
+                self.log.push(format!("heals self (+{amount:.0})"));
             }
         }
     }
@@ -62,7 +62,7 @@ impl DuelWorld {
     fn enemy_retaliate(&mut self) {
         if self.enemy_hp > 0.0 && self.player_hp > 0.0 {
             self.player_hp = (self.player_hp - 6.0).max(0.0);
-            self.log.push(String::from("敌人反击 (-6)"));
+            self.log.push(String::from("enemy retaliates (-6)"));
         }
     }
 }
@@ -195,7 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tree = spec.build(&registry)?;
     tree.blackboard_mut().set(&COMMANDS, CommandBuffer::new());
 
-    println!("配置驱动行为树：\n{}\n", tree.describe());
+    println!("Configuration-driven behavior tree:\n{}\n", tree.describe());
 
     let mut world = DuelWorld::new();
     let mut executed_ticks = 0_u32;
@@ -232,7 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!(
-        "\n结果: player={:.0} enemy={:.0} ticks={}",
+        "\nResult: player={:.0} enemy={:.0} ticks={}",
         world.player_hp, world.enemy_hp, executed_ticks
     );
 

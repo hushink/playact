@@ -247,9 +247,10 @@ impl World {
         };
 
         if killed {
-            self.log.push(format!("{actor_name} 击倒 {target_name}"));
+            self.log
+                .push(format!("{actor_name} knocks out {target_name}"));
         } else {
-            let verb = if skill { "技能命中" } else { "攻击" };
+            let verb = if skill { "skill-hits" } else { "attacks" };
             self.log
                 .push(format!("{actor_name} {verb} {target_name} (-{damage:.0})"));
         }
@@ -278,8 +279,10 @@ impl World {
             combatant.hp = (combatant.hp + heal).min(combatant.max_hp);
             combatant.potions -= 1;
         }
-        self.log
-            .push(format!("{name} 喝药 (+{heal:.0})，剩余 {} 瓶", potions - 1));
+        self.log.push(format!(
+            "{name} drinks a potion (+{heal:.0}), {} left",
+            potions - 1
+        ));
     }
 
     fn patrol(&mut self, actor: Entity) {
@@ -287,7 +290,7 @@ impl World {
             return;
         }
         if self.tick.is_multiple_of(4) {
-            self.log.push(String::from("player 巡逻"));
+            self.log.push(String::from("player patrols"));
         }
         self.player.pos += 0.1;
     }
@@ -495,45 +498,50 @@ fn build_player_tree() -> BehaviorTree<World> {
         .reactive_selector(|b| {
             // P1 survival: drink a potion or retreat at low HP, preempting combat at any time.
             b.sequence(|b| {
-                b.condition("低血量", |ctx| hp_below(ctx, 0.30))
+                b.condition("low hp", |ctx| hp_below(ctx, 0.30))
                     .reactive_selector(|b| {
                         b.cooldown(Duration::from_secs(5), |b| {
                             b.sequence(|b| {
-                                b.condition("有药", has_potion).action("喝药", drink_potion)
+                                b.condition("has potion", has_potion)
+                                    .action("drink potion", drink_potion)
                             })
                         })
-                        .action("撤退", retreat)
+                        .action("retreat", retreat)
                     })
             })
             // P2 combat: target selection is refreshed every tick.
             .reactive_sequence(|b| {
-                b.condition("有活目标", has_living_target)
-                    .action("选择目标", select_target)
+                b.condition("has living target", has_living_target)
+                    .action("select target", select_target)
                     .reactive_selector(|b| {
                         // Finisher: skill takes priority when the target is low and in range.
                         b.sequence(|b| {
-                            b.condition("目标残血", target_low_hp)
-                                .condition("目标在射程", target_in_range)
+                            b.condition("target low hp", target_low_hp)
+                                .condition("target in range", target_in_range)
                                 .cooldown(Duration::from_secs(4), |b| {
-                                    b.action("释放技能", cast_skill)
+                                    b.action("cast skill", cast_skill)
                                 })
                         })
                         // Basic attack: in range and off cooldown.
                         .sequence(|b| {
-                            b.condition("目标在射程", target_in_range)
-                                .cooldown(Duration::from_millis(750), |b| b.action("普攻", attack))
+                            b.condition("target in range", target_in_range)
+                                .cooldown(Duration::from_millis(750), |b| {
+                                    b.action("basic attack", attack)
+                                })
                         })
                         // Approach: move while out of range; Timeout prevents an endless chase.
                         .sequence(|b| {
-                            b.inverter(|b| b.condition("目标在射程", target_in_range))
-                                .timeout(Duration::from_secs(5), |b| b.action("接近目标", approach))
+                            b.inverter(|b| b.condition("target in range", target_in_range))
+                                .timeout(Duration::from_secs(5), |b| {
+                                    b.action("approach target", approach)
+                                })
                         })
                         // Hold position on cooldown without preempting higher-priority branches.
-                        .action("保持位置", hold)
+                        .action("hold position", hold)
                     })
             })
             // P3 patrol when there is no target.
-            .action("巡逻", patrol)
+            .action("patrol", patrol)
         })
         .build()
         .expect("player tree")
@@ -543,20 +551,20 @@ fn build_goblin_tree(index: usize) -> BehaviorTree<World> {
     BehaviorTreeBuilder::<World>::new(format!("goblin-{index}"))
         .reactive_selector(move |b| {
             b.sequence(move |b| {
-                b.condition("玩家在射程", move |ctx| goblin_in_range(ctx, index))
+                b.condition("player in range", move |ctx| goblin_in_range(ctx, index))
                     .cooldown(Duration::from_millis(1250), move |b| {
-                        b.action("攻击玩家", move |ctx| goblin_attack(ctx, index))
+                        b.action("attack player", move |ctx| goblin_attack(ctx, index))
                     })
             })
             .sequence(move |b| {
                 b.inverter(move |b| {
-                    b.condition("玩家在射程", move |ctx| goblin_in_range(ctx, index))
+                    b.condition("player in range", move |ctx| goblin_in_range(ctx, index))
                 })
                 .timeout(Duration::from_secs(8), move |b| {
-                    b.action("追击", move |ctx| goblin_chase(ctx, index))
+                    b.action("chase", move |ctx| goblin_chase(ctx, index))
                 })
             })
-            .action("待机", goblin_hold)
+            .action("hold", goblin_hold)
         })
         .build()
         .expect("goblin tree")
@@ -634,7 +642,7 @@ fn main() {
         trees.push(init_tree(build_goblin_tree(index)));
     }
 
-    println!("玩家行为树：\n{}\n", trees[0].describe());
+    println!("Player behavior tree:\n{}\n", trees[0].describe());
 
     for tick in 0..48_u64 {
         world.tick = tick;
@@ -667,7 +675,7 @@ fn main() {
 
     let alive_goblins = world.goblins.iter().filter(|goblin| goblin.alive).count();
 
-    println!("=== 结果 ===");
+    println!("=== Result ===");
     println!(
         "player: alive={} hp={:.1} pos={:.1}",
         world.player.alive, world.player.hp, world.player.pos

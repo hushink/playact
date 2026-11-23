@@ -34,23 +34,23 @@ fn build_tree() -> (BehaviorTree<World>, Arc<AtomicU32>) {
     let mut tree = BehaviorTreeBuilder::<World>::new("rules")
         .reactive_selector(|b| {
             b.sequence(|b| {
-                b.condition("低血量", |ctx| ctx.world_ref().hp < 0.3)
-                    .action("喝药", |ctx| {
+                b.condition("low hp", |ctx| ctx.world_ref().hp < 0.3)
+                    .action("drink potion", |ctx| {
                         push(ctx, "heal");
                         Status::Success
                     })
             })
             .sequence(|b| {
-                b.condition("在射程", |ctx| ctx.world_ref().in_range)
+                b.condition("in range", |ctx| ctx.world_ref().in_range)
                     .cooldown(Duration::from_millis(500), |b| {
-                        b.action("普攻", |ctx| {
+                        b.action("basic attack", |ctx| {
                             push(ctx, "attack");
                             Status::Success
                         })
                     })
             })
             .raw(Box::new(
-                Action::<World>::new("追击", |ctx| {
+                Action::<World>::new("chase", |ctx| {
                     push(ctx, "move");
                     Status::Running
                 })
