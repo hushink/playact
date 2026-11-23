@@ -98,6 +98,56 @@ fn derive_delegates_abort_and_reset() {
     assert_eq!(resets.load(Ordering::Relaxed), 1);
 }
 
+#[derive(playact::BtNode)]
+#[bt(world = (), own_state, state)]
+struct Stateful {
+    value: u8,
+}
+
+impl Stateful {
+    fn tick(&mut self, _ctx: &mut Context<'_, ()>) -> Status {
+        Status::Success
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(vec![self.value])
+    }
+
+    fn load_own_state(&mut self, state: &[u8]) -> bool {
+        self.value = state[0];
+        true
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(vec![self.value])
+    }
+
+    fn load_state(&mut self, state: &[u8]) -> bool {
+        self.value = state[0];
+        true
+    }
+}
+
+#[test]
+fn derive_delegates_own_and_full_state() {
+    let mut node = Stateful { value: 3 };
+    assert_eq!(
+        <Stateful as playact::Node<()>>::save_own_state(&node),
+        Some(vec![3])
+    );
+    assert_eq!(
+        <Stateful as playact::Node<()>>::save_state(&node),
+        Some(vec![3])
+    );
+    assert!(<Stateful as playact::Node<()>>::load_own_state(
+        &mut node,
+        &[7]
+    ));
+    assert_eq!(node.value, 7);
+    assert!(<Stateful as playact::Node<()>>::load_state(&mut node, &[9]));
+    assert_eq!(node.value, 9);
+}
+
 #[test]
 fn derive_supports_a_generic_world() {
     let mut tree = BehaviorTreeBuilder::<bool>::new("derive")
