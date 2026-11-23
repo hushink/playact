@@ -2,7 +2,7 @@
 
 **A type-safe, extensible behavior-tree engine for game automation.**
 
-English | [简体中文](README.zh-CN.md) · [API guide](docs/api.md) · [API 指南](docs/api.zh-CN.md)
+English | [简体中文](README.zh-CN.md) · [API guide](docs/api.md) · [API 指南](docs/api.zh-CN.md) · [Config reference](docs/config.md)
 
 [![Crates.io](https://img.shields.io/crates/v/playact.svg)](https://crates.io/crates/playact)
 [![Docs.rs](https://img.shields.io/docsrs/playact)](https://docs.rs/playact)
@@ -654,7 +654,8 @@ owned, so they can be stored for regression tests.
 
 ## Configuration
 
-The optional `config` feature builds trees from data while keeping parameters typed:
+The optional `config` feature builds trees from data while keeping parameters typed.
+See the [configuration reference](docs/config.md) for every node and field:
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};

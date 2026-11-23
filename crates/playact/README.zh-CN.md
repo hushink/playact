@@ -2,7 +2,7 @@
 
 **面向游戏自动化的类型安全、可扩展行为树引擎。**
 
-[English](README.md) | 简体中文 · [API 指南](docs/api.zh-CN.md) · [API guide](docs/api.md)
+[English](README.md) | 简体中文 · [API 指南](docs/api.zh-CN.md) · [API guide](docs/api.md) · [配置参考](docs/config.zh-CN.md)
 
 [![Crates.io](https://img.shields.io/crates/v/playact.svg)](https://crates.io/crates/playact)
 [![Docs.rs](https://img.shields.io/docsrs/playact)](https://docs.rs/playact)
@@ -626,7 +626,8 @@ if let Some(diff) = recorder.diff(&expected) {
 
 ## 配置驱动
 
-可选 `config` feature 从数据构建行为树，同时保持参数类型安全：
+可选 `config` feature 从数据构建行为树，同时保持参数类型安全。所有节点与字段见
+[配置参考](docs/config.zh-CN.md)：
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};

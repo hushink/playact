@@ -2,8 +2,9 @@
 
 面向任务的 `playact` 0.1.x API 参考：覆盖日常会调用的公开类型与方法，并给出示例代码、使用方式与适用场景。
 
-- [README](../README.zh-CN.md) - 项目概览、feature 与完整配置说明。
+- [README](../README.zh-CN.md) - 项目概览与 feature。
 - 本文 - API 用法、方法表与场景配方。
+- [配置参考](config.zh-CN.md) - 所有配置节点、字段与默认值。
 - [docs.rs/playact](https://docs.rs/playact) - 逐项 rustdoc，包含全部字段与错误枚举。
 - [`examples/`](../examples) - 可直接运行的完整示例。
 
@@ -848,6 +849,7 @@ let latest = history.latest_entry();
 ## 13. 配置
 
 配置层是纯数据 + 构建期注册表。配置中不包含闭包；参数只在构建时反序列化为具体类型。
+所有节点与字段见[配置参考](config.zh-CN.md)。
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};

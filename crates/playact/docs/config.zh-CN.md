@@ -1,0 +1,255 @@
+# playact 配置参考
+
+可选 `config` feature 的完整参考：`TreeSpec`、所有 `SpecNode` 类型、字段与默认值、
+对应的 `NodeRegistry` 注册方式，以及 include、校验与 schema。任务式用法见
+[API 指南](api.zh-CN.md)，项目概览见 [README](../README.zh-CN.md)。
+
+- JSON、TOML、YAML、RON 结构一致；下文示例使用 JSON。
+- 未知字段会被拒绝；错误带路径，如 `root.children[0]`。
+- 配置中不包含闭包；注册名与类型化参数只在构建期解析/反序列化一次。
+
+## 顶层 `TreeSpec`
+
+```json
+{
+  "version": 1,
+  "name": "player ai",
+  "root": {"type": "action", "name": "patrol"},
+  "services": [
+    {"type": "action", "name": "sense"}
+  ]
+}
+```
+
+| 字段 | 必填 | 默认 | 含义 |
+|---|---|---|---|
+| `version` | 否 | `1` | 配置版本；不支持的值会被拒绝 |
+| `name` | 否 | `"BehaviorTree"` | 树显示名称 |
+| `root` | 是 | - | 根节点 |
+| `services` | 否 | `[]` | 每帧先于根节点运行的节点 |
+
+Services 共享 world、黑板、时间与 tracer；其返回状态会被 trace 记录，但不替代根状态。
+
+## 解析与构建
+
+| 方法 | Feature | 用途 |
+|---|---|---|
+| `TreeSpec::from_json_str` / `from_json_slice` | `config` | JSON |
+| `TreeSpec::from_toml_str` | `toml` | TOML |
+| `TreeSpec::from_yaml_str` | `yaml` | YAML |
+| `TreeSpec::from_ron_str` | `ron` | RON |
+| `spec.build(&registry)` | `config` | 不含 include 的构建 |
+| `spec.build_with_resolver(&registry, &resolver)` | `config` | 含 `include` 的构建 |
+| `spec.validate(&limits)` | `config` | 只校验版本/深度/节点数 |
+| `TreeSpec::json_schema()` | `schema` | 供编辑器使用的 JSON Schema |
+
+```rust
+use playact::config::{NodeRegistry, TreeSpec, ValidationLimits};
+
+let mut registry = NodeRegistry::<World>::new();
+registry.action::<()>("patrol", |_| {
+    move |_: &mut Context<'_, World>| Status::Running
+})?;
+
+let spec = TreeSpec::from_json_str(json)?;
+spec.validate(&ValidationLimits::default())?;
+let mut tree = spec.build(&registry)?;
+```
+
+`ValidationLimits` 默认 `max_depth: 64`、`max_nodes: 10_000`；`validate` 把 include
+计为一个节点，不展开。
+
+## 名称、参数与 ID
+
+- 组合/装饰/结构节点上的 `name` 是可选的显示名称。
+- Action、condition、可失败/异步 action 与 custom kind 使用注册名作为显示名。
+- 每个注册工厂的 `params` 都可省略。省略时按 JSON `null` 反序列化；无参数注册使用
+  `P = ()`。参数结构体需要显式 `"params": {...}` 对象（所有字段都有默认值时可写
+  `{}`）。
+- 用 `identified` 包装任意节点可附加稳定 `NodeId`，供快照、差异、指标与状态保持
+  重载使用。重复 ID 会在构建期被拒绝。
+
+## 组合节点
+
+| `type` | 必填 | 可选（默认） | 语义 |
+|---|---|---|---|
+| `sequence` | - | `name`、`children`（`[]`） | 记忆式顺序 |
+| `reactive_sequence` | - | `name`、`children`（`[]`） | 每帧从首个子节点重新评估 |
+| `selector` | - | `name`、`children`（`[]`） | 记忆式选择 |
+| `reactive_selector` | - | `name`、`children`（`[]`） | 每帧重新评估优先级并抢占 |
+| `random_selector` | `seed` | `name`、`children`（`[]`） | 带记忆的确定性随机选择 |
+| `weighted_random_selector` | `seed` | `name`、`weights`（`[]`）、`children`（`[]`） | 加权选择；权重 `0` 永不选中 |
+| `parallel` | - | `name`、`success`（`all`）、`failure`（`any`）、`children`（`[]`） | 单帧阈值汇总 |
+| `mem_parallel` | - | `name`、`success`（`all`）、`failure`（`any`）、`children`（`[]`） | 跨帧累计终态 |
+| `race` | - | `name`、`children`（`[]`） | 第一个终态子节点获胜 |
+| `switch` | `key` | `name`、`values`（`[]`）、`children`（`[]`） | 按注册的 typed key 选择分支 |
+| `utility_selector` | - | `name`、`hysteresis`（`0.0`）、`branches`（`[]`） | 每帧评分选择 |
+| `if_then_else` | `condition`、`then`、`else` | `name`、`params`（`null`） | 谓词选择分支 |
+
+阈值写法：
+
+```json
+"all"
+"any"
+{"at_least": 1}
+```
+
+`switch` 将 `values[i]` 与 `children[i]` 一一配对，两个数组长度必须相同。
+`utility_selector` 分支：
+
+```json
+{"score": "heal_urgency", "params": {"threshold": 0.3}, "child": {...}}
+```
+
+紧凑示例：
+
+```json
+{"type": "sequence", "children": [{"type": "action", "name": "step"}]}
+{"type": "reactive_selector", "name": "priority", "children": [{"type": "action", "name": "flee"}]}
+{"type": "random_selector", "seed": 7, "children": [{"type": "action", "name": "step"}]}
+{"type": "weighted_random_selector", "seed": 7, "weights": [1, 3], "children": [{"type": "action", "name": "step"}, {"type": "action", "name": "step"}]}
+{"type": "parallel", "success": "all", "failure": "any", "children": [{"type": "action", "name": "step"}]}
+{"type": "mem_parallel", "success": {"at_least": 1}, "children": [{"type": "action", "name": "step"}]}
+{"type": "race", "children": [{"type": "action", "name": "step"}]}
+{"type": "switch", "key": "combat.phase", "values": [1, 2], "children": [{"type": "action", "name": "step"}, {"type": "action", "name": "step"}]}
+{"type": "utility_selector", "hysteresis": 0.2, "branches": [{"score": "idle_value", "child": {"type": "action", "name": "step"}}]}
+{"type": "if_then_else", "condition": "low_hp", "params": {"ratio": 0.3}, "then": {"type": "action", "name": "heal"}, "else": {"type": "action", "name": "fight"}}
+```
+
+## 装饰节点
+
+| `type` | 必填 | 可选（默认） | 效果 |
+|---|---|---|---|
+| `inverter` | `child` | `name` | 交换 Success/Failure |
+| `always_succeed` | `child` | `name` | 强制 Success |
+| `always_fail` | `child` | `name` | 强制 Failure |
+| `repeat` | `times`（`> 0`）、`child` | `name` | 成功执行 `times` 次 |
+| `retry` | `max_attempts`（`> 0`）、`child` | `name` | 每帧一次尝试 |
+| `until_success` | `child` | `name` | 直到 Success 前保持 Running |
+| `until_failure` | `child` | `name` | 直到 Failure 前保持 Running |
+| `probability` | `chance`（`0..=1`）、`seed`、`child` | `name` | 确定性概率门 |
+| `while` | `condition`、`child` | `name`、`params`（`null`） | 条件为真时重复 |
+| `guard` | `condition`、`child` | `name`、`params`（`null`） | 条件为假时阻断/abort |
+| `cooldown` | `duration_ms`、`child` | `name` | 成功后的冷却 |
+| `timeout` | `duration_ms`、`child` | `name` | 虚拟时间超时 |
+| `limiter` | `max`（`> 0`）、`child` | `name` | 终态次数配额 |
+| `throttle` | `window_ms`、`max`（`> 0`）、`child` | `name` | 时间窗口终态限流 |
+
+`duration_ms` 与 `window_ms` 是虚拟 `Time` 的毫秒数。
+
+```json
+{"type": "inverter", "child": {"type": "condition", "name": "enemy_near"}}
+{"type": "always_succeed", "child": {"type": "action", "name": "optional_step"}}
+{"type": "always_fail", "child": {"type": "action", "name": "probe"}}
+{"type": "repeat", "times": 3, "child": {"type": "action", "name": "combo_step"}}
+{"type": "retry", "max_attempts": 5, "child": {"type": "try_action", "name": "interact"}}
+{"type": "until_success", "child": {"type": "action", "name": "poll"}}
+{"type": "until_failure", "child": {"type": "action", "name": "hold"}}
+{"type": "probability", "chance": 0.25, "seed": 11, "child": {"type": "action", "name": "critical_hit"}}
+{"type": "while", "condition": "holding_position", "child": {"type": "action", "name": "block"}}
+{"type": "guard", "condition": "enemy_near", "child": {"type": "action", "name": "attack"}}
+{"type": "cooldown", "duration_ms": 1000, "child": {"type": "action", "name": "attack"}}
+{"type": "timeout", "duration_ms": 5000, "child": {"type": "action", "name": "interact"}}
+{"type": "limiter", "max": 3, "child": {"type": "action", "name": "use_item"}}
+{"type": "throttle", "window_ms": 1000, "max": 2, "child": {"type": "action", "name": "shoot"}}
+```
+
+`guard`、`while`、`if_then_else` 使用 `NodeRegistry::predicate` 或
+`NodeRegistry::condition` 注册的谓词。
+
+## 叶子节点
+
+| `type` | 必填 | 可选（默认） | 含义 |
+|---|---|---|---|
+| `action` | `name` | `params`（`null`） | 注册的 action |
+| `condition` | `name` | `params`（`null`） | 注册的只读 condition |
+| `try_action` | `name` | `params`（`null`） | 可失败 action；`Err` -> trace error + Failure |
+| `async_action` | `name` | `params`（`null`） | 注册的异步/远程 action |
+| `wait` | `duration_ms` | `name` | 虚拟时间等待 |
+| `wait_until` | `condition` | `name`、`params`（`null`） | 等待谓词成立 |
+| `wait_for_event` | `event` | `name` | FIFO 消费注册事件队列 |
+| `set_value` | `key`、`value` | `name` | 每帧写入 typed 黑板值 |
+
+```json
+{"type": "action", "name": "sense", "params": {"radius": 10}}
+{"type": "condition", "name": "enemy_near"}
+{"type": "try_action", "name": "open_chest"}
+{"type": "async_action", "name": "fetch_plan"}
+{"type": "wait", "duration_ms": 500, "name": "settle"}
+{"type": "wait_until", "condition": "target_visible", "name": "acquire"}
+{"type": "wait_for_event", "event": "combat.hit"}
+{"type": "set_value", "key": "combat.phase", "value": 2}
+```
+
+## 结构节点
+
+| `type` | 必填 | 可选（默认） | 含义 |
+|---|---|---|---|
+| `identified` | `id`、`child` | - | 附加稳定 `NodeId` |
+| `include` | `path` | `name` | 引入其他配置；需要 resolver |
+| `subtree` | `template` | `name`、`params`（`null`） | 实例化注册的 `SubtreeFactory` |
+| `custom` | `kind` | `name`、`params`（`null`）、`children`（`[]`） | 注册的自定义工厂 |
+| `scoped` | `child` | `name`、`inputs`（`[]`）、`outputs`（`[]`） | 私有黑板，输入/输出按名称拷贝 |
+| `contract` | `child` | `name`、`required`（`[]`）、`provided`（`[]`） | 必需/提供 key 边界 |
+
+```json
+{"type": "identified", "id": "attack", "child": {"type": "action", "name": "attack"}}
+{"type": "include", "path": "combat.json", "name": "combat"}
+{"type": "subtree", "template": "goblin_patrol", "name": "patrol", "params": {"speed": 3}}
+{"type": "custom", "kind": "patrol_route", "params": {"points": 4}, "children": []}
+{"type": "scoped", "name": "sandbox", "inputs": ["combat.target"], "outputs": ["combat.plan"], "child": {"type": "action", "name": "plan"}}
+{"type": "contract", "name": "strike", "required": ["combat.target"], "provided": ["combat.plan"], "child": {"type": "action", "name": "plan"}}
+```
+
+`scoped` 在激活时把 `inputs` 拷入私有黑板，终态时把 `outputs` 拷回父黑板。
+`contract` 在子节点运行前检查 `required`，并在激活与 abort 时清空 `provided`。
+两者都要求 key 通过 `NodeRegistry::scoped_key` / `NodeRegistry::contract_key` 注册。
+
+## 注册表映射
+
+| 配置 | 注册方式 |
+|---|---|
+| `action` | `registry.action::<P>(name, factory)` |
+| `condition` | `registry.condition::<P>(name, factory)`；同时作为 predicate |
+| `try_action` | `registry.try_action::<P, E>(name, factory)` |
+| `async_action` | `registry.async_action::<P>(name, factory)` |
+| `guard` / `while` / `if_then_else` / `wait_until` 的谓词 | `registry.condition` 或 `registry.predicate::<P>` |
+| `utility_selector` 分支的 `score` | `registry.score::<P>(name, factory)` |
+| `switch` | `registry.switch_key::<K>(key)` |
+| `set_value` | `registry.set_value_key::<T>(key)` |
+| `wait_for_event` | `registry.event_key::<T>(key)` |
+| `scoped` | `registry.scoped_key(&KEY)`（值类型需 `Clone`） |
+| `contract` | `registry.contract_key(&KEY)` |
+| `subtree` | `registry.subtree(name, factory)` 或 `registry.subtree_with_params::<P>` |
+| `custom` | `registry.custom::<P>(kind, factory)` |
+
+Factory 每个节点接收一次类型化参数，并返回该节点独立的 tick/condition/score 闭包。
+`condition` 名称同时注册为谓词；不需要 condition 叶子时使用 `predicate`。
+
+Factory 参数规则：省略 `params` 时按 `null` 反序列化；`P = ()` 无需 `params`；
+结构体参数需要 `"params": {...}` 对象。
+
+## Include
+
+```rust
+use playact::config::FsIncludeResolver;
+
+let resolver = FsIncludeResolver::json("config/")?;
+let tree = spec.build_with_resolver(&registry, &resolver)?;
+```
+
+- `FsIncludeResolver` 把路径限制在基准目录内，拒绝 `..`、绝对路径与符号链接逃逸。
+- 循环与超过 `MAX_INCLUDE_DEPTH`（32）的嵌套会被拒绝。
+- 未使用 `build_with_resolver` 时，`include` 会构建失败。
+- watcher 会轮询解析过的 include 文件以触发热重载；自定义 resolver 可实现
+  `watched_paths()` / `reset_watched_paths()`。
+
+## 错误与 schema
+
+- 解析错误为 `ConfigError`，带可选路径。
+- 构建错误为 `ConfigBuildError`，带路径与类型化的 `ConfigBuildErrorKind`，例如
+  `UnknownAction`、`UnknownSwitchKey`、`UnknownSubtreeTemplate`、`InvalidParams`、
+  `DuplicateNodeId`。
+- `TreeSpec::json_schema()`（`schema` feature）返回 JSON Schema，供编辑器补全与
+  外部校验使用。
+- 可选的热重载与远程配置加载器走同一套 `TreeSpec` 流程，因此校验与路径错误同样适用。

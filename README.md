@@ -115,7 +115,9 @@ fn main() -> Result<(), BuildError> {
 Detailed semantics, caveats, and API examples live in the
 [crate README](crates/playact/README.md). For method-level usage, tables, and
 scenario recipes, see the [API guide](crates/playact/docs/api.md)
-([中文](crates/playact/docs/api.zh-CN.md)).
+([中文](crates/playact/docs/api.zh-CN.md)). For every configuration node and its
+fields, see the [configuration reference](crates/playact/docs/config.md)
+([中文](crates/playact/docs/config.zh-CN.md)).
 
 ## Examples
 

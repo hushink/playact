@@ -4,8 +4,9 @@ Task-oriented API reference for `playact` 0.1.x. It covers the public types and
 methods you normally call, with runnable-shaped examples and the scenarios each
 API is designed for.
 
-- [README](../README.md) - project overview, feature flags, full configuration reference.
+- [README](../README.md) - project overview and feature flags.
 - This guide - API usage, method tables, and scenario recipes.
+- [Configuration reference](config.md) - every configuration node, field, and default.
 - [docs.rs/playact](https://docs.rs/playact) - per-item rustdoc, including every field and error variant.
 - [`examples/`](../examples) - complete runnable programs.
 
@@ -881,7 +882,8 @@ newer entries; `oldest_revision` tells it when eviction may have skipped data.
 ## 13. Configuration
 
 The config layer is pure data plus a build-time registry. Configuration never
-contains closures; parameters are deserialized into concrete types once.
+contains closures; parameters are deserialized into concrete types once. See
+the [configuration reference](config.md) for every node and field.
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};

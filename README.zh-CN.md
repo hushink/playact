@@ -110,6 +110,8 @@ fn main() -> Result<(), BuildError> {
 详细语义、注意事项与 API 示例见
 [crate 中文文档](crates/playact/README.zh-CN.md)。方法级用法、方法表与场景配方见
 [API 指南](crates/playact/docs/api.zh-CN.md)（[English](crates/playact/docs/api.md)）。
+所有配置节点及其字段见
+[配置参考](crates/playact/docs/config.zh-CN.md)（[English](crates/playact/docs/config.md)）。
 
 ## 示例
 
