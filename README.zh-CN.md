@@ -161,9 +161,11 @@ cargo run -p playact-cli -- convert config/a.json config/b.yaml
 
 `schema` 输出基础 `TreeSpec` schema。把 `NodeRegistry::json_schema()` 生成的
 注册表感知 schema 通过 `--schema` 传给 `catalog`/`lint`/`convert`，即可包含注册
-名称、描述与参数 schema。`lint` 支持 JSON/TOML/YAML/RON、多文件与 watch，任一文件
-无效时非零退出。`convert` 在写入目标格式前先校验输入；TOML 无法表示 null，因此转换
-为 TOML 时会省略取值为 null 的可选字段。
+名称、描述与参数 schema。`lint` 支持 JSON/TOML/YAML/RON，递归解析并校验
+`include`（基准目录默认为根文件父目录，也可用 `--include-base` 指定），支持多文件与
+watch，任一文件无效时非零退出。`convert` 在写入目标格式前先校验输入及其 include；
+TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。include 路径
+会被保留而不会复制文件，转换后应保持在相同 include 基准目录内或自行调整路径。
 
 ## Feature 矩阵
 

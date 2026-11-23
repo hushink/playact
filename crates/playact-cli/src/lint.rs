@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use playact::config::ValidationLimits;
+use playact::config::{MAX_INCLUDE_DEPTH, ValidationLimits};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -15,12 +15,15 @@ const MAX_NODE_DEPTH: usize = 128;
 /// One lint finding.
 #[derive(Debug, Serialize)]
 pub struct LintIssue {
-    /// Origin of the issue, such as `schema`, `parse`, `limits`, `format`, or `io`.
+    /// Origin of the issue, such as `schema`, `parse`, `limits`, `include`, `format`, or `io`.
     pub source: &'static str,
     /// JSON pointer or configuration path, depending on the source.
     pub path: String,
     /// Human-readable message.
     pub message: String,
+    /// Included file the issue belongs to, when it is not the root file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 impl LintIssue {
@@ -33,7 +36,13 @@ impl LintIssue {
             source,
             path: path.into(),
             message: message.into(),
+            file: None,
         }
+    }
+
+    fn in_file(mut self, file: impl Into<String>) -> Self {
+        self.file = Some(file.into());
+        self
     }
 }
 
@@ -42,19 +51,32 @@ impl LintIssue {
 pub struct LintReport {
     /// File path as provided on the command line.
     pub file: String,
-    /// Whether the file passed every check.
+    /// Whether the file and its includes passed every check.
     pub valid: bool,
     /// Findings in reporting order.
     pub issues: Vec<LintIssue>,
+    /// Canonical paths of included files, for watch mode.
+    #[serde(skip)]
+    pub included: Vec<PathBuf>,
 }
 
 /// Lints each file against `schema`.
+///
+/// Includes are resolved against `include_base`, or against each root file's
+/// parent directory when no base is given.
 #[must_use]
-pub fn lint_files(schema: &Value, files: &[PathBuf]) -> Vec<LintReport> {
-    files.iter().map(|path| lint_file(schema, path)).collect()
+pub fn lint_files(
+    schema: &Value,
+    files: &[PathBuf],
+    include_base: Option<&Path>,
+) -> Vec<LintReport> {
+    files
+        .iter()
+        .map(|path| lint_file(schema, path, include_base))
+        .collect()
 }
 
-pub(crate) fn lint_file(schema: &Value, path: &Path) -> LintReport {
+pub(crate) fn lint_file(schema: &Value, path: &Path, include_base: Option<&Path>) -> LintReport {
     let file = path.display().to_string();
     let mut issues = Vec::new();
 
@@ -65,6 +87,7 @@ pub(crate) fn lint_file(schema: &Value, path: &Path) -> LintReport {
                 file,
                 valid: false,
                 issues: vec![LintIssue::new("format", "", message)],
+                included: Vec::new(),
             };
         }
     };
@@ -75,11 +98,12 @@ pub(crate) fn lint_file(schema: &Value, path: &Path) -> LintReport {
                 file,
                 valid: false,
                 issues: vec![LintIssue::new("io", "", error.to_string())],
+                included: Vec::new(),
             };
         }
     };
-    match format.parse_document(&text) {
-        Ok(document) => issues.extend(schema_issues(schema, &document)),
+    let document = match format.parse_document(&text) {
+        Ok(document) => document,
         Err(error) => {
             issues.push(LintIssue::new(
                 "parse",
@@ -90,9 +114,11 @@ pub(crate) fn lint_file(schema: &Value, path: &Path) -> LintReport {
                 file,
                 valid: false,
                 issues,
+                included: Vec::new(),
             };
         }
-    }
+    };
+    issues.extend(schema_issues(schema, &document));
 
     match format.parse_spec(&text) {
         Ok(spec) => {
@@ -111,10 +137,246 @@ pub(crate) fn lint_file(schema: &Value, path: &Path) -> LintReport {
         )),
     }
 
+    let mut included = Vec::new();
+    lint_includes(
+        schema,
+        &document,
+        path,
+        format,
+        include_base,
+        &mut issues,
+        &mut included,
+    );
+
     LintReport {
         file,
         valid: issues.is_empty(),
         issues,
+        included,
+    }
+}
+
+fn lint_includes(
+    schema: &Value,
+    document: &Value,
+    root: &Path,
+    format: Format,
+    include_base: Option<&Path>,
+    issues: &mut Vec<LintIssue>,
+    included: &mut Vec<PathBuf>,
+) {
+    let base = match resolve_base(root, include_base) {
+        Ok(base) => base,
+        Err(message) => {
+            issues.push(LintIssue::new("include", "", message));
+            return;
+        }
+    };
+    let mut state = IncludeState {
+        schema,
+        base,
+        visited: HashSet::new(),
+        stack: Vec::new(),
+        included: Vec::new(),
+    };
+    if let Ok(root) = root.canonicalize() {
+        state.visited.insert(root.clone());
+        state.stack.push(root);
+    }
+    state.walk(document, root_path_label(root), format, issues, 0);
+    *included = state.included;
+}
+
+struct IncludeState<'a> {
+    schema: &'a Value,
+    base: PathBuf,
+    visited: HashSet<PathBuf>,
+    stack: Vec<PathBuf>,
+    included: Vec<PathBuf>,
+}
+
+impl IncludeState<'_> {
+    fn walk(
+        &mut self,
+        document: &Value,
+        current_file: &str,
+        current_format: Format,
+        issues: &mut Vec<LintIssue>,
+        depth: usize,
+    ) {
+        for (location, include) in collect_includes(document) {
+            if depth >= MAX_INCLUDE_DEPTH {
+                issues.push(
+                    LintIssue::new(
+                        "include",
+                        location,
+                        format!("include nesting exceeds {MAX_INCLUDE_DEPTH} levels"),
+                    )
+                    .in_file(current_file),
+                );
+                continue;
+            }
+            let (path, format) = match self.resolve(&include, current_format) {
+                Ok(resolved) => resolved,
+                Err(message) => {
+                    issues.push(LintIssue::new("include", location, message).in_file(current_file));
+                    continue;
+                }
+            };
+            if self.stack.contains(&path) {
+                issues.push(
+                    LintIssue::new(
+                        "include",
+                        location,
+                        format!("include cycle through `{}`", display_path(&path)),
+                    )
+                    .in_file(current_file),
+                );
+                continue;
+            }
+            if self.visited.contains(&path) {
+                continue;
+            }
+            self.visited.insert(path.clone());
+            self.included.push(path.clone());
+            let file = display_path(&path);
+
+            let text = match fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) => {
+                    issues.push(LintIssue::new("io", "", error.to_string()).in_file(file));
+                    continue;
+                }
+            };
+            let included_document = match format.parse_document(&text) {
+                Ok(document) => document,
+                Err(error) => {
+                    issues.push(
+                        LintIssue::new("parse", "", format!("invalid {}: {error}", format.name()))
+                            .in_file(file),
+                    );
+                    continue;
+                }
+            };
+            for issue in schema_issues(self.schema, &included_document) {
+                issues.push(issue.in_file(file.clone()));
+            }
+            match format.parse_spec(&text) {
+                Ok(spec) => {
+                    if let Err(error) = spec.validate(&ValidationLimits::default()) {
+                        issues.push(
+                            LintIssue::new("limits", error.path().unwrap_or(""), error.message())
+                                .in_file(file.clone()),
+                        );
+                    }
+                }
+                Err(error) => issues.push(
+                    LintIssue::new("parse", error.path().unwrap_or(""), error.message())
+                        .in_file(file.clone()),
+                ),
+            }
+
+            self.stack.push(path.clone());
+            self.walk(&included_document, &file, format, issues, depth + 1);
+            self.stack.pop();
+        }
+    }
+
+    fn resolve(&self, include: &str, fallback: Format) -> Result<(PathBuf, Format), String> {
+        let candidate = self.base.join(include);
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve include `{include}`: {error}"))?;
+        if !canonical.starts_with(&self.base) {
+            return Err(format!("include `{include}` escapes the include base"));
+        }
+        if !canonical.is_file() {
+            return Err(format!("include `{include}` is not a file"));
+        }
+        let format = Format::from_path(&canonical).unwrap_or(fallback);
+        Ok((canonical, format))
+    }
+}
+
+fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    text
+}
+
+fn resolve_base(root: &Path, include_base: Option<&Path>) -> Result<PathBuf, String> {
+    let base = include_base.unwrap_or_else(|| {
+        root.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+    });
+    let base = base
+        .canonicalize()
+        .map_err(|error| format!("include base `{}`: {error}", base.display()))?;
+    if !base.is_dir() {
+        return Err(format!(
+            "include base `{}` is not a directory",
+            base.display()
+        ));
+    }
+    Ok(base)
+}
+
+fn root_path_label(root: &Path) -> &str {
+    root.to_str().unwrap_or("<non-UTF-8 path>")
+}
+
+fn collect_includes(document: &Value) -> Vec<(String, String)> {
+    let mut includes = Vec::new();
+    if let Some(root) = document.get("root") {
+        collect_node_includes(root, "/root", &mut includes);
+    }
+    if let Some(services) = document.get("services").and_then(Value::as_array) {
+        for (index, service) in services.iter().enumerate() {
+            collect_node_includes(service, &format!("/services/{index}"), &mut includes);
+        }
+    }
+    includes
+}
+
+fn collect_node_includes(node: &Value, path: &str, includes: &mut Vec<(String, String)>) {
+    let Some(object) = node.as_object() else {
+        return;
+    };
+    if object.get("type").and_then(Value::as_str) == Some("include") {
+        if let Some(include) = object.get("path").and_then(Value::as_str) {
+            includes.push((path.to_string(), include.to_string()));
+        }
+        return;
+    }
+    if let Some(child) = object.get("child") {
+        collect_node_includes(child, &format!("{path}/child"), includes);
+    }
+    if let Some(then) = object.get("then") {
+        collect_node_includes(then, &format!("{path}/then"), includes);
+    }
+    if let Some(otherwise) = object.get("else") {
+        collect_node_includes(otherwise, &format!("{path}/else"), includes);
+    }
+    if let Some(children) = object.get("children").and_then(Value::as_array) {
+        for (index, child) in children.iter().enumerate() {
+            collect_node_includes(child, &format!("{path}/children/{index}"), includes);
+        }
+    }
+    if let Some(branches) = object.get("branches").and_then(Value::as_array) {
+        for (index, branch) in branches.iter().enumerate() {
+            if let Some(child) = branch.get("child") {
+                collect_node_includes(child, &format!("{path}/branches/{index}/child"), includes);
+            }
+        }
     }
 }
 

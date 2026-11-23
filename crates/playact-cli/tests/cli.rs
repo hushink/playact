@@ -37,6 +37,38 @@ impl Drop for TempFile {
     }
 }
 
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new() -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "playact-cli-dir-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).expect("create temporary directory");
+        Self { path }
+    }
+
+    fn write(&self, relative: &str, contents: &str) -> PathBuf {
+        let path = self.path.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent directory");
+        }
+        fs::write(&path, contents).expect("write temporary file");
+        path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
 fn run(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_playact"))
         .args(arguments)
@@ -188,6 +220,131 @@ fn watch_cannot_be_combined_with_json_reports() {
         stderr.contains("--watch cannot be combined with --json"),
         "{stderr}"
     );
+}
+
+#[test]
+fn lint_resolves_includes_and_reports_child_errors() {
+    let directory = TempDir::new();
+    directory.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"bad.json"}}"#,
+    );
+
+    let output = run(&["lint", root.to_str().expect("root path")]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("bad.json"), "{stderr}");
+    assert!(stderr.contains("/root/type"), "{stderr}");
+    assert!(stderr.contains("no_such_node"), "{stderr}");
+}
+
+#[test]
+fn lint_accepts_valid_includes() {
+    let directory = TempDir::new();
+    directory.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"child.json"}}"#,
+    );
+
+    let output = run(&["lint", root.to_str().expect("root path")]);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn lint_defaults_the_include_base_to_a_bare_file_parent() {
+    let directory = TempDir::new();
+    directory.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"child.json"}}"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_playact"))
+        .current_dir(&directory.path)
+        .args(["lint", "root.json"])
+        .output()
+        .expect("run playact");
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn lint_detects_include_cycles() {
+    let directory = TempDir::new();
+    directory.write("a.json", r#"{"root":{"type":"include","path":"b.json"}}"#);
+    directory.write("b.json", r#"{"root":{"type":"include","path":"a.json"}}"#);
+    let root = directory.path.join("a.json");
+
+    let output = run(&["lint", root.to_str().expect("root path")]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cycle"), "{stderr}");
+}
+
+#[test]
+fn lint_rejects_include_path_escapes() {
+    let directory = TempDir::new();
+    directory.write(
+        "outside.json",
+        r#"{"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = directory.write(
+        "config/root.json",
+        r#"{"root":{"type":"include","path":"../outside.json"}}"#,
+    );
+
+    let output = run(&["lint", root.to_str().expect("root path")]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("escapes"), "{stderr}");
+}
+
+#[test]
+fn lint_accepts_an_explicit_include_base() {
+    let directory = TempDir::new();
+    directory.write(
+        "shared.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = directory.write(
+        "config/root.json",
+        r#"{"root":{"type":"include","path":"shared.json"}}"#,
+    );
+
+    let output = run(&[
+        "lint",
+        "--include-base",
+        directory.path.to_str().expect("directory path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn convert_validates_includes_before_writing() {
+    let directory = TempDir::new();
+    directory.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"bad.json"}}"#,
+    );
+    let output = TempFile::new("toml", "");
+
+    let converted = run(&[
+        "convert",
+        root.to_str().expect("root path"),
+        output.as_str(),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let text = fs::read_to_string(&output.path).expect("output file");
+    assert!(text.is_empty(), "{text}");
 }
 
 #[test]

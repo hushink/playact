@@ -377,5 +377,9 @@ cargo run -p playact-cli -- convert --schema schema.json config/a.json config/b.
 `NodeRegistry::json_schema()` 生成的注册表感知 schema；通过 `--schema` 传入即可包含
 注册名称、描述与参数 schema；未传入时使用基础 schema。`lint` 会解析并校验限制，但
 没有应用注册表，因此不会构建树；需要应用内构建预检时使用 `config_lint` 示例。
-`--watch` 在配置或 schema 变化时重新 lint；`convert` 在写入 JSON/TOML/YAML/RON 前
-先校验输入。TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。
+`include` 节点会递归解析；路径限制在 `--include-base` 内，未指定时使用每个根文件的
+父目录。include 格式按扩展名选择，无法识别时回退到包含它的文件格式。被包含文件的
+错误在 JSON 报告中带有 `file` 字段。`--watch` 在根配置、被包含
+文件或 schema 变化时重新 lint。`convert` 在写入 JSON/TOML/YAML/RON 前先校验输入及
+其 include。TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。
+include 路径会被保留而不会复制文件，转换后应保持在相同 include 基准目录内或自行调整。
