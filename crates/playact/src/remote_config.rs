@@ -7,8 +7,9 @@
 //! to a worker thread or use a custom `Client` with a timeout.
 //!
 //! Refresh semantics match hot reload:
-//! - Once a new configuration builds successfully it replaces the old tree,
-//!   blackboard data is preserved, and node-internal state is reset by default;
+//! - Once a new configuration builds successfully it replaces the old tree (root
+//!   and configured services), blackboard data is preserved, and node-internal
+//!   state is reset by default;
 //! - With [`RemoteTreeLoader::with_state_preservation`] enabled, node state is
 //!   also restored by stable `NodeId` for nodes that still exist; renamed or
 //!   removed IDs start from their reset state;
@@ -583,6 +584,12 @@ mod tests {
         )
     }
 
+    fn service_body(action: &str) -> String {
+        format!(
+            r#"{{"root":{{"type":"action","name":"{action}"}},"services":[{{"type":"action","name":"{action}"}}]}}"#
+        )
+    }
+
     fn serve_sequence(bodies: Vec<String>) -> String {
         serve_sequence_with_headers(bodies, "")
     }
@@ -654,6 +661,27 @@ mod tests {
             loader.tree_mut().tick(&mut world, Time::ZERO),
             Status::Failure
         );
+    }
+
+    #[test]
+    fn refresh_rebuilds_configured_services() {
+        let url = serve_sequence(vec![service_body("old"), service_body("new")]);
+        let mut loader = RemoteTreeLoader::<()>::json(url, registry()).expect("remote loader");
+
+        let mut world = ();
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["old", "old"]);
+
+        assert!(loader.refresh_now().expect("refresh"));
+        assert_eq!(loader.tree().service_count(), 1);
+        assert_eq!(
+            loader.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut loader), vec!["new", "new"]);
     }
 
     #[test]

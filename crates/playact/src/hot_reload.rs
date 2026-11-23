@@ -6,9 +6,9 @@
 //! or [`TreeWatcher::tick`] once per frame.
 //!
 //! Reload semantics:
-//! - New configuration parses/builds successfully: the new tree replaces the old
-//!   one and **blackboard data is preserved**; node-internal state is reset by
-//!   default;
+//! - New configuration parses/builds successfully: the new tree (root and
+//!   configured services) replaces the old one and **blackboard data is
+//!   preserved**; node-internal state is reset by default;
 //! - With [`TreeWatcher::with_state_preservation`] enabled, node state is also
 //!   restored by stable `NodeId` for nodes that still exist in the new tree;
 //!   renamed or removed IDs start from their reset state;
@@ -467,6 +467,41 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut watcher), vec!["new"]);
+
+        drop(watcher);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_rebuilds_configured_services() {
+        let path = temp_path();
+        fs::write(
+            &path,
+            r#"{"root":{"type":"action","name":"old"},"services":[{"type":"action","name":"old"}]}"#,
+        )
+        .expect("write initial");
+
+        let mut watcher = TreeWatcher::<()>::json(&path, registry()).expect("watcher");
+        let mut world = ();
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["old", "old"]);
+
+        fs::write(
+            &path,
+            r#"{"root":{"type":"action","name":"new"},"services":[{"type":"action","name":"new"}]}"#,
+        )
+        .expect("write new");
+        watcher.reload_now().expect("reload");
+        assert_eq!(watcher.tree().service_count(), 1);
+
+        assert_eq!(
+            watcher.tree_mut().tick(&mut world, Time::ZERO),
+            Status::Success
+        );
+        assert_eq!(drain(&mut watcher), vec!["new", "new"]);
 
         drop(watcher);
         let _ = fs::remove_file(path);

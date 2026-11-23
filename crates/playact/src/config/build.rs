@@ -20,8 +20,8 @@ use super::registry::NodeRegistry;
 use super::{CURRENT_VERSION, IncludeResolver, MAX_INCLUDE_DEPTH, SpecNode, TreeSpec};
 
 impl TreeSpec {
-    /// Builds a behavior tree using the registry; returns an error if the
-    /// configuration contains `include`.
+    /// Builds a behavior tree and its configured services using the registry;
+    /// returns an error if the configuration contains `include`.
     ///
     /// All parameters are deserialized at build time. Unknown registered names,
     /// invalid params, an unsupported version, or an invalid threshold all
@@ -33,7 +33,8 @@ impl TreeSpec {
         self.build_inner(registry, None)
     }
 
-    /// Builds a behavior tree with an include resolver.
+    /// Builds a behavior tree and its configured services with an include
+    /// resolver.
     ///
     /// The resolver interprets `include` paths; the engine handles version
     /// validation, cycle detection, and the maximum nesting depth
@@ -72,8 +73,14 @@ impl TreeSpec {
             .name
             .clone()
             .unwrap_or_else(|| String::from("BehaviorTree"));
+        let mut tree = BehaviorTree::new(root).with_name(name);
 
-        Ok(BehaviorTree::new(root).with_name(name))
+        for (index, service) in self.services.iter().enumerate() {
+            let node = build_node(service, &ctx, &format!("services[{index}]"))?;
+            tree.add_service(node);
+        }
+
+        Ok(tree)
     }
 }
 

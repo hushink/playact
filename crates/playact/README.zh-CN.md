@@ -599,6 +599,18 @@ let mut tree = spec.build(&registry)?;
   构建期反序列化为 key 的 value 或 event 类型。
 - `utility_selector` 的分支引用 `registry.score` 注册的评分函数；评分函数接收
   类型化参数，并在每个 tick 重新计算。
+
+`TreeSpec.services` 声明在每个 tick 的根节点之前运行的服务节点：
+
+```json
+{
+  "root": {"type": "sequence", "children": []},
+  "services": [{"type": "action", "name": "sense_enemies"}]
+}
+```
+
+服务共享 world、黑板与时间，返回值被忽略。热重载与远程刷新会连同根节点一起重建
+服务；启用 `with_state_preservation` 后，ID 匹配的服务节点状态也会恢复。
 - `TreeSpec::validate(&ValidationLimits)` 可在构建前校验版本、最大深度与节点数，
   适合远程配置或用户提交的配置。
 - 可选 `schema` feature 提供 `TreeSpec::json_schema()`，用于编辑器补全与外部校验。
@@ -640,7 +652,7 @@ if watcher.poll()? {
 }
 ```
 
-成功重建会替换旧树、保留黑板数据并重置节点状态。启用
+成功重建会替换旧树（根节点与配置中的服务）、保留黑板数据并重置节点状态。启用
 `with_state_preservation(true)` 后，还会按稳定的 `NodeId` 为仍然存在的节点恢复
 自身状态；被改名或删除的 ID 从 reset 状态开始。解析/构建失败保留旧树并返回
 错误。默认 200ms 去抖。include 使用 `json_with_resolver` /
@@ -665,10 +677,10 @@ loader.tree_mut().tick(&mut world, time);
 ```
 
 `RemoteTreeLoader` 使用 `reqwest::blocking`，支持 ETag / Last-Modified，刷新失败
-保留旧树。成功刷新会保留黑板并重置节点状态；`with_state_preservation(true)` 还会
-按稳定 `NodeId` 恢复仍存在节点的状态，与热重载行为一致。请求在调用线程同步执行；
-高延迟环境请放到工作线程或设置 Client 超时。include 使用
-`json_with_resolver` / `with_client_and_resolver`。
+保留旧树。成功刷新会重建根节点与配置中的服务、保留黑板并重置节点状态；
+`with_state_preservation(true)` 还会按稳定 `NodeId` 恢复仍存在节点的状态，与热重载
+行为一致。请求在调用线程同步执行；高延迟环境请放到工作线程或设置 Client 超时。
+include 使用 `json_with_resolver` / `with_client_and_resolver`。
 
 响应体限制为 `MAX_REMOTE_CONFIG_BYTES`（1 MiB），必须是 UTF-8，并在构建前通过
 `TreeSpec::validate`（默认 `ValidationLimits`）校验；过大或结构过深的配置会被拒绝。

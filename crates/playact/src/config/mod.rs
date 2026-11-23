@@ -65,6 +65,7 @@ fn default_failure_threshold() -> ThresholdSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TreeSpec {
     /// Schema version; defaults to 1.
     #[serde(default = "default_version")]
@@ -74,6 +75,9 @@ pub struct TreeSpec {
     pub name: Option<String>,
     /// Root node.
     pub root: SpecNode,
+    /// Service nodes run before the root on every tick; defaults to empty.
+    #[serde(default)]
+    pub services: Vec<SpecNode>,
 }
 
 /// Node description within a configuration.
@@ -609,6 +613,7 @@ impl TreeSpec {
 
     /// Validates version, depth, and node-count limits without building a tree.
     ///
+    /// The root and every service are validated; the node count is cumulative.
     /// This is useful before accepting remote configuration or before handing a
     /// spec to a registry that may be expensive to invoke. Include nodes are
     /// counted as one node and are not expanded; the resolver must validate the
@@ -625,7 +630,17 @@ impl TreeSpec {
         }
 
         let mut nodes = 0_usize;
-        validate_node(&self.root, "root", 1, limits, &mut nodes)
+        validate_node(&self.root, "root", 1, limits, &mut nodes)?;
+        for (index, service) in self.services.iter().enumerate() {
+            validate_node(
+                service,
+                &format!("services[{index}]"),
+                1,
+                limits,
+                &mut nodes,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -817,6 +832,69 @@ mod tests {
         )
         .unwrap();
         assert!(invalid.build(&registry).is_err());
+    }
+
+    #[test]
+    fn builds_services_from_json_and_runs_them_first() {
+        static SENSED: crate::blackboard::Key<bool> =
+            crate::blackboard::Key::new("test.config.sensed");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<()>("sense", |_| {
+                move |ctx: &mut Context<'_, ()>| {
+                    ctx.blackboard().set(&SENSED, true);
+                    Status::Success
+                }
+            })
+            .unwrap();
+        registry
+            .action::<()>("use_sense", |_| {
+                move |ctx: &mut Context<'_, ()>| {
+                    if ctx.blackboard_ref().get(&SENSED) == Some(&true) {
+                        Status::Success
+                    } else {
+                        Status::Failure
+                    }
+                }
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "root": {"type":"action","name":"use_sense"},
+                "services": [{"type":"action","name":"sense"}]
+            }"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+
+        assert_eq!(tree.service_count(), 1);
+        assert_eq!(tree.describe_services()[0].kind, Kind::Action);
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn validate_counts_services() {
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "root": {"type":"wait","duration_ms":1},
+                "services": [
+                    {"type":"wait","duration_ms":1},
+                    {"type":"wait","duration_ms":1}
+                ]
+            }"#,
+        )
+        .expect("valid spec");
+
+        let error = spec
+            .validate(&ValidationLimits {
+                max_depth: 2,
+                max_nodes: 2,
+            })
+            .expect_err("node limit");
+        assert_eq!(error.path(), Some("services[1]"));
     }
 
     #[test]
@@ -1525,6 +1603,7 @@ mod tests {
         assert!(text.contains("\"wait_for_event\""));
         assert!(text.contains("\"try_action\""));
         assert!(text.contains("\"async_action\""));
+        assert!(text.contains("\"services\""));
     }
 
     #[test]

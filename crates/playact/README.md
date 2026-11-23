@@ -623,6 +623,19 @@ let mut tree = spec.build(&registry)?;
   values deserialize into the key's value or event type at build time.
 - `utility_selector` branches reference score functions registered with
   `registry.score`; scores receive typed parameters and are re-evaluated every tick.
+
+`TreeSpec.services` declares nodes that run before the root on every tick:
+
+```json
+{
+  "root": {"type": "sequence", "children": []},
+  "services": [{"type": "action", "name": "sense_enemies"}]
+}
+```
+
+Services share the world, blackboard, and time; their return values are ignored. They
+are rebuilt with the tree on hot reload and remote refresh, and
+`with_state_preservation` restores service state by ID when IDs match.
 - `TreeSpec::validate(&ValidationLimits)` checks version, maximum depth, and node count
   before building. This is useful for remote or user-supplied configuration.
 - The optional `schema` feature exposes `TreeSpec::json_schema()` for editor completion
@@ -666,11 +679,12 @@ if watcher.poll()? {
 }
 ```
 
-A successful rebuild replaces the tree, preserves blackboard data, and resets node
-state. Enable `with_state_preservation(true)` to also restore own state by stable
-`NodeId` for nodes that still exist; renamed or removed IDs start from their reset
-state. Parse/build failures keep the old tree and return an error. Edits are debounced
-(200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver` for includes.
+A successful rebuild replaces the tree (root and configured services), preserves
+blackboard data, and resets node state. Enable `with_state_preservation(true)` to also
+restore own state by stable `NodeId` for nodes that still exist; renamed or removed IDs
+start from their reset state. Parse/build failures keep the old tree and return an
+error. Edits are debounced (200 ms by default). Use `json_with_resolver` /
+`with_parser_and_resolver` for includes.
 
 The watcher observes the root file only. Changes to included files do not trigger an
 event; call `reload_now()` or touch the root file.
@@ -691,11 +705,12 @@ loader.tree_mut().tick(&mut world, time);
 ```
 
 `RemoteTreeLoader` uses `reqwest::blocking`, supports ETag / Last-Modified, and keeps
-the old tree on refresh errors. A successful refresh preserves the blackboard and
-resets node state; `with_state_preservation(true)` also restores node state by stable
-`NodeId`, matching the hot-reload behavior. Requests happen on the calling thread; use
-a worker thread or a custom `Client` timeout in high-latency environments. Includes
-are available through `json_with_resolver` / `with_client_and_resolver`.
+the old tree on refresh errors. A successful refresh rebuilds the root and configured
+services, preserves the blackboard, and resets node state; `with_state_preservation(true)`
+also restores node state by stable `NodeId`, matching the hot-reload behavior. Requests
+happen on the calling thread; use a worker thread or a custom `Client` timeout in
+high-latency environments. Includes are available through `json_with_resolver` /
+`with_client_and_resolver`.
 
 Response bodies are limited to `MAX_REMOTE_CONFIG_BYTES` (1 MiB), must be UTF-8, and
 are checked with `TreeSpec::validate` using `ValidationLimits::default()` before build.
