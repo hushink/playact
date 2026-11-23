@@ -176,6 +176,10 @@ pub use remote_config::{
 };
 #[cfg(feature = "trace-record")]
 pub use replay::{TraceDiff, TraceRecord, TraceRecorder};
+/// Re-exported for deriving parameter schemas with
+/// [`config::NodeRegistry::describe_params`].
+#[cfg(feature = "schema")]
+pub use schemars;
 pub use scope::{ScopedKeySpec, ScopedSubtree};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;

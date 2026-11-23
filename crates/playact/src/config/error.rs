@@ -269,6 +269,13 @@ pub enum RegistryError {
         /// The duplicate name.
         name: String,
     },
+    /// Documentation was attached to a name that is not registered.
+    UnknownName {
+        /// Registration category, such as `action` or `score`.
+        category: &'static str,
+        /// The name that was not registered.
+        name: String,
+    },
 }
 
 impl fmt::Display for RegistryError {
@@ -279,6 +286,9 @@ impl fmt::Display for RegistryError {
             }
             Self::Duplicate { category, name } => {
                 write!(f, "duplicate {category} name `{name}`")
+            }
+            Self::UnknownName { category, name } => {
+                write!(f, "cannot describe unknown {category} `{name}`")
             }
         }
     }

@@ -733,6 +733,9 @@ are rebuilt with the tree on hot reload and remote refresh, and
   and external validation. `NodeRegistry::json_schema()` additionally injects the
   registered action, condition, predicate, score, key, custom, and subtree names as
   `enum` constraints, so completion matches what the application can build.
+  `NodeRegistry::describe` adds hover descriptions, and
+  `NodeRegistry::describe_params::<P>` adds a derived params schema with field
+  descriptions and validation keywords.
 - [`examples/schema_export.rs`](examples/schema_export.rs) writes that schema to
   `target/playact-schema.json`; the
   [configuration reference](docs/config.md#editor-completion) shows a VS Code mapping.
@@ -980,7 +983,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
-| `schema` | `TreeSpec::json_schema()` and `NodeRegistry::json_schema()` JSON Schema generation (requires `config`) |
+| `schema` | `TreeSpec::json_schema()` and `NodeRegistry::json_schema()` JSON Schema generation, plus `describe` / `describe_params` metadata (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
@@ -1040,7 +1043,8 @@ cargo run -p playact --example schema_export --features config,schema
   tree, restores both, and verifies that progress resumes without re-running a
   completed step.
 - `schema_export`: writes a registry-aware JSON Schema for editor completion of
-  action, condition, predicate, key, custom, and subtree names.
+  action, condition, predicate, key, custom, and subtree names, with optional
+  descriptions and derived parameter schemas.
 
 ## Testing and benchmarks
 

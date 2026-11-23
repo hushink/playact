@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+#[cfg(feature = "schema")]
+use serde_json::json;
 
 use crate::async_action::{AsyncAction, AsyncTask};
 use crate::blackboard::Key;
@@ -46,6 +48,62 @@ type BoxedStart<W> =
     Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send + 'static>;
 type SubtreeBuilder<W> =
     Box<dyn Fn(&Value) -> Result<SubtreeFactory<W>, ConfigBuildError> + Send + Sync>;
+
+#[cfg(feature = "schema")]
+type NodeDocs = HashMap<NodeCategory, HashMap<String, NodeDoc>>;
+
+/// Registry category addressed by [`NodeRegistry::describe`].
+///
+/// Available with the `schema` feature. `Condition` and `Predicate` are
+/// separate registrations even though both can be used by `guard`, `while`,
+/// `if_then_else`, and `wait_until`; descriptions from either category are
+/// merged into those fields.
+#[cfg(feature = "schema")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NodeCategory {
+    /// Closure action registered with [`NodeRegistry::action`].
+    Action,
+    /// Fallible action registered with [`NodeRegistry::try_action`].
+    TryAction,
+    /// Async action registered with [`NodeRegistry::async_action`].
+    AsyncAction,
+    /// Condition leaf registered with [`NodeRegistry::condition`].
+    Condition,
+    /// Predicate registered with [`NodeRegistry::predicate`].
+    Predicate,
+    /// Utility score registered with [`NodeRegistry::score`].
+    Score,
+    /// Custom node factory registered with [`NodeRegistry::custom`].
+    Custom,
+    /// Code-built subtree template registered with [`NodeRegistry::subtree`]
+    /// or [`NodeRegistry::subtree_with_params`].
+    Subtree,
+}
+
+#[cfg(feature = "schema")]
+impl NodeCategory {
+    const fn registry_name(self) -> &'static str {
+        match self {
+            Self::Action => "action",
+            Self::TryAction => "try action",
+            Self::AsyncAction => "async action",
+            Self::Condition => "condition",
+            Self::Predicate => "predicate",
+            Self::Score => "score",
+            Self::Custom => "custom",
+            Self::Subtree => "subtree",
+        }
+    }
+}
+
+/// Schema-only documentation attached to one registered name.
+#[cfg(feature = "schema")]
+#[derive(Debug, Clone, Default)]
+struct NodeDoc {
+    description: Option<String>,
+    params: Option<Value>,
+}
 
 /// Factory that turns typed params into an independent tick closure per node.
 ///
@@ -163,6 +221,8 @@ pub struct NodeRegistry<W: 'static> {
     async_actions: HashMap<String, ErasedAsyncActionFactory<W>>,
     custom: HashMap<String, Factory<W>>,
     subtrees: HashMap<String, SubtreeBuilder<W>>,
+    #[cfg(feature = "schema")]
+    docs: NodeDocs,
 }
 
 impl<W: 'static> NodeRegistry<W> {
@@ -183,6 +243,8 @@ impl<W: 'static> NodeRegistry<W> {
             async_actions: HashMap::new(),
             custom: HashMap::new(),
             subtrees: HashMap::new(),
+            #[cfg(feature = "schema")]
+            docs: HashMap::new(),
         }
     }
 
@@ -511,12 +573,15 @@ impl<W: 'static> NodeRegistry<W> {
     /// Requires the `schema` feature. Action, condition, predicate, score, key,
     /// custom, and subtree names become `enum` constraints on the matching
     /// fields, so editors complete the names this registry actually accepts.
-    /// Parameter shapes remain application-specific and are not included.
+    /// Descriptions and parameter schemas added with [`NodeRegistry::describe`]
+    /// and [`NodeRegistry::describe_params`] are injected as well.
     #[cfg(feature = "schema")]
     #[must_use]
     pub fn json_schema(&self) -> Value {
         let mut schema = crate::config::TreeSpec::json_schema();
         let actions = sorted_names(&self.actions);
+        let try_actions = sorted_names(&self.try_actions);
+        let async_actions = sorted_names(&self.async_actions);
         let conditions = sorted_names(&self.conditions);
         let mut predicates: Vec<String> = self
             .conditions
@@ -535,31 +600,50 @@ impl<W: 'static> NodeRegistry<W> {
         let custom = sorted_names(&self.custom);
         let subtrees = sorted_names(&self.subtrees);
 
-        if let Some(variant) = variant_mut(&mut schema, "action") {
-            set_string_enum(variant, "name", &actions);
-        }
-        if let Some(variant) = variant_mut(&mut schema, "try_action") {
-            set_string_enum(variant, "name", &sorted_names(&self.try_actions));
-        }
-        if let Some(variant) = variant_mut(&mut schema, "async_action") {
-            set_string_enum(variant, "name", &sorted_names(&self.async_actions));
-        }
-        if let Some(variant) = variant_mut(&mut schema, "condition") {
-            set_string_enum(variant, "name", &conditions);
-        }
+        let mut injection = SchemaInjection::new(&self.docs);
+        injection.variant(
+            &mut schema,
+            "action",
+            "name",
+            &actions,
+            &[NodeCategory::Action],
+        );
+        injection.variant(
+            &mut schema,
+            "try_action",
+            "name",
+            &try_actions,
+            &[NodeCategory::TryAction],
+        );
+        injection.variant(
+            &mut schema,
+            "async_action",
+            "name",
+            &async_actions,
+            &[NodeCategory::AsyncAction],
+        );
+        injection.variant(
+            &mut schema,
+            "condition",
+            "name",
+            &conditions,
+            &[NodeCategory::Condition],
+        );
         for kind in ["guard", "while", "if_then_else", "wait_until"] {
-            if let Some(variant) = variant_mut(&mut schema, kind) {
-                set_string_enum(variant, "condition", &predicates);
-            }
+            injection.variant(
+                &mut schema,
+                kind,
+                "condition",
+                &predicates,
+                &[NodeCategory::Condition, NodeCategory::Predicate],
+            );
         }
-        if let Some(variant) = variant_mut(&mut schema, "switch") {
-            set_string_enum(variant, "key", &switch_keys);
-        }
-        if let Some(variant) = variant_mut(&mut schema, "set_value") {
-            set_string_enum(variant, "key", &set_value_keys);
-        }
-        if let Some(variant) = variant_mut(&mut schema, "wait_for_event") {
-            set_string_enum(variant, "event", &event_keys);
+        for (kind, field, names) in [
+            ("switch", "key", &switch_keys),
+            ("set_value", "key", &set_value_keys),
+            ("wait_for_event", "event", &event_keys),
+        ] {
+            injection.variant(&mut schema, kind, field, names, &[]);
         }
         if let Some(variant) = variant_mut(&mut schema, "scoped") {
             set_array_item_enum(variant, "inputs", &scoped_keys);
@@ -569,15 +653,24 @@ impl<W: 'static> NodeRegistry<W> {
             set_array_item_enum(variant, "required", &contract_keys);
             set_array_item_enum(variant, "provided", &contract_keys);
         }
-        if let Some(variant) = variant_mut(&mut schema, "subtree") {
-            set_string_enum(variant, "template", &subtrees);
+        injection.variant(
+            &mut schema,
+            "subtree",
+            "template",
+            &subtrees,
+            &[NodeCategory::Subtree],
+        );
+        injection.variant(
+            &mut schema,
+            "custom",
+            "kind",
+            &custom,
+            &[NodeCategory::Custom],
+        );
+        if let Some(branch) = schema.pointer_mut("/$defs/UtilityBranchSpec") {
+            injection.field(branch, "score", &scores, &[NodeCategory::Score]);
         }
-        if let Some(variant) = variant_mut(&mut schema, "custom") {
-            set_string_enum(variant, "kind", &custom);
-        }
-        if let Some(branch) = schema.pointer_mut("/$defs/UtilityBranchSpec/properties/score") {
-            set_enum(branch, &scores);
-        }
+        injection.finish(&mut schema);
         schema
     }
 
@@ -603,6 +696,97 @@ impl<W: 'static> NodeRegistry<W> {
         });
         self.subtrees.insert(name, erased);
         Ok(())
+    }
+
+    /// Attaches an editor description to an already-registered name.
+    ///
+    /// Requires the `schema` feature. The description appears in
+    /// [`NodeRegistry::json_schema`] completions for the matching field.
+    /// Calling this again replaces the previous description; an empty
+    /// description is ignored.
+    ///
+    /// Returns [`RegistryError::UnknownName`] when `name` is not registered in
+    /// `category`.
+    #[cfg(feature = "schema")]
+    pub fn describe(
+        &mut self,
+        category: NodeCategory,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<(), RegistryError> {
+        let name = name.into();
+        self.ensure_describable(category, &name)?;
+        let doc = self
+            .docs
+            .entry(category)
+            .or_default()
+            .entry(name)
+            .or_default();
+        set_doc_description(doc, description.into());
+        Ok(())
+    }
+
+    /// Attaches a description and the JSON Schema of the registered params type.
+    ///
+    /// Requires the `schema` feature. `P` must match the params type used when
+    /// registering the factory; derive [`schemars::JsonSchema`] on that type
+    /// (or implement it manually). [`NodeRegistry::json_schema`] then places
+    /// the generated schema under `params` for this name, including field
+    /// descriptions and validation keywords. Recursive types are supported:
+    /// their definitions are moved into the root schema and references are
+    /// rewritten.
+    ///
+    /// An empty description is ignored, so this can also be used to attach only
+    /// the params schema. Returns [`RegistryError::UnknownName`] when `name` is
+    /// not registered in `category`.
+    #[cfg(feature = "schema")]
+    pub fn describe_params<P>(
+        &mut self,
+        category: NodeCategory,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<(), RegistryError>
+    where
+        P: schemars::JsonSchema,
+    {
+        let name = name.into();
+        self.ensure_describable(category, &name)?;
+        let params = params_schema::<P>();
+        let doc = self
+            .docs
+            .entry(category)
+            .or_default()
+            .entry(name)
+            .or_default();
+        set_doc_description(doc, description.into());
+        doc.params = Some(params);
+        Ok(())
+    }
+
+    #[cfg(feature = "schema")]
+    fn ensure_describable(&self, category: NodeCategory, name: &str) -> Result<(), RegistryError> {
+        if self.contains_name(category, name) {
+            Ok(())
+        } else {
+            Err(RegistryError::UnknownName {
+                category: category.registry_name(),
+                name: name.to_string(),
+            })
+        }
+    }
+
+    #[cfg(feature = "schema")]
+    fn contains_name(&self, category: NodeCategory, name: &str) -> bool {
+        match category {
+            NodeCategory::Action => self.actions.contains_key(name),
+            NodeCategory::TryAction => self.try_actions.contains_key(name),
+            NodeCategory::AsyncAction => self.async_actions.contains_key(name),
+            NodeCategory::Condition => self.conditions.contains_key(name),
+            NodeCategory::Predicate => self.predicates.contains_key(name),
+            NodeCategory::Score => self.scores.contains_key(name),
+            NodeCategory::Custom => self.custom.contains_key(name),
+            NodeCategory::Subtree => self.subtrees.contains_key(name),
+        }
     }
 
     pub(crate) fn build_action(
@@ -881,4 +1065,259 @@ fn set_enum(value: &mut Value, names: &[String]) {
             Value::Array(names.iter().cloned().map(Value::String).collect()),
         );
     }
+}
+
+#[cfg(feature = "schema")]
+fn set_doc_description(doc: &mut NodeDoc, description: String) {
+    if !description.trim().is_empty() {
+        doc.description = Some(description);
+    }
+}
+
+#[cfg(feature = "schema")]
+fn doc_description(docs: &NodeDocs, categories: &[NodeCategory], name: &str) -> Option<String> {
+    categories.iter().find_map(|category| {
+        docs.get(category)
+            .and_then(|entries| entries.get(name))
+            .and_then(|doc| doc.description.clone())
+    })
+}
+
+#[cfg(feature = "schema")]
+fn doc_params(docs: &NodeDocs, categories: &[NodeCategory], name: &str) -> Option<Value> {
+    categories.iter().find_map(|category| {
+        docs.get(category)
+            .and_then(|entries| entries.get(name))
+            .and_then(|doc| doc.params.clone())
+    })
+}
+
+#[cfg(feature = "schema")]
+fn params_schema<P>() -> Value
+where
+    P: schemars::JsonSchema,
+{
+    let schema = schemars::generate::SchemaSettings::draft2020_12()
+        .into_generator()
+        .into_root_schema_for::<P>();
+    let mut schema = Value::from(schema);
+    if let Some(object) = schema.as_object_mut() {
+        object.remove("$schema");
+    }
+    schema
+}
+
+#[cfg(feature = "schema")]
+struct SchemaInjection<'a> {
+    docs: &'a NodeDocs,
+    defs: HashMap<String, Value>,
+    counter: usize,
+}
+
+#[cfg(feature = "schema")]
+impl<'a> SchemaInjection<'a> {
+    fn new(docs: &'a NodeDocs) -> Self {
+        Self {
+            docs,
+            defs: HashMap::new(),
+            counter: 0,
+        }
+    }
+
+    fn variant(
+        &mut self,
+        schema: &mut Value,
+        kind: &str,
+        field: &str,
+        names: &[String],
+        categories: &[NodeCategory],
+    ) {
+        if let Some(variant) = variant_mut(schema, kind) {
+            self.field(variant, field, names, categories);
+        }
+    }
+
+    fn field(
+        &mut self,
+        node: &mut Value,
+        field: &str,
+        names: &[String],
+        categories: &[NodeCategory],
+    ) {
+        set_string_enum(node, field, names);
+        if names.is_empty() {
+            return;
+        }
+
+        let descriptions: Vec<Option<String>> = names
+            .iter()
+            .map(|name| doc_description(self.docs, categories, name))
+            .collect();
+        if descriptions.iter().any(Option::is_some) {
+            let entries: Vec<Value> = names
+                .iter()
+                .zip(descriptions)
+                .map(|(name, description)| {
+                    let mut entry = serde_json::Map::new();
+                    entry.insert(String::from("const"), Value::String(name.clone()));
+                    if let Some(description) = description {
+                        entry.insert(String::from("description"), Value::String(description));
+                    }
+                    Value::Object(entry)
+                })
+                .collect();
+            if let Some(property) = node
+                .pointer_mut(&format!("/properties/{field}"))
+                .and_then(Value::as_object_mut)
+            {
+                property.insert(String::from("oneOf"), Value::Array(entries));
+            }
+        }
+
+        let docs = self.docs;
+        let defs = &mut self.defs;
+        let counter = &mut self.counter;
+        let clauses: Vec<Value> = names
+            .iter()
+            .filter_map(|name| {
+                let params = doc_params(docs, categories, name)?;
+                *counter += 1;
+                let params = relocate_defs(params, &format!("playact_params_{}", *counter), defs);
+                Some(json!({
+                    "if": {
+                        "properties": { (field): { "const": name } },
+                        "required": [field]
+                    },
+                    "then": { "properties": { "params": params } }
+                }))
+            })
+            .collect();
+
+        if clauses.is_empty() {
+            return;
+        }
+        let object = node.as_object_mut().expect("schema node object");
+        match object
+            .entry(String::from("allOf"))
+            .or_insert_with(|| Value::Array(Vec::new()))
+        {
+            Value::Array(all_of) => all_of.extend(clauses),
+            entry => *entry = Value::Array(clauses),
+        }
+    }
+
+    fn finish(self, schema: &mut Value) {
+        if self.defs.is_empty() {
+            return;
+        }
+        if let Some(defs) = schema.pointer_mut("/$defs").and_then(Value::as_object_mut) {
+            for (name, definition) in self.defs {
+                defs.insert(name, definition);
+            }
+        }
+    }
+}
+
+/// Moves `$defs` from a generated params schema into the root schema.
+///
+/// Schemars inlines the root type and uses `$defs` for nested types. Recursion
+/// back to the root is represented as `$ref: "#"`, which would resolve to the
+/// whole `TreeSpec` schema after embedding. Such roots are moved into `$defs`
+/// as well and their self-references are rewritten.
+#[cfg(feature = "schema")]
+fn relocate_defs(mut params: Value, prefix: &str, root_defs: &mut HashMap<String, Value>) -> Value {
+    let root_name = has_root_ref(&params).then(|| unique_def_name(root_defs, prefix, "root"));
+    if let Some(root_name) = &root_name {
+        // Reserve the root name so a nested definition cannot claim it.
+        root_defs.insert(root_name.clone(), Value::Null);
+    }
+
+    let defs = params
+        .as_object_mut()
+        .and_then(|object| object.remove("$defs"))
+        .and_then(|defs| defs.as_object().cloned());
+    if let Some(defs) = defs {
+        let mut mapping = HashMap::with_capacity(defs.len());
+        for key in defs.keys() {
+            mapping.insert(key.clone(), unique_def_name(root_defs, prefix, key));
+        }
+        for (key, mut definition) in defs {
+            let Some(unique) = mapping.get(&key).cloned() else {
+                continue;
+            };
+            rewrite_refs(&mut definition, &mapping, root_name.as_deref());
+            root_defs.insert(unique, definition);
+        }
+        rewrite_refs(&mut params, &mapping, root_name.as_deref());
+    } else if root_name.is_some() {
+        rewrite_refs(&mut params, &HashMap::new(), root_name.as_deref());
+    }
+
+    if let Some(root_name) = root_name {
+        let reference = format!("#/$defs/{}", escape_pointer_token(&root_name));
+        root_defs.insert(root_name, params);
+        return json!({ "$ref": reference });
+    }
+    params
+}
+
+#[cfg(feature = "schema")]
+fn has_root_ref(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.get("$ref").and_then(Value::as_str) == Some("#")
+                || object.values().any(has_root_ref)
+        }
+        Value::Array(array) => array.iter().any(has_root_ref),
+        _ => false,
+    }
+}
+
+#[cfg(feature = "schema")]
+fn unique_def_name(root_defs: &HashMap<String, Value>, prefix: &str, key: &str) -> String {
+    let base = format!("{prefix}_{key}");
+    let mut candidate = base.clone();
+    let mut suffix = 1;
+    while root_defs.contains_key(&candidate) {
+        candidate = format!("{base}_{suffix}");
+        suffix += 1;
+    }
+    candidate
+}
+
+#[cfg(feature = "schema")]
+fn rewrite_refs(value: &mut Value, mapping: &HashMap<String, String>, root_name: Option<&str>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::String(reference)) = object.get_mut("$ref") {
+                if reference == "#" {
+                    if let Some(root_name) = root_name {
+                        *reference = format!("#/$defs/{}", escape_pointer_token(root_name));
+                    }
+                } else if let Some(rest) = reference.strip_prefix("#/$defs/") {
+                    let (token, suffix) = rest
+                        .find('/')
+                        .map_or((rest, ""), |index| (&rest[..index], &rest[index..]));
+                    let key = token.replace("~1", "/").replace("~0", "~");
+                    if let Some(unique) = mapping.get(&key) {
+                        *reference = format!("#/$defs/{}{}", escape_pointer_token(unique), suffix);
+                    }
+                }
+            }
+            for child in object.values_mut() {
+                rewrite_refs(child, mapping, root_name);
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                rewrite_refs(child, mapping, root_name);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(feature = "schema")]
+fn escape_pointer_token(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
 }

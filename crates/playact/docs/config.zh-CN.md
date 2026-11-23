@@ -254,7 +254,8 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
   外部校验使用。
 - `NodeRegistry::json_schema()`（`schema` feature）在相同 schema 中把已注册的
   action、condition、predicate、score、key、custom 与 subtree 名称注入为 `enum`，
-  使补全内容与实际可构建内容一致。
+  使补全内容与实际可构建内容一致。`describe` 添加悬停描述，
+  `describe_params::<P>` 添加派生的参数 schema。
 - 可选的热重载与远程配置加载器走同一套 `TreeSpec` 流程，因此校验与路径错误同样适用。
 
 ## 编辑器补全
@@ -282,7 +283,31 @@ VS Code 可在 `.vscode/settings.json` 中配置：
 
 配置后，`action`、`try_action`、`async_action`、`condition`、predicate 字段、
 各类 key、scoped/contract key、custom kind 与 subtree template 都会按注册表补全。
-应用自定义的 `params` 结构不在 schema 中，而是在构建树时校验。
+描述与参数 schema 是可选的：
+
+```rust
+use playact::config::NodeCategory;
+
+#[derive(serde::Deserialize, playact::schemars::JsonSchema)]
+struct PatrolParams {
+    /// Waypoints visited before the loop restarts.
+    waypoints: u32,
+    speed: f32,
+}
+
+// 注册 action 工厂之后：
+registry.describe_params::<PatrolParams>(
+    NodeCategory::Action,
+    "patrol",
+    "Walk the patrol route and report completion.",
+)?;
+registry.describe(NodeCategory::Action, "attack", "Strike the current target.")?;
+```
+
+`describe` 只添加悬停描述；`describe_params::<P>` 还会从 `P` 生成 schema 并放入
+`params`，因此字段描述、类型、必填项与校验关键字在编辑器中同样生效。`schema`
+feature 会重导出 `playact::schemars`，无需额外声明依赖。递归参数类型也受支持：
+其定义会迁移到根 schema 并重写引用。空描述会被忽略。
 
 注册表变化后重新生成即可，例如放入构建或 pre-commit 步骤。若把 schema 提交到仓库，
 相对 `url` 会按工作区目录解析。

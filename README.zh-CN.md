@@ -140,7 +140,7 @@ cargo run -p playact --example schema_export --features config,schema
 - `save_game`：把有状态树与 typed 黑板保存为 JSON，重建树后恢复两者，并验证
   行为从保存进度继续、已完成的步骤不会重跑。
 - `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
-  predicate、key、custom 与 subtree 名称。
+  predicate、key、custom 与 subtree 名称，并演示描述与派生参数 schema。
 
 ## Feature 矩阵
 
@@ -149,7 +149,7 @@ cargo run -p playact --example schema_export --features config,schema
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
-| `schema` | `TreeSpec` 与已填充 `NodeRegistry` 的 JSON Schema 生成（依赖 `config`） |
+| `schema` | `TreeSpec` 与已填充 `NodeRegistry` 的 JSON Schema 生成，支持可选描述与参数 schema（依赖 `config`） |
 | `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | 结构化 trace 录制与 replay 对比（依赖 `std`） |

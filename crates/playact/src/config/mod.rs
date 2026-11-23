@@ -18,6 +18,8 @@ pub mod registry;
 
 pub use error::{ConfigBuildError, ConfigBuildErrorKind, ConfigError, RegistryError};
 pub use include::{FsIncludeResolver, IncludeResolver};
+#[cfg(feature = "schema")]
+pub use registry::NodeCategory;
 pub use registry::NodeRegistry;
 
 /// Configuration text parser. Automatically provided by the JSON/TOML/YAML/RON constructors.
@@ -745,6 +747,8 @@ where
 mod tests {
     use crate::blackboard::Key;
     use crate::builder::BehaviorTreeBuilder;
+    #[cfg(feature = "schema")]
+    use crate::composite::Selector;
     use crate::context::Context;
     use crate::event::EventKey;
     use crate::node::{BoxedNode, Kind, Node};
@@ -753,6 +757,26 @@ mod tests {
     use crate::time::Time;
 
     use super::*;
+
+    #[cfg(feature = "schema")]
+    #[allow(dead_code)]
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    struct PatrolParams {
+        /// Number of waypoints to visit.
+        waypoints: u32,
+        /// Movement speed multiplier.
+        speed: f32,
+    }
+
+    #[cfg(feature = "schema")]
+    #[allow(dead_code)]
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    struct RecursiveParams {
+        /// Remaining depth.
+        depth: u32,
+        /// Nested children.
+        children: Vec<RecursiveParams>,
+    }
 
     #[cfg(feature = "schema")]
     fn schema_variant<'a>(schema: &'a serde_json::Value, kind: &str) -> &'a serde_json::Value {
@@ -779,6 +803,52 @@ mod tests {
             .iter()
             .map(|value| value.as_str().expect("enum string").to_string())
             .collect()
+    }
+
+    #[cfg(feature = "schema")]
+    fn one_of_entry<'a>(
+        variant: &'a serde_json::Value,
+        field: &str,
+        name: &str,
+    ) -> &'a serde_json::Value {
+        variant
+            .pointer(&format!("/properties/{field}/oneOf"))
+            .and_then(serde_json::Value::as_array)
+            .expect("oneOf entries")
+            .iter()
+            .find(|entry| entry.pointer("/const").and_then(serde_json::Value::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("missing oneOf entry `{name}`"))
+    }
+
+    #[cfg(feature = "schema")]
+    fn params_clause<'a>(
+        node: &'a serde_json::Value,
+        field: &str,
+        name: &str,
+    ) -> &'a serde_json::Value {
+        node.pointer("/allOf")
+            .and_then(serde_json::Value::as_array)
+            .expect("allOf clauses")
+            .iter()
+            .find(|clause| {
+                clause
+                    .pointer(&format!("/if/properties/{field}/const"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(name)
+            })
+            .unwrap_or_else(|| panic!("missing params clause `{name}`"))
+    }
+
+    #[cfg(feature = "schema")]
+    fn resolve_ref<'a>(
+        root: &'a serde_json::Value,
+        value: &'a serde_json::Value,
+    ) -> &'a serde_json::Value {
+        value
+            .pointer("/$ref")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|reference| root.pointer(reference.strip_prefix('#').unwrap_or(reference)))
+            .unwrap_or(value)
     }
 
     fn ok_subtree() -> SubtreeFactory<()> {
@@ -2157,6 +2227,312 @@ mod tests {
         assert!(
             schema_variant(&schema, "subtree")
                 .pointer("/properties/template/enum")
+                .is_none()
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn registry_schema_injects_descriptions_and_params() {
+        struct DoneTask;
+
+        impl crate::async_action::AsyncTask for DoneTask {
+            fn poll(&mut self) -> Status {
+                Status::Success
+            }
+
+            fn cancel(&mut self) {}
+        }
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<PatrolParams>("patrol", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .try_action::<(), &'static str>("risky", |_| |_: &mut Context<'_, ()>| Err("boom"))
+            .unwrap();
+        registry
+            .async_action::<()>("remote", |_| {
+                |_: &mut Context<'_, ()>| -> Box<dyn crate::async_action::AsyncTask> {
+                    Box::new(DoneTask)
+                }
+            })
+            .unwrap();
+        registry
+            .action::<()>("attack", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .condition::<()>("always", |_| |_: &Context<'_, ()>| true)
+            .unwrap();
+        registry
+            .predicate::<()>("flag", |_| |_: &Context<'_, ()>| true)
+            .unwrap();
+        registry
+            .score::<PatrolParams>("morale", |_| |_: &Context<'_, ()>| 1.0)
+            .unwrap();
+        registry
+            .custom::<PatrolParams>(
+                "combo",
+                |_params: PatrolParams, children: Vec<BoxedNode<()>>| {
+                    Ok(Box::new(Selector::new(children)))
+                },
+            )
+            .unwrap();
+        registry.subtree("idle", ok_subtree()).unwrap();
+        registry
+            .subtree_with_params::<PatrolParams>("route", |_params| ok_subtree())
+            .unwrap();
+
+        registry
+            .describe_params::<PatrolParams>(
+                NodeCategory::Action,
+                "patrol",
+                "Walk the patrol route.",
+            )
+            .unwrap();
+        registry
+            .describe(NodeCategory::Action, "attack", "Strike the current target.")
+            .unwrap();
+        registry
+            .describe(NodeCategory::TryAction, "risky", "May fail.")
+            .unwrap();
+        registry
+            .describe(
+                NodeCategory::AsyncAction,
+                "remote",
+                "Runs in the background.",
+            )
+            .unwrap();
+        registry
+            .describe(NodeCategory::Condition, "always", "Always true.")
+            .unwrap();
+        registry
+            .describe(NodeCategory::Predicate, "flag", "A flag is set.")
+            .unwrap();
+        registry
+            .describe_params::<PatrolParams>(NodeCategory::Score, "morale", "Prefers high morale.")
+            .unwrap();
+        registry
+            .describe_params::<PatrolParams>(
+                NodeCategory::Custom,
+                "combo",
+                "Tries children in order.",
+            )
+            .unwrap();
+        registry
+            .describe(NodeCategory::Subtree, "idle", "Idle loop.")
+            .unwrap();
+        registry
+            .describe_params::<PatrolParams>(NodeCategory::Subtree, "route", "Route loop.")
+            .unwrap();
+
+        let schema = registry.json_schema();
+        let action = schema_variant(&schema, "action");
+
+        assert_eq!(
+            one_of_entry(action, "name", "patrol")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Walk the patrol route.")
+        );
+        assert_eq!(
+            one_of_entry(action, "name", "attack")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Strike the current target.")
+        );
+
+        let patrol_params = resolve_ref(
+            &schema,
+            params_clause(action, "name", "patrol")
+                .pointer("/then/properties/params")
+                .expect("patrol params"),
+        );
+        assert_eq!(
+            patrol_params
+                .pointer("/properties/waypoints/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Number of waypoints to visit.")
+        );
+        assert!(patrol_params.pointer("/properties/speed").is_some());
+        assert!(patrol_params.pointer("/$schema").is_none());
+        assert!(
+            action
+                .pointer("/allOf")
+                .and_then(serde_json::Value::as_array)
+                .expect("action clauses")
+                .iter()
+                .all(|clause| {
+                    clause
+                        .pointer("/if/properties/name/const")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("attack")
+                })
+        );
+
+        assert_eq!(
+            one_of_entry(schema_variant(&schema, "try_action"), "name", "risky")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("May fail.")
+        );
+        assert_eq!(
+            one_of_entry(schema_variant(&schema, "async_action"), "name", "remote")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Runs in the background.")
+        );
+
+        let condition = schema_variant(&schema, "condition");
+        assert_eq!(
+            one_of_entry(condition, "name", "always")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Always true.")
+        );
+
+        let guard = schema_variant(&schema, "guard");
+        assert_eq!(
+            one_of_entry(guard, "condition", "always")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Always true.")
+        );
+        assert_eq!(
+            one_of_entry(guard, "condition", "flag")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("A flag is set.")
+        );
+
+        let branch = schema
+            .pointer("/$defs/UtilityBranchSpec")
+            .expect("branch def");
+        assert_eq!(
+            one_of_entry(branch, "score", "morale")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Prefers high morale.")
+        );
+        let morale_params = resolve_ref(
+            &schema,
+            params_clause(branch, "score", "morale")
+                .pointer("/then/properties/params")
+                .expect("morale params"),
+        );
+        assert!(morale_params.pointer("/properties/waypoints").is_some());
+
+        let custom = schema_variant(&schema, "custom");
+        assert_eq!(
+            one_of_entry(custom, "kind", "combo")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Tries children in order.")
+        );
+        assert!(
+            custom
+                .pointer("/allOf")
+                .and_then(serde_json::Value::as_array)
+                .expect("custom clauses")
+                .iter()
+                .any(|clause| {
+                    clause
+                        .pointer("/if/properties/kind/const")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("combo")
+                })
+        );
+
+        let subtree = schema_variant(&schema, "subtree");
+        assert_eq!(
+            one_of_entry(subtree, "template", "idle")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Idle loop.")
+        );
+        assert_eq!(
+            one_of_entry(subtree, "template", "route")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Route loop.")
+        );
+        let route_params = resolve_ref(
+            &schema,
+            params_clause(subtree, "template", "route")
+                .pointer("/then/properties/params")
+                .expect("route params"),
+        );
+        assert!(route_params.pointer("/properties/waypoints").is_some());
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn registry_schema_relocates_recursive_param_defs() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<RecursiveParams>("grow", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .describe_params::<RecursiveParams>(NodeCategory::Action, "grow", "Grows a tree.")
+            .unwrap();
+
+        let schema = registry.json_schema();
+        let params = params_clause(schema_variant(&schema, "action"), "name", "grow")
+            .pointer("/then/properties/params")
+            .expect("recursive params");
+        assert!(params.pointer("/$defs").is_none());
+        let reference = params
+            .pointer("/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("recursive params reference");
+        let definition_name = reference
+            .strip_prefix("#/$defs/")
+            .expect("definition reference");
+        assert!(
+            definition_name.starts_with("playact_params_"),
+            "{definition_name}"
+        );
+
+        let definition = schema
+            .pointer(&format!("/$defs/{definition_name}"))
+            .expect("relocated definition");
+        assert!(definition.pointer("/properties/depth").is_some());
+        let child_ref = definition
+            .pointer("/properties/children/items/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("child reference");
+        assert_eq!(child_ref, reference);
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn describe_rejects_unknown_names_and_ignores_empty_descriptions() {
+        let mut registry = NodeRegistry::<()>::new();
+        match registry.describe(NodeCategory::Action, "missing", "text") {
+            Err(RegistryError::UnknownName { category, name }) => {
+                assert_eq!(category, "action");
+                assert_eq!(name, "missing");
+            }
+            other => panic!("unexpected describe result: {other:?}"),
+        }
+        match registry.describe_params::<()>(NodeCategory::Score, "missing", "text") {
+            Err(RegistryError::UnknownName { category, name }) => {
+                assert_eq!(category, "score");
+                assert_eq!(name, "missing");
+            }
+            other => panic!("unexpected describe_params result: {other:?}"),
+        }
+
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .describe(NodeCategory::Action, "ok", "   ")
+            .unwrap();
+        let schema = registry.json_schema();
+        assert!(
+            schema_variant(&schema, "action")
+                .pointer("/properties/name/oneOf")
                 .is_none()
         );
     }

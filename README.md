@@ -148,7 +148,8 @@ cargo run -p playact --example schema_export --features config,schema
   tree, restores both, and verifies that progress resumes without re-running a
   completed step.
 - `schema_export`: writes a registry-aware JSON Schema for editor completion of
-  action, condition, predicate, key, custom, and subtree names.
+  action, condition, predicate, key, custom, and subtree names, with optional
+  descriptions and derived parameter schemas.
 
 ## Feature flags
 
@@ -157,7 +158,7 @@ cargo run -p playact --example schema_export --features config,schema
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
-| `schema` | JSON Schema generation for `TreeSpec` and for a populated `NodeRegistry` (requires `config`) |
+| `schema` | JSON Schema generation for `TreeSpec` and a populated `NodeRegistry`, with optional descriptions and params schemas (requires `config`) |
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |

@@ -1022,7 +1022,25 @@ let schema = registry.json_schema();          // 注入该注册表接受的名�
 `NodeRegistry::json_schema()` 以 `TreeSpec::json_schema()` 为基础，把 action、
 condition、predicate、score、key、scoped/contract key、custom 与 subtree template
 字段转换为 `enum` 约束。编辑器因此只补全该注册表真正能构建的名称，配置加载前就能
-发现拼写错误。参数结构仍由应用定义，不包含在 schema 中。
+发现拼写错误。
+
+描述与参数 schema 是可选的：
+
+```rust
+use playact::config::NodeCategory;
+
+registry.describe(NodeCategory::Action, "patrol", "Walk the patrol route.")?;
+registry.describe_params::<PatrolParams>(
+    NodeCategory::Action,
+    "patrol",
+    "Walk the patrol route.",
+)?;
+```
+
+`describe` 添加悬停描述；`describe_params::<P>` 还会通过
+`playact::schemars::JsonSchema` 从 `P` 生成 schema 并放入 `params`，包含字段描述与
+校验关键字。递归参数类型也受支持。完整编辑器配置见
+[配置参考](config.zh-CN.md#编辑器补全)。
 
 ### 热重载
 

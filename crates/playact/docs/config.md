@@ -263,6 +263,8 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 - `NodeRegistry::json_schema()` (feature `schema`) returns the same schema with
   the registered action, condition, predicate, score, key, custom, and subtree
   names injected as `enum` values, so completion matches what actually builds.
+  `describe` adds hover descriptions and `describe_params::<P>` adds the derived
+  params schema.
 - The optional hot-reload and remote-config loaders rebuild through the same
   `TreeSpec` pipeline, so validation and path errors apply there too.
 
@@ -291,8 +293,34 @@ argument to write it elsewhere. VS Code can map it in `.vscode/settings.json`:
 
 With this mapping, `action`, `try_action`, `async_action`, `condition`,
 predicate fields, keys, scoped/contract keys, custom kinds, and subtree
-templates complete from the registry. Application-defined `params` shapes are
-not in the schema; they are validated when the tree is built.
+templates complete from the registry. Descriptions and parameter schemas are
+opt-in:
+
+```rust
+use playact::config::NodeCategory;
+
+#[derive(serde::Deserialize, playact::schemars::JsonSchema)]
+struct PatrolParams {
+    /// Waypoints visited before the loop restarts.
+    waypoints: u32,
+    speed: f32,
+}
+
+// After registering the action factory:
+registry.describe_params::<PatrolParams>(
+    NodeCategory::Action,
+    "patrol",
+    "Walk the patrol route and report completion.",
+)?;
+registry.describe(NodeCategory::Action, "attack", "Strike the current target.")?;
+```
+
+`describe` adds hover text; `describe_params::<P>` also derives a schema from
+`P` and embeds it under `params`, so field descriptions, types, required fields,
+and validation keywords apply in the editor. `playact::schemars` is re-exported
+by the `schema` feature, so the derive does not need a separate dependency.
+Recursive parameter types are supported: their definitions are moved into the
+root schema and references are rewritten. Empty descriptions are ignored.
 
 Regenerate the file whenever the registry changes, for example as a build or
 pre-commit step. If the schema is committed, relative `url` values resolve

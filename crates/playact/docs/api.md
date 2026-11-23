@@ -1060,8 +1060,26 @@ let schema = registry.json_schema();          // adds the names this registry ac
 action, condition, predicate, score, key, scoped/contract key, custom, and
 subtree-template fields into `enum` constraints. Editors then complete only the
 names that this registry can actually build, which catches typos before the
-configuration is loaded. Parameter shapes stay application-defined and are not
-included.
+configuration is loaded.
+
+Descriptions and parameter schemas are opt-in:
+
+```rust
+use playact::config::NodeCategory;
+
+registry.describe(NodeCategory::Action, "patrol", "Walk the patrol route.")?;
+registry.describe_params::<PatrolParams>(
+    NodeCategory::Action,
+    "patrol",
+    "Walk the patrol route.",
+)?;
+```
+
+`describe` adds hover text. `describe_params::<P>` also derives a schema from
+`P` (via `playact::schemars::JsonSchema`) and attaches it under `params`,
+including field descriptions and validation keywords. Recursive parameter types
+are supported. See the [configuration reference](config.md#editor-completion)
+for a complete editor setup.
 
 ### Hot reload
 
