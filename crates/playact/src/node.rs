@@ -146,6 +146,56 @@ impl Kind {
         }
     }
 
+    /// Looks up a built-in kind by the name returned from [`Kind::as_str`].
+    ///
+    /// Returns `None` for unknown names and for custom kinds: [`Kind::Custom`]
+    /// stores a `'static` name, so an owned name from JSON cannot be turned into
+    /// one safely. Custom kinds therefore serialize but do not deserialize.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "sequence" => Self::Sequence,
+            "reactive_sequence" => Self::ReactiveSequence,
+            "selector" => Self::Selector,
+            "reactive_selector" => Self::ReactiveSelector,
+            "random_selector" => Self::RandomSelector,
+            "weighted_random_selector" => Self::WeightedRandomSelector,
+            "utility_selector" => Self::UtilitySelector,
+            "guard" => Self::Guard,
+            "if_then_else" => Self::IfThenElse,
+            "switch" => Self::Switch,
+            "parallel" => Self::Parallel,
+            "mem_parallel" => Self::MemParallel,
+            "race" => Self::Race,
+            "inverter" => Self::Inverter,
+            "always_succeed" => Self::AlwaysSucceed,
+            "always_fail" => Self::AlwaysFail,
+            "repeat" => Self::Repeat,
+            "retry" => Self::Retry,
+            "until_success" => Self::UntilSuccess,
+            "until_failure" => Self::UntilFailure,
+            "probability" => Self::Probability,
+            "while" => Self::While,
+            "cooldown" => Self::Cooldown,
+            "timeout" => Self::Timeout,
+            "limiter" => Self::Limiter,
+            "throttle" => Self::Throttle,
+            "wait" => Self::Wait,
+            "wait_until" => Self::WaitUntil,
+            "wait_for_event" => Self::WaitForEvent,
+            "action" => Self::Action,
+            "try_action" => Self::TryAction,
+            "async_action" => Self::AsyncAction,
+            "condition" => Self::Condition,
+            "set_value" => Self::SetValue,
+            "subtree_slot" => Self::SubtreeSlot,
+            "contract" => Self::Contract,
+            "scoped_subtree" => Self::ScopedSubtree,
+            "tree" => Self::Tree,
+            _ => return None,
+        })
+    }
+
     /// Whether this is a custom type tag.
     #[must_use]
     pub const fn is_custom(self) -> bool {
@@ -159,13 +209,51 @@ impl fmt::Display for Kind {
     }
 }
 
+#[cfg(feature = "diff-serde")]
+impl serde::Serialize for Kind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "diff-serde")]
+impl<'de> serde::Deserialize<'de> for Kind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct KindVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for KindVisitor {
+            type Value = Kind;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a built-in node kind name")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Kind, E>
+            where
+                E: serde::de::Error,
+            {
+                Kind::from_name(value)
+                    .ok_or_else(|| E::custom(alloc::format!("unknown node kind `{value}`")))
+            }
+        }
+
+        deserializer.deserialize_str(KindVisitor)
+    }
+}
+
 /// Stable, user-assigned node identity.
 ///
 /// Names are display labels and may change; a `NodeId` is intended for
 /// snapshots, metrics, debugging tools, and configuration reloads that need to
 /// recognize the same logical node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NodeId(String);
 
 impl NodeId {
@@ -381,3 +469,69 @@ pub trait Node<W>: Send {
 /// Heterogeneous trees require dynamic dispatch; `Send` lets the tree move to a
 /// thread pool or worker thread.
 pub type BoxedNode<W> = Box<dyn Node<W> + Send>;
+
+#[cfg(test)]
+mod tests {
+    use super::Kind;
+
+    const BUILT_INS: &[Kind] = &[
+        Kind::Sequence,
+        Kind::ReactiveSequence,
+        Kind::Selector,
+        Kind::ReactiveSelector,
+        Kind::RandomSelector,
+        Kind::WeightedRandomSelector,
+        Kind::UtilitySelector,
+        Kind::Guard,
+        Kind::IfThenElse,
+        Kind::Switch,
+        Kind::Parallel,
+        Kind::MemParallel,
+        Kind::Race,
+        Kind::Inverter,
+        Kind::AlwaysSucceed,
+        Kind::AlwaysFail,
+        Kind::Repeat,
+        Kind::Retry,
+        Kind::UntilSuccess,
+        Kind::UntilFailure,
+        Kind::Probability,
+        Kind::While,
+        Kind::Cooldown,
+        Kind::Timeout,
+        Kind::Limiter,
+        Kind::Throttle,
+        Kind::Wait,
+        Kind::WaitUntil,
+        Kind::WaitForEvent,
+        Kind::Action,
+        Kind::TryAction,
+        Kind::AsyncAction,
+        Kind::Condition,
+        Kind::SetValue,
+        Kind::SubtreeSlot,
+        Kind::Contract,
+        Kind::ScopedSubtree,
+        Kind::Tree,
+    ];
+
+    #[test]
+    fn from_name_roundtrips_built_in_kinds() {
+        for kind in BUILT_INS {
+            assert_eq!(Kind::from_name(kind.as_str()), Some(*kind));
+        }
+        assert_eq!(Kind::from_name("npc_ai"), None);
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn kind_json_roundtrips_built_ins_and_rejects_custom_names() {
+        for kind in BUILT_INS {
+            let json = serde_json::to_string(kind).expect("serialize kind");
+            assert_eq!(json, alloc::format!("\"{}\"", kind.as_str()));
+            let parsed: Kind = serde_json::from_str(&json).expect("deserialize kind");
+            assert_eq!(parsed, *kind);
+        }
+        assert!(serde_json::from_str::<Kind>("\"npc_ai\"").is_err());
+    }
+}

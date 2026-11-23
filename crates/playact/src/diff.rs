@@ -14,7 +14,7 @@ use crate::tree::{BehaviorTree, NodePath, TreeDescription};
 
 /// A node referenced by a [`TreeDiff`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DiffNode {
     /// Stable identity.
     pub id: NodeId,
@@ -23,20 +23,18 @@ pub struct DiffNode {
     /// Display name.
     pub name: String,
     /// Node type.
-    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
     pub kind: Kind,
 }
 
 /// A node whose structural path changed between two trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MovedNode {
     /// Stable identity.
     pub id: NodeId,
     /// Display name from the new tree.
     pub name: String,
     /// Node type from the new tree.
-    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
     pub kind: Kind,
     /// Path in the old tree.
     pub from: NodePath,
@@ -46,7 +44,7 @@ pub struct MovedNode {
 
 /// A node whose name or kind changed without moving.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RenamedNode {
     /// Stable identity.
     pub id: NodeId,
@@ -57,10 +55,8 @@ pub struct RenamedNode {
     /// Display name in the new tree.
     pub new_name: String,
     /// Node type in the old tree.
-    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
     pub old_kind: Kind,
     /// Node type in the new tree.
-    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
     pub new_kind: Kind,
 }
 
@@ -73,7 +69,7 @@ pub struct RenamedNode {
 /// A path change is reported as `moved` even when the name or kind changed too;
 /// `renamed` covers nodes that stayed at the same path.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TreeDiff {
     /// IDs present in the new tree but not the old one.
     pub added: Vec<DiffNode>,
@@ -163,14 +159,16 @@ impl TreeDiff {
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("TreeDiff serialization cannot fail")
     }
-}
 
-#[cfg(feature = "diff-serde")]
-fn serialize_kind<S>(kind: &Kind, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(kind.as_str())
+    /// Parses a diff from JSON produced by [`TreeDiff::to_json`].
+    ///
+    /// Requires the `diff-serde` feature. Custom node kinds cannot be restored
+    /// because [`Kind::Custom`] borrows a `'static`
+    /// name; such a payload returns an error.
+    #[cfg(feature = "diff-serde")]
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
 }
 
 /// A diff stored in a [`DiffHistory`] with the revision assigned when it was
@@ -304,6 +302,32 @@ impl DiffHistory {
     #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("DiffHistory serialization cannot fail")
+    }
+
+    /// Parses a history from JSON produced by [`DiffHistory::to_json`].
+    ///
+    /// Requires the `diff-serde` feature. Stored revisions are preserved; the
+    /// next push continues after the largest revision in the payload. The
+    /// restored limit is the number of entries, or 1 for an empty history; call
+    /// [`set_limit`](DiffHistory::set_limit) to choose a different bound.
+    #[cfg(feature = "diff-serde")]
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        #[derive(serde::Deserialize)]
+        struct JsonEntry {
+            revision: u64,
+            diff: TreeDiff,
+        }
+
+        let entries: Vec<JsonEntry> = serde_json::from_str(json)?;
+        let mut history = Self::new(entries.len().max(1));
+        for entry in entries {
+            history.next_revision = history.next_revision.max(entry.revision.saturating_add(1));
+            history.diffs.push_back(StoredDiff {
+                revision: entry.revision,
+                diff: entry.diff,
+            });
+        }
+        Ok(history)
     }
 }
 
@@ -593,5 +617,37 @@ mod tests {
         assert_eq!(value["renamed"][0]["new_name"], "new");
         assert_eq!(value["renamed"][0]["old_kind"], "action");
         assert_eq!(value["renamed"][0]["new_kind"], "condition");
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn roundtrips_diff_json() {
+        let old = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let new = tree(vec![leaf("b", "b"), leaf("c", "c")]);
+        let diff = TreeDiff::between(&old, &new);
+
+        let parsed = TreeDiff::from_json(&diff.to_json()).expect("parse diff");
+        assert_eq!(parsed, diff);
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn roundtrips_history_json_and_continues_revisions() {
+        let empty = tree(Vec::new());
+        let one = tree(vec![leaf("a", "a")]);
+        let two = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let three = tree(vec![leaf("a", "a"), leaf("b", "b"), leaf("c", "c")]);
+
+        let mut history = DiffHistory::new(4);
+        history.push(TreeDiff::between(&empty, &one));
+        history.push(TreeDiff::between(&one, &two));
+        history.push(TreeDiff::between(&two, &three));
+
+        let mut parsed = DiffHistory::from_json(&history.to_json()).expect("parse history");
+        let expected: Vec<_> = history.entries().collect();
+        let actual: Vec<_> = parsed.entries().collect();
+        assert_eq!(actual, expected);
+        assert_eq!(parsed.limit(), 3);
+        assert_eq!(parsed.push(TreeDiff::default()), Some(4));
     }
 }

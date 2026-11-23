@@ -588,6 +588,37 @@ impl NodePath {
     pub fn indices(&self) -> &[usize] {
         &self.indices
     }
+
+    /// Parses a path produced by [`Display`](fmt::Display).
+    ///
+    /// Accepts `root`, `services[i]`, and any number of `.children[i]` steps.
+    /// Returns `None` for malformed or overflowing paths.
+    #[must_use]
+    pub fn parse(path: &str) -> Option<Self> {
+        let (mut node_path, mut rest) = if let Some(rest) = path.strip_prefix("root") {
+            (Self::root(), rest)
+        } else {
+            let rest = path.strip_prefix("services[")?;
+            let (index, rest) = parse_bracket_index(rest)?;
+            (Self::service(index), rest)
+        };
+
+        while !rest.is_empty() {
+            let tail = rest.strip_prefix(".children[")?;
+            let (index, tail) = parse_bracket_index(tail)?;
+            node_path.indices.push(index);
+            rest = tail;
+        }
+        Some(node_path)
+    }
+}
+
+fn parse_bracket_index(input: &str) -> Option<(usize, &str)> {
+    let (digits, rest) = input.split_once(']')?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, rest))
 }
 
 impl Default for NodePath {
@@ -616,6 +647,34 @@ impl serde::Serialize for NodePath {
         S: serde::Serializer,
     {
         serializer.collect_str(self)
+    }
+}
+
+#[cfg(feature = "diff-serde")]
+impl<'de> serde::Deserialize<'de> for NodePath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PathVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PathVisitor {
+            type Value = NodePath;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a node path like `root.children[0]` or `services[1]`")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<NodePath, E>
+            where
+                E: serde::de::Error,
+            {
+                NodePath::parse(value)
+                    .ok_or_else(|| E::custom(alloc::format!("invalid node path `{value}`")))
+            }
+        }
+
+        deserializer.deserialize_str(PathVisitor)
     }
 }
 
@@ -1229,5 +1288,55 @@ mod tests {
             Status::Success
         );
         assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn node_path_parses_display_forms() {
+        assert_eq!(NodePath::parse("root"), Some(NodePath::root()));
+        assert_eq!(
+            NodePath::parse("root.children[1].children[2]"),
+            Some(NodePath::root().with_child(1).with_child(2))
+        );
+        assert_eq!(NodePath::parse("services[3]"), Some(NodePath::service(3)));
+        assert_eq!(
+            NodePath::parse("services[3].children[0]"),
+            Some(NodePath::service(3).with_child(0))
+        );
+
+        let paths = [
+            NodePath::root(),
+            NodePath::service(0).with_child(4),
+            NodePath::root().with_child(0).with_child(1),
+        ];
+        for path in paths {
+            assert_eq!(NodePath::parse(&path.to_string()), Some(path));
+        }
+
+        for invalid in [
+            "",
+            "rootx",
+            "root.",
+            "root.children[",
+            "root.children[]",
+            "root.children[-1]",
+            "root.children[1]x",
+            "services[]",
+            "services[0",
+            "services[0].child[1]",
+            "services[0].children[18446744073709551616]",
+        ] {
+            assert_eq!(NodePath::parse(invalid), None, "{invalid}");
+        }
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn node_path_serde_roundtrips() {
+        let path = NodePath::service(2).with_child(0).with_child(3);
+        let json = serde_json::to_string(&path).expect("serialize path");
+        assert_eq!(json, "\"services[2].children[0].children[3]\"");
+        let parsed: NodePath = serde_json::from_str(&json).expect("parse path");
+        assert_eq!(parsed, path);
+        assert!(serde_json::from_str::<NodePath>("\"not a path\"").is_err());
     }
 }

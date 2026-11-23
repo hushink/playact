@@ -483,18 +483,23 @@ println!("{diff}");
 - 主树与配置中的 services 共享同一个 ID 命名空间
 - 无 ID 节点只参与路径计算，不进入报告
 
-启用 `diff-serde` 可输出紧凑 JSON：
+启用 `diff-serde` 可输出并解析紧凑 JSON：
 
 ```rust
 let json = diff.to_json();
+let parsed = TreeDiff::from_json(&json)?;
 ```
+
+该 feature 同样支持 `DiffHistory::to_json()` / `DiffHistory::from_json()`。解析出的
+历史条目保留原 revision，下一次 push 会从最大 revision 之后继续，因此跨进程日志
+仍然可比。自定义节点类型可以序列化为名称，但无法反序列化：`Kind::Custom` 保存的是
+`'static` 名称，`TreeDiff::from_json` 会拒绝包含自定义类型的载荷。
 
 热重载与远程刷新通过 `last_diff()` 暴露最近一次差异，并可通过
 `with_diff_history(n)` 保留有界 `DiffHistory`。每个存储的差异都会获得从 1 开始的
 单调 revision；即使因上限淘汰、`pop_latest` 或 `clear` 也不会复用，可通过
-`latest_entry()` / `entries()` 读取。`DiffHistory::to_json()` 序列化为由旧到新的
-`{"revision", "diff"}` 条目数组，配合 `InspectorServer::poll_with_history` 提供给
-`/diffs.json`。
+`latest_entry()` / `entries()` 读取。历史序列化为由旧到新的 `{"revision", "diff"}`
+条目数组，配合 `InspectorServer::poll_with_history` 提供给 `/diffs.json`。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。

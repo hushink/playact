@@ -500,18 +500,25 @@ println!("{diff}");
 - the main tree and configured services share one ID namespace
 - nodes without IDs are traversed for path accuracy but not reported
 
-Enable `diff-serde` for compact JSON output:
+Enable `diff-serde` for compact JSON output and parsing:
 
 ```rust
 let json = diff.to_json();
+let parsed = TreeDiff::from_json(&json)?;
 ```
+
+The same feature supports `DiffHistory::to_json()` / `DiffHistory::from_json()`.
+Parsed history entries keep their revisions, and the next push continues after the
+largest restored revision, so logs from an earlier process stay comparable. Custom
+node kinds serialize to their name but cannot be deserialized: `Kind::Custom` stores a
+`'static` name, so `TreeDiff::from_json` rejects payloads that contain one.
 
 Hot reload and remote refresh expose their latest diff through `last_diff()` and keep a
 bounded `DiffHistory` when configured with `with_diff_history(n)`. Every stored diff
 gets a monotonic revision (starting at 1, never reused across eviction, `pop_latest`,
-or `clear`) exposed by `latest_entry()` / `entries()`. `DiffHistory::to_json()`
-serializes to a JSON array of `{"revision", "diff"}` entries, oldest first; combine it
-with `InspectorServer::poll_with_history` to serve `/diffs.json`.
+or `clear`) exposed by `latest_entry()` / `entries()`. The history serializes to a JSON
+array of `{"revision", "diff"}` entries, oldest first; combine it with
+`InspectorServer::poll_with_history` to serve `/diffs.json`.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
