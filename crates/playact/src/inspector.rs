@@ -56,6 +56,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
+use crate::diff::TreeDiff;
 use crate::node::Kind;
 use crate::stats::{NodeStats, StatsTracer};
 use crate::status::Status;
@@ -78,6 +79,7 @@ const DEFAULT_REFRESH_SECONDS: u64 = 1;
 pub struct Inspector<'a, W> {
     tree: &'a BehaviorTree<W>,
     stats: Option<&'a StatsTracer>,
+    diff: Option<&'a TreeDiff>,
     title: Option<String>,
     refresh_seconds: u64,
 }
@@ -89,6 +91,7 @@ impl<'a, W> Inspector<'a, W> {
         Self {
             tree,
             stats: None,
+            diff: None,
             title: None,
             refresh_seconds: 0,
         }
@@ -101,6 +104,13 @@ impl<'a, W> Inspector<'a, W> {
     #[must_use]
     pub fn with_stats(mut self, stats: &'a StatsTracer) -> Self {
         self.stats = Some(stats);
+        self
+    }
+
+    /// Adds the structural diff from a recent reload or refresh.
+    #[must_use]
+    pub fn with_diff(mut self, diff: &'a TreeDiff) -> Self {
+        self.diff = Some(diff);
         self
     }
 
@@ -140,6 +150,7 @@ impl<'a, W> Inspector<'a, W> {
             &description,
             &services,
             stats.as_ref(),
+            self.diff,
             self.refresh_seconds,
         )
     }
@@ -215,11 +226,24 @@ impl InspectorServer {
         tree: &BehaviorTree<W>,
         stats: Option<&StatsTracer>,
     ) -> io::Result<usize> {
+        self.poll_with_diff(tree, stats, None)
+    }
+
+    /// Like [`InspectorServer::poll`], and includes a structural diff in `/`.
+    ///
+    /// Pass `watcher.last_diff()` / `loader.last_diff()` to show what changed in
+    /// the most recent reload or refresh.
+    pub fn poll_with_diff<W>(
+        &mut self,
+        tree: &BehaviorTree<W>,
+        stats: Option<&StatsTracer>,
+        diff: Option<&TreeDiff>,
+    ) -> io::Result<usize> {
         let mut served = 0;
         while served < MAX_CONNECTIONS_PER_POLL {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    let _ = self.handle(stream, tree, stats);
+                    let _ = self.handle(stream, tree, stats, diff);
                     served += 1;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
@@ -235,6 +259,7 @@ impl InspectorServer {
         mut stream: TcpStream,
         tree: &BehaviorTree<W>,
         stats: Option<&StatsTracer>,
+        diff: Option<&TreeDiff>,
     ) -> io::Result<()> {
         stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT))?;
         let mut buffer = [0_u8; MAX_REQUEST_BYTES];
@@ -266,6 +291,9 @@ impl InspectorServer {
                 let mut inspector = Inspector::new(tree).with_refresh_seconds(self.refresh_seconds);
                 if let Some(stats) = stats {
                     inspector = inspector.with_stats(stats);
+                }
+                if let Some(diff) = diff {
+                    inspector = inspector.with_diff(diff);
                 }
                 if let Some(title) = &self.title {
                     inspector = inspector.with_title(title.clone());
@@ -327,6 +355,7 @@ fn render_report(
     root: &TreeDescription,
     services: &[TreeDescription],
     stats: Option<&BTreeMap<Vec<usize>, NodeStats>>,
+    diff: Option<&TreeDiff>,
     refresh_seconds: u64,
 ) -> String {
     let nodes = count_nodes(root) + services.iter().map(count_nodes).sum::<usize>();
@@ -454,6 +483,60 @@ fn render_report(
     }
     out.push_str("</section>\n");
 
+    if let Some(diff) = diff {
+        out.push_str("<section>\n<h2>Reload diff</h2>\n<div class=\"panel\">\n");
+        if diff.is_empty() {
+            out.push_str("<p class=\"muted\">No structural changes.</p>\n");
+        } else {
+            let _ = writeln!(
+                out,
+                "<p class=\"muted\">added {} · removed {} · moved {}</p>",
+                diff.added.len(),
+                diff.removed.len(),
+                diff.moved.len()
+            );
+            out.push_str("<ul class=\"diff-list\">\n");
+            for node in &diff.added {
+                write_diff_line(
+                    &mut out,
+                    "added",
+                    "+",
+                    node.id.as_str(),
+                    &node.name,
+                    node.kind,
+                    &node.path.to_string(),
+                    None,
+                );
+            }
+            for node in &diff.removed {
+                write_diff_line(
+                    &mut out,
+                    "removed",
+                    "-",
+                    node.id.as_str(),
+                    &node.name,
+                    node.kind,
+                    &node.path.to_string(),
+                    None,
+                );
+            }
+            for node in &diff.moved {
+                write_diff_line(
+                    &mut out,
+                    "moved",
+                    "~",
+                    node.id.as_str(),
+                    &node.name,
+                    node.kind,
+                    &node.from.to_string(),
+                    Some(&node.to.to_string()),
+                );
+            }
+            out.push_str("</ul>\n");
+        }
+        out.push_str("</div>\n</section>\n");
+    }
+
     out.push_str("<section>\n<h2>Node statistics</h2>\n");
     match stats {
         Some(stats) if !stats.is_empty() => {
@@ -555,6 +638,32 @@ fn collect_id_entries(
             stats_path.pop();
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_diff_line(
+    out: &mut String,
+    class: &str,
+    marker: &str,
+    id: &str,
+    name: &str,
+    kind: Kind,
+    path: &str,
+    to: Option<&str>,
+) {
+    let _ = write!(
+        out,
+        "<li><span class=\"diff-badge {class}\">{marker}</span>\
+         <code>{}</code> {} <span class=\"kind\">{}</span> at <code>{}</code>",
+        escape_html(id),
+        escape_html(name),
+        escape_html(kind.as_str()),
+        escape_html(path)
+    );
+    if let Some(to) = to {
+        let _ = write!(out, " &rarr; <code>{}</code>", escape_html(to));
+    }
+    out.push_str("</li>\n");
 }
 
 fn write_card(out: &mut String, label: &str, value: &str, class: &str) {
@@ -845,6 +954,13 @@ details > summary::-webkit-details-marker { display: none; }
 .status.failure { color: var(--failure); }
 .status.running { color: var(--running); }
 .status.unknown { color: var(--unknown); }
+.diff-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.diff-list li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.diff-list li:last-child { border-bottom: 0; }
+.diff-badge { display: inline-block; width: 1.2em; font-weight: 700; text-align: center; }
+.diff-badge.added { color: var(--success); }
+.diff-badge.removed { color: var(--failure); }
+.diff-badge.moved { color: var(--running); }
 .table-wrap { overflow-x: auto; padding: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td {
@@ -925,6 +1041,25 @@ mod tests {
         assert!(html.contains("Node IDs"));
         assert!(html.contains("root.children[0]"));
         assert!(html.contains("root.children[1]"));
+    }
+
+    #[test]
+    fn renders_reload_diff() {
+        let old = BehaviorTreeBuilder::<()>::new("old")
+            .sequence(|b| b.action("old", |_| Status::Success).id("old"))
+            .build()
+            .expect("old tree");
+        let new = BehaviorTreeBuilder::<()>::new("new")
+            .sequence(|b| b.action("new", |_| Status::Success).id("new"))
+            .build()
+            .expect("new tree");
+        let diff = TreeDiff::between(&old, &new);
+
+        let html = Inspector::new(&new).with_diff(&diff).render();
+        assert!(html.contains("Reload diff"));
+        assert!(html.contains("diff-badge added"));
+        assert!(html.contains("diff-badge removed"));
+        assert!(html.contains("root.children[0]"));
     }
 
     #[test]

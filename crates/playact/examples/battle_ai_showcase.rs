@@ -13,7 +13,8 @@
 //! - `guard` with a registered predicate;
 //! - `try_action` errors reported through `StatsTracer`;
 //! - `wait_for_event` consuming service-published events;
-//! - state-preserving hot reload with stable `NodeId`s.
+//! - state-preserving hot reload with stable `NodeId`s;
+//! - a structural `TreeDiff` after the reload.
 
 use serde::Deserialize;
 
@@ -223,6 +224,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 watcher.tree().name(),
                 service_names(watcher.tree())
             );
+            if let Some(diff) = watcher.last_diff() {
+                println!("structural diff:\n{diff}");
+            }
         }
 
         world.turn = tick as u32;
@@ -294,6 +298,13 @@ mod tests {
             .expect("v2 tree");
         assert_eq!(v2.service_count(), 2);
         assert_eq!(v2.duplicate_node_id(), None);
+
+        let diff = TreeDiff::between(&v1, &v2);
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].id.as_str(), "scan_extra");
+        assert_eq!(diff.added[0].path.to_string(), "services[1]");
+        assert!(diff.removed.is_empty());
+        assert!(diff.moved.is_empty());
     }
 
     #[test]

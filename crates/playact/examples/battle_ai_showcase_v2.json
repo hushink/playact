@@ -4,7 +4,7 @@
   "name": "battle showcase v2",
   "services": [
     {"type": "action", "name": "sense"},
-    {"type": "action", "name": "scan_extra"}
+    {"type": "identified", "id": "scan_extra", "child": {"type": "action", "name": "scan_extra"}}
   ],
   "root": {
     "type": "identified",

@@ -165,6 +165,7 @@ impl fmt::Display for Kind {
 /// snapshots, metrics, debugging tools, and configuration reloads that need to
 /// recognize the same logical node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
 pub struct NodeId(String);
 
 impl NodeId {

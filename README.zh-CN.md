@@ -124,7 +124,7 @@ cargo run -p playact --example live_inspector --features inspector
 - `battle_ai_config`：同一套思路的 JSON 配置驱动版本，展示 typed 参数与 custom
   节点工厂。
 - `battle_ai_showcase`：完全配置驱动的 AI，覆盖 services、`utility_selector`、
-  `guard`、`try_action`、事件与状态保持热重载。
+  `guard`、`try_action`、事件、状态保持热重载与结构化重载差异。
 - `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
   与 `/tree` 端点的演示树。
 
@@ -140,6 +140,7 @@ cargo run -p playact --example live_inspector --features inspector
 | `trace-record` | 结构化 trace 录制与 replay 对比（依赖 `std`） |
 | `test-util` | 确定性虚拟时间 `TestDriver`（依赖 `std` 与 `trace-record`） |
 | `inspector` | 自包含 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
+| `diff-serde` | `TreeDiff::to_json()` 序列化（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

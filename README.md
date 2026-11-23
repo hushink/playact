@@ -130,7 +130,8 @@ cargo run -p playact --example live_inspector --features inspector
 - `battle_ai_config`: the same ideas driven by JSON configuration, typed parameters,
   and custom node factories.
 - `battle_ai_showcase`: fully config-driven AI using services, `utility_selector`,
-  `guard`, `try_action`, events, and state-preserving hot reload.
+  `guard`, `try_action`, events, state-preserving hot reload, and structural reload
+  diffs.
 - `live_inspector`: a small demo tree served at `http://127.0.0.1:7878/` with live
   statuses, timings, `/metrics`, and `/tree` endpoints.
 
@@ -146,6 +147,7 @@ cargo run -p playact --example live_inspector --features inspector
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |
 | `test-util` | Deterministic `TestDriver` with virtual time (requires `std` and `trace-record`) |
 | `inspector` | Self-contained HTML report and zero-dependency debug HTTP server (requires `std`) |
+| `diff-serde` | `TreeDiff::to_json()` serialization (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

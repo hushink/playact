@@ -462,7 +462,7 @@ over a local HTTP endpoint:
 ```rust
 use playact::inspector::{Inspector, InspectorServer};
 
-// Static report
+// Static report (add .with_diff(&diff) after a reload)
 Inspector::new(&tree)
     .with_stats(&stats)
     .write_to("tree.html")?;
@@ -470,6 +470,7 @@ Inspector::new(&tree)
 // Live report: poll once per frame, then open http://127.0.0.1:7878/
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
+// After a reload, use server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
 ```
 
 The page shows the tree with last statuses, per-node counters and timings, services,
@@ -492,6 +493,12 @@ println!("{diff}");
 - the main tree and configured services share one ID namespace
 - nodes without IDs are traversed for path accuracy but not reported
 - name/kind changes at the same path are not reported
+
+Enable `diff-serde` for compact JSON output:
+
+```rust
+let json = diff.to_json();
+```
 
 Hot reload and remote refresh expose their latest diff through `last_diff()`.
 
@@ -900,6 +907,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
 | `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std` + `trace-record`) |
 | `inspector` | HTML report with live statuses/timings and a zero-dependency debug HTTP server (requires `std`) |
+| `diff-serde` | `TreeDiff::to_json()` serialization (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |
@@ -938,7 +946,8 @@ cargo run -p playact --example live_inspector --features inspector
 - `battle_ai_config`: the same ideas driven by JSON configuration, typed parameters,
   and custom node factories.
 - `battle_ai_showcase`: fully config-driven AI using services, `utility_selector`,
-  `guard`, `try_action`, events, and state-preserving hot reload.
+  `guard`, `try_action`, events, state-preserving hot reload, and structural reload
+  diffs.
 - `live_inspector`: a demo tree served at `http://127.0.0.1:7878/` with live
   statuses, timings, `/metrics`, and `/tree` endpoints.
 

@@ -14,6 +14,7 @@ use crate::tree::{BehaviorTree, NodePath, TreeDescription};
 
 /// A node referenced by a [`TreeDiff`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
 pub struct DiffNode {
     /// Stable identity.
     pub id: NodeId,
@@ -22,17 +23,20 @@ pub struct DiffNode {
     /// Display name.
     pub name: String,
     /// Node type.
+    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
     pub kind: Kind,
 }
 
 /// A node whose structural path changed between two trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
 pub struct MovedNode {
     /// Stable identity.
     pub id: NodeId,
     /// Display name from the new tree.
     pub name: String,
     /// Node type from the new tree.
+    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
     pub kind: Kind,
     /// Path in the old tree.
     pub from: NodePath,
@@ -47,6 +51,7 @@ pub struct MovedNode {
 /// well-formed tree contributes at most one entry per ID. A name or kind change
 /// at the same ID and path is not reported.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
 pub struct TreeDiff {
     /// IDs present in the new tree but not the old one.
     pub added: Vec<DiffNode>,
@@ -103,6 +108,23 @@ impl TreeDiff {
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.moved.is_empty()
     }
+
+    /// Serializes the diff as compact JSON.
+    ///
+    /// Requires the `diff-serde` feature.
+    #[cfg(feature = "diff-serde")]
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("TreeDiff serialization cannot fail")
+    }
+}
+
+#[cfg(feature = "diff-serde")]
+fn serialize_kind<S>(kind: &Kind, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(kind.as_str())
 }
 
 impl fmt::Display for TreeDiff {
@@ -234,5 +256,21 @@ mod tests {
         assert!(text.contains("+ c c at root.children[1]"));
         assert!(text.contains("- a a at root.children[0]"));
         assert!(text.contains("~ b b: root.children[1] -> root.children[0]"));
+    }
+
+    #[cfg(feature = "diff-serde")]
+    #[test]
+    fn serializes_to_json() {
+        let old = tree(vec![leaf("a", "a"), leaf("b", "b")]);
+        let new = tree(vec![leaf("b", "b"), leaf("c", "c")]);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&TreeDiff::between(&old, &new).to_json()).expect("json");
+        assert_eq!(value["added"][0]["id"], "c");
+        assert_eq!(value["added"][0]["path"], "root.children[1]");
+        assert_eq!(value["added"][0]["kind"], "action");
+        assert_eq!(value["removed"][0]["id"], "a");
+        assert_eq!(value["moved"][0]["from"], "root.children[1]");
+        assert_eq!(value["moved"][0]["to"], "root.children[0]");
     }
 }

@@ -447,7 +447,7 @@ tree.last_status(); // Option<Status>
 ```rust
 use playact::inspector::{Inspector, InspectorServer};
 
-// 静态报告
+// 静态报告（重载后可追加 .with_diff(&diff)）
 Inspector::new(&tree)
     .with_stats(&stats)
     .write_to("tree.html")?;
@@ -455,6 +455,7 @@ Inspector::new(&tree)
 // 实时报告：每帧 poll 一次，然后打开 http://127.0.0.1:7878/
 let mut server = InspectorServer::bind("127.0.0.1:7878")?;
 server.poll(&tree, Some(&stats))?;
+// 重载后可用 server.poll_with_diff(&tree, Some(&stats), watcher.last_diff())?;
 ```
 
 页面展示树结构、各节点最后状态、计数与耗时、服务节点、带结构路径的 `NodeId` 审计
@@ -476,6 +477,12 @@ println!("{diff}");
 - 主树与配置中的 services 共享同一个 ID 命名空间
 - 无 ID 节点只参与路径计算，不进入报告
 - 同一路径上的名称/类型变化不会进入报告
+
+启用 `diff-serde` 可输出紧凑 JSON：
+
+```rust
+let json = diff.to_json();
+```
 
 热重载与远程刷新通过 `last_diff()` 暴露最近一次差异。
 
@@ -862,6 +869,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |
 | `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std` + `trace-record`） |
 | `inspector` | 带实时状态/耗时的 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
+| `diff-serde` | `TreeDiff::to_json()` 序列化（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |
@@ -897,7 +905,7 @@ cargo run -p playact --example live_inspector --features inspector
 - `battle_ai_config`：同一套思路的 JSON 配置驱动版本，展示 typed 参数与 custom
   节点工厂。
 - `battle_ai_showcase`：完全配置驱动的 AI，覆盖 services、`utility_selector`、
-  `guard`、`try_action`、事件与状态保持热重载。
+  `guard`、`try_action`、事件、状态保持热重载与结构化重载差异。
 - `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
   与 `/tree` 端点的演示树。
 
