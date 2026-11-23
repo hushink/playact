@@ -3,9 +3,9 @@
 //! Run:
 //!
 //! ```text
-//! cargo run --example config_lint --features config,schema
-//! cargo run --example config_lint --features config,schema -- a.json b.json
-//! cargo run --example config_lint --features config,schema -- --json a.json
+//! cargo run --example config_lint --features config,schema,toml,yaml,ron
+//! cargo run --example config_lint --features config,schema,toml,yaml,ron -- a.json b.toml
+//! cargo run --example config_lint --features config,schema,toml,yaml,ron -- --json config/*
 //! ```
 //!
 //! Without file arguments the example checks `examples/battle_ai.json`. The
@@ -27,16 +27,73 @@ use std::process::ExitCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use playact::config::{NodeCategory, NodeRegistry, TreeSpec};
+use playact::config::{ConfigError, NodeCategory, NodeRegistry, TreeSpec};
 use playact::prelude::*;
 
 const MAX_NODE_DEPTH: usize = 128;
 const USAGE: &str = "\
 usage: config_lint [--json] [CONFIG...]
 
-Checks each JSON configuration against the demo registry schema, then builds it.
-Without CONFIG, examples/battle_ai.json is checked. --json prints a
-machine-readable report.";
+Checks JSON, TOML, YAML, or RON configurations against the demo registry
+schema, then builds them. The format is selected by file extension. Without
+CONFIG, examples/battle_ai.json is checked. --json prints a machine-readable
+report.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format {
+    Json,
+    Toml,
+    Yaml,
+    Ron,
+}
+
+impl Format {
+    fn from_path(path: &Path) -> Result<Self, String> {
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase);
+        match extension.as_deref() {
+            Some("json") => Ok(Self::Json),
+            Some("toml") => Ok(Self::Toml),
+            Some("yaml" | "yml") => Ok(Self::Yaml),
+            Some("ron") => Ok(Self::Ron),
+            Some(other) => Err(format!(
+                "unsupported extension `.{other}`; expected .json, .toml, .yaml, .yml, or .ron"
+            )),
+            None => Err(String::from(
+                "configuration path has no extension; expected .json, .toml, .yaml, .yml, or .ron",
+            )),
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Json => "JSON",
+            Self::Toml => "TOML",
+            Self::Yaml => "YAML",
+            Self::Ron => "RON",
+        }
+    }
+
+    fn parse_document(self, text: &str) -> Result<Value, String> {
+        match self {
+            Self::Json => serde_json::from_str(text).map_err(|error| error.to_string()),
+            Self::Toml => toml::from_str(text).map_err(|error| error.to_string()),
+            Self::Yaml => serde_yaml_ng::from_str(text).map_err(|error| error.to_string()),
+            Self::Ron => ron::from_str(text).map_err(|error| error.to_string()),
+        }
+    }
+
+    fn parse_spec(self, text: &str) -> Result<TreeSpec, ConfigError> {
+        match self {
+            Self::Json => TreeSpec::from_json_str(text),
+            Self::Toml => TreeSpec::from_toml_str(text),
+            Self::Yaml => TreeSpec::from_yaml_str(text),
+            Self::Ron => TreeSpec::from_ron_str(text),
+        }
+    }
+}
 
 // The fields are read through the derived `JsonSchema` and `Deserialize` impls.
 #[allow(dead_code)]
@@ -146,7 +203,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        if reports.len() > 1 {
+        if invalid > 0 && reports.len() > 1 {
             eprintln!("{} of {} configuration(s) invalid", invalid, reports.len());
         }
     }
@@ -238,6 +295,16 @@ fn lint_file(registry: &NodeRegistry<()>, schema: &Value, path: &Path) -> LintRe
     let file = path.display().to_string();
     let mut issues = Vec::new();
 
+    let format = match Format::from_path(path) {
+        Ok(format) => format,
+        Err(message) => {
+            return LintReport {
+                file,
+                valid: false,
+                issues: vec![LintIssue::new("format", "", message)],
+            };
+        }
+    };
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) => {
@@ -248,13 +315,13 @@ fn lint_file(registry: &NodeRegistry<()>, schema: &Value, path: &Path) -> LintRe
             };
         }
     };
-    match serde_json::from_str::<Value>(&text) {
+    match format.parse_document(&text) {
         Ok(document) => issues.extend(schema_issues(schema, &document)),
         Err(error) => {
             issues.push(LintIssue::new(
                 "parse",
                 "",
-                format!("invalid JSON: {error}"),
+                format!("invalid {}: {error}", format.name()),
             ));
             return LintReport {
                 file,
@@ -264,7 +331,7 @@ fn lint_file(registry: &NodeRegistry<()>, schema: &Value, path: &Path) -> LintRe
         }
     }
 
-    match TreeSpec::from_json_str(&text) {
+    match format.parse_spec(&text) {
         Ok(spec) => {
             if let Err(error) = spec.build(registry) {
                 issues.push(LintIssue::new(
@@ -564,6 +631,86 @@ mod tests {
         let text = fs::read_to_string(default_path()).expect("example config");
         let document: Value = serde_json::from_str(&text).expect("valid JSON");
         assert!(schema_issues(&schema(), &document).is_empty());
+    }
+
+    #[test]
+    fn parses_supported_formats() {
+        let registry = build_registry().expect("demo registry");
+        let schema = registry.json_schema();
+        let cases = [
+            (
+                Format::Toml,
+                "version = 1\n[root]\ntype = \"action\"\nname = \"wait\"\n",
+            ),
+            (
+                Format::Yaml,
+                "version: 1\nroot:\n  type: action\n  name: wait\n",
+            ),
+            (
+                Format::Ron,
+                "(version: 1, root: (type: \"action\", name: \"wait\"))",
+            ),
+        ];
+
+        for (format, text) in cases {
+            let document = format
+                .parse_document(text)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}"));
+            assert!(
+                schema_issues(&schema, &document).is_empty(),
+                "{format:?}: {document}"
+            );
+            let spec = format
+                .parse_spec(text)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}"));
+            spec.build(&registry)
+                .unwrap_or_else(|error| panic!("{format:?}: {error}"));
+        }
+    }
+
+    #[test]
+    fn parses_named_formats() {
+        let registry = build_registry().expect("demo registry");
+        let schema = registry.json_schema();
+        let cases = [
+            (
+                Format::Toml,
+                "version = 1\nname = \"toml tree\"\n[root]\ntype = \"action\"\nname = \"wait\"\n",
+            ),
+            (
+                Format::Yaml,
+                "version: 1\nname: yaml tree\nroot:\n  type: action\n  name: wait\n",
+            ),
+            (
+                Format::Ron,
+                "(version: 1, name: Some(\"ron tree\"), root: (type: \"action\", name: \"wait\"))",
+            ),
+        ];
+
+        for (format, text) in cases {
+            let document = format
+                .parse_document(text)
+                .unwrap_or_else(|error| panic!("{format:?} document: {error}"));
+            assert!(
+                schema_issues(&schema, &document).is_empty(),
+                "{format:?}: {document}"
+            );
+            let spec = format
+                .parse_spec(text)
+                .unwrap_or_else(|error| panic!("{format:?} spec: {error}"));
+            spec.build(&registry)
+                .unwrap_or_else(|error| panic!("{format:?} build: {error}"));
+        }
+    }
+
+    #[test]
+    fn detects_supported_extensions() {
+        assert_eq!(Format::from_path(Path::new("tree.JSON")), Ok(Format::Json));
+        assert_eq!(Format::from_path(Path::new("tree.toml")), Ok(Format::Toml));
+        assert_eq!(Format::from_path(Path::new("tree.yml")), Ok(Format::Yaml));
+        assert_eq!(Format::from_path(Path::new("tree.ron")), Ok(Format::Ron));
+        assert!(Format::from_path(Path::new("tree.txt")).is_err());
+        assert!(Format::from_path(Path::new("tree")).is_err());
     }
 
     #[test]

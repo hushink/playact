@@ -1095,8 +1095,8 @@ let catalog = registry.markdown_catalog(); // Markdown node catalog
 ```
 
 `examples/config_lint.rs` combines per-node schema validation with
-`TreeSpec::build` as a deployment preflight; it accepts multiple files and can
-emit a JSON report. See the
+`TreeSpec::build` as a deployment preflight; it accepts multiple JSON, TOML,
+YAML, or RON files and can emit a JSON report. See the
 [configuration reference](config.md#editor-completion) for a complete editor
 setup.
 

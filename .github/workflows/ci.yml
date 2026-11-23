@@ -92,6 +92,6 @@ jobs:
       - name: Example config_lint
         if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: |
-          cargo run -p playact --example config_lint --features config,schema --quiet -- crates/playact/examples/battle_ai.json
-          cargo run -p playact --example config_lint --features config,schema --quiet -- --json crates/playact/examples/battle_ai.json > target/config-lint.json
+          cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron --quiet -- crates/playact/examples/battle_ai.json
+          cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron --quiet -- --json crates/playact/examples/battle_ai.json > target/config-lint.json
           grep -q '"valid": true' target/config-lint.json

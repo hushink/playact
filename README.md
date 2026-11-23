@@ -129,7 +129,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
-cargo run -p playact --example config_lint --features config,schema -- crates/playact/examples/battle_ai.json
+cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- crates/playact/examples/battle_ai.json
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Demonstrates
@@ -152,9 +152,10 @@ cargo run -p playact --example config_lint --features config,schema -- crates/pl
   action, condition, predicate, key, custom, and subtree names, with optional
   descriptions, derived parameter schemas, typed key values, and a Markdown
   node catalog.
-- `config_lint`: validates configurations against the registry schema and then
-  builds them, reporting field paths, accepting multiple files, and emitting a
-  JSON report with `--json`. Exits nonzero when any file is invalid.
+- `config_lint`: validates JSON, TOML, YAML, or RON configurations against the
+  registry schema and then builds them, reporting field paths, accepting
+  multiple files, and emitting a JSON report with `--json`. Exits nonzero when
+  any file is invalid.
 
 ## Feature flags
 

@@ -350,11 +350,12 @@ std::fs::write("docs/node-catalog.md", registry.markdown_catalog())?;
 再解析并构建，因此参数反序列化、未知名称、include 与重复 ID 也会被检查：
 
 ```text
-cargo run -p playact --example config_lint --features config,schema -- config/a.json config/b.json
-cargo run -p playact --example config_lint --features config,schema -- --json config/*.json
+cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- config/a.json config/b.toml
+cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- --json config/*
 ```
 
-示例使用 `battle_ai.json` 对应的演示注册表；请把其中的 `build_registry` 替换为
-自己的注册。schema 校验会逐节点深入，错误会指向具体字段；构建错误会带精确的配置
-路径。`--json` 输出包含 `source`、`path` 与 `message` 的机器可读报告。任一文件无效时
-以非零状态退出，可作为部署或配置发布流程的门禁。
+格式按扩展名选择：`.json`、`.toml`、`.yaml`/`.yml` 或 `.ron`。示例使用
+`battle_ai.json` 对应的演示注册表；请把其中的 `build_registry` 替换为自己的注册。
+schema 校验会逐节点深入，错误会指向具体字段；构建错误会带精确的配置路径。`--json`
+输出包含 `source`、`path` 与 `message` 的机器可读报告。任一文件无效时以非零状态退出，
+可作为部署或配置发布流程的门禁。

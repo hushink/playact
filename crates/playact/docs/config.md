@@ -370,11 +370,12 @@ the registry schema, then parses and builds it so parameter deserialization,
 unknown names, includes, and duplicate IDs are checked as well:
 
 ```text
-cargo run -p playact --example config_lint --features config,schema -- config/a.json config/b.json
-cargo run -p playact --example config_lint --features config,schema -- --json config/*.json
+cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- config/a.json config/b.toml
+cargo run -p playact --example config_lint --features config,schema,toml,yaml,ron -- --json config/*
 ```
 
-The example uses the demo registry from `battle_ai.json`; replace its
+The format is selected from the extension: `.json`, `.toml`, `.yaml`/`.yml`, or
+`.ron`. The example uses the demo registry from `battle_ai.json`; replace its
 `build_registry` function with your own registrations. Schema validation drills
 into each node, so errors point at the failing field; build errors include the
 precise configuration path. `--json` prints a machine-readable report with
