@@ -161,11 +161,14 @@ Fragments use the same shape and may include further fragments. Paths are
 relative to the containing manifest and select JSON, TOML, YAML, or RON by
 extension.
 
-Generate the manifest schema, the `--json` report schema, and a starter manifest:
+Generate the manifest, report, and plan schemas (individually or together) and a
+starter manifest:
 
 ```text
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
 cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
+cargo run -p playact-cli -- migrate --plan-schema > migrations.plan.schema.json
+cargo run -p playact-cli -- migrate --schemas schemas/
 cargo run -p playact-cli -- migrate --init migrations.json
 ```
 
@@ -219,6 +222,10 @@ carries its merged `index`, `op`, relative `source`, `source_index`,
   is a no-op, a non-numeric value is an error, and integer inputs keep an integer
   JSON representation when the result is integral. Operations run in order, so
   rename or map a value or field before scaling the renamed field.
+- `rename_field` already moves a field. `copy_field` and `move_field` are not
+  separate operations, and field names are not nested paths. Use `at` / `where`
+  to select nested objects, or an application `ConfigMigrator` closure for copies
+  and arbitrary rewrites.
 - Target selection:
   - No `at` or `where`: the root object only.
   - `at`: a JSON Pointer to one object (`""` is the root, `"/root"` the root node,
@@ -244,15 +251,24 @@ carries its merged `index`, `op`, relative `source`, `source_index`,
   `source_index` within that source step, `matched`, and `changed` counts.
   `matched` counts the objects selected by `at`, `where`, or the default scope
   across the root graph; `changed` counts selected objects the operation actually
-  modified. `--strict` fails before writing when an executed operation matched no
-  objects or changed none; without it, those operations produce warnings in human
-  output with their relative source manifest path. Custom Rust transformations
-  still require a `ConfigMigrator` closure in the application.
+  modified. Reports also include `file_operations`, mapping each file whose
+  migration steps ran to its own `operations` array without duplicating shared
+  files within one root graph. `--strict` fails before writing when an executed
+  operation matched no objects or changed none; `--strict-files` fails when an
+  operation matched no objects in a specific file. Without these checks, such
+  operations produce warnings in human output with their relative source manifest
+  path. Custom Rust transformations still require a `ConfigMigrator` closure in
+  the application.
 - `--explain [--json] --manifest migrations.json` prints the fragment source tree
   and merged operations with their source positions and target selectors. It reads
   only manifests, accepts no configuration paths, and writes nothing.
-- `--report-schema` prints a Draft 2020-12 JSON Schema for the array emitted by
-  `--json`, including source provenance and operation counters.
+- `--manifest-schema`, `--report-schema`, and `--plan-schema` print Draft 2020-12
+  schemas for manifests, per-root reports, and explain plans. `--schemas DIR`
+  writes `manifest.schema.json`, `report.schema.json`, and `plan.schema.json` into
+  a new or empty directory and refuses a non-empty one.
+- The schemas do not carry a separate format version. Fields evolve additively,
+  using the package version as the producer version; a dedicated format version
+  would be added only if a backward-compatible extension becomes impossible.
 - `--output DIR` requires exactly one root, cannot be combined with `--check`,
   and stages the complete include graph into a new or empty directory instead of
   modifying sources. Include strings are preserved and must stay lexically
@@ -605,12 +621,15 @@ cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
 cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
+cargo run -p playact-cli -- migrate --plan-schema > migrations.plan.schema.json
+cargo run -p playact-cli -- migrate --schemas schemas/
 cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --strict-files --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
 cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
@@ -654,17 +673,18 @@ included file, validates the migrated graph, and writes in place only when all
 files are valid; `--check` reports pending migrations without writing, `--diff`
 prints field-level changes, `--patch` prints unified diffs, `--output DIR` stages
 the complete graph, and `--json` reports per-root results with changes, operation
-match counts, and source manifest paths. `--strict` rejects executed operations
-that match no objects or change none before writing. `--manifest-schema` prints
-the manifest JSON Schema, `--report-schema` prints the `--json` report schema,
-`--init PATH` writes a starter manifest, and `--explain [--json]` prints the
-resolved sources and merged operations without configuration files.
-RON formatting serializes the parsed spec because RON's generic map syntax does
-not deserialize as a `TreeSpec`; other formats preserve the original field
-presence. `diff` validates both inputs, then reports path-based node, parameter,
-and include-file set changes. Child nodes are matched by type and name/kind/key,
-so insertions and reorders report moves
-instead of shifting every later index. Included files with matching relative
+match counts, source manifest paths, and per-file counters. `--strict` rejects
+executed operations that match no objects or change none before writing;
+`--strict-files` applies the no-match check per file. `--manifest-schema`,
+`--report-schema`, and `--plan-schema` print the corresponding JSON Schemas,
+`--schemas DIR` writes all three, `--init PATH` writes a starter manifest, and
+`--explain [--json]` prints the resolved sources and merged operations without
+configuration files. RON formatting serializes the parsed spec because RON's
+generic map syntax does not deserialize as a `TreeSpec`; other formats preserve
+the original field presence. `diff` validates both inputs, then reports path-based
+node, parameter, and include-file set changes. Child nodes are matched by type and
+name/kind/key, so insertions and reorders report moves instead of shifting every
+later index. Included files with matching relative
 paths are compared recursively, and their findings include a `file` field. It
 exits nonzero when differences exist and supports `--json`; include file sets
 use `--include-base`, or each input's parent when omitted.

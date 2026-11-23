@@ -1088,12 +1088,13 @@ For simple field renames, removals, defaults, value mappings, and numeric
 scaling, `playact migrate --manifest` can upgrade roots and includes without
 application code; `--diff` previews field-level changes, `--patch` prints unified
 diffs, and `--output DIR` stages the complete include graph. `--json` includes
-per-operation `matched`/`changed` counts and relative source manifest paths, and
-`--strict` rejects operations that match no objects or change none before
-writing. `--manifest-schema` and `--init PATH` provide editor completion and a
-starter manifest, and `--report-schema` describes the `--json` report shape.
-Manifests can include reusable fragments; operations for the same version merge
-in depth-first include order before local operations.
+per-operation `matched`/`changed` counts, relative source manifest paths, and
+per-file `file_operations`; `--strict` rejects operations that match no objects or
+change none before writing, and `--strict-files` checks zero-match rules per file.
+`--manifest-schema`, `--report-schema`, and `--plan-schema` print the manifest,
+report, and plan schemas; `--schemas DIR` writes all three and `--init PATH`
+provides a starter manifest. Manifests can include reusable fragments; operations
+for the same version merge in depth-first include order before local operations.
 `--explain [--json] --manifest` prints the resolved sources and merged operation
 plan without configuration files.
 

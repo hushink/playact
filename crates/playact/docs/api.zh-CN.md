@@ -1047,11 +1047,12 @@ let watcher =
 刷新提供同样的管线。简单的字段重命名、删除、默认值、值映射与数值换算可用
 `playact migrate --manifest` 在无应用代码的情况下迁移根配置与 include；`--diff`
 可预览字段级变化，`--patch` 输出 unified diff，`--output DIR` 暂存完整 include 图；
-`--json` 包含逐操作 `matched`/`changed` 计数与相对来源清单路径，`--strict` 在写入前拒绝
-未匹配任何对象或未修改任何对象的操作；`--manifest-schema` 与 `--init PATH` 提供编辑器
-补全与 starter 清单，`--report-schema` 描述 `--json` 报告结构。清单可复用片段；同一版本
-的操作按深度优先的 include 顺序合并后再执行本地操作。`--explain [--json] --manifest`
-不读取配置，直接输出解析后的来源与合并计划。
+`--json` 包含逐操作 `matched`/`changed` 计数、相对来源清单路径与逐文件
+`file_operations`；`--strict` 在写入前拒绝未匹配任何对象或未修改任何对象的操作，
+`--strict-files` 按文件检查零匹配。`--manifest-schema`、`--report-schema` 与
+`--plan-schema` 输出清单、报告与计划 schema，`--schemas DIR` 一次写入三者，`--init PATH`
+提供 starter 清单。清单可复用片段；同一版本的操作按深度优先的 include 顺序合并后再执行
+本地操作。`--explain [--json] --manifest` 不读取配置，直接输出解析后的来源与合并计划。
 
 ### 校验与 schema
 

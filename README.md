@@ -183,11 +183,14 @@ cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json config/root.json
 cargo run -p playact-cli -- migrate --manifest-schema > migrations.schema.json
 cargo run -p playact-cli -- migrate --report-schema > migrations.report.schema.json
+cargo run -p playact-cli -- migrate --plan-schema > migrations.plan.schema.json
+cargo run -p playact-cli -- migrate --schemas schemas/
 cargo run -p playact-cli -- migrate --init migrations.json
 cargo run -p playact-cli -- migrate --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --output dist/config --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --diff --patch --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --check --strict --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --strict-files --manifest migrations.json config/root.json
 cargo run -p playact-cli -- migrate --explain --manifest migrations.json
 cargo run -p playact-cli -- migrate --explain --json --manifest migrations.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
@@ -228,20 +231,22 @@ validates the migrated result, then writes changed files in place or stages the
 complete graph with `--output DIR`. `--check` reports changes without writing,
 `--diff` prints field-level changes, `--patch` prints unified diffs, and `--json`
 reports per-root results including changes, per-operation `matched`/`changed`
-counts, and the relative source manifest path. `--strict` fails before writing
-when an executed operation matches no objects or changes none; without it, such
-operations are warnings in human output.
-`--manifest-schema` prints the manifest JSON Schema for editor completion, and
-`--report-schema` prints the schema for `--json` per-root reports. `--init PATH`
-writes a starter manifest in the format selected by the extension. Manifests can
-include reusable fragments through an `include` array; fragments merge operations
-by version, are loaded once, and must stay inside the root manifest's directory.
+counts, relative source manifest paths, and per-file `file_operations` counters.
+`--strict` fails before writing when an executed operation matches no objects or
+changes none; `--strict-files` applies the no-match check to each migrated file.
+Without `--strict`, zero-effect operations are warnings in human output.
+`--manifest-schema`, `--report-schema`, and `--plan-schema` print the manifest,
+report, and explain-plan JSON Schemas; `--schemas DIR` writes all three into a
+new or empty directory. `--init PATH` writes a starter manifest in the format
+selected by the extension. Manifests can include reusable fragments through an
+`include` array; fragments merge operations by version, are loaded once, and must
+stay inside the root manifest's directory.
 `--explain [--json] --manifest migrations.json` prints the resolved fragment
 sources and merged operation order without reading configurations. Declarative
 rules cannot express arbitrary Rust migrations; use `ConfigMigrator` in the
-application for those. `diff` validates two configurations, then reports
-path-based node, parameter, and include-file set changes; child nodes are matched
-by type and name/kind/key, so insertions and reorders report moves rather than
+application for those. `diff` validates two configurations, then reports path-based
+node, parameter, and include-file set changes; child nodes are matched by type and
+name/kind/key, so insertions and reorders report moves rather than
 changing every later index. Included files with matching relative paths are
 compared recursively, and their findings carry a `file` field. It exits nonzero
 when differences exist and supports `--json` for review tooling.

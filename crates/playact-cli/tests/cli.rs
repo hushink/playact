@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use playact::config::{NodeCategory, NodeRegistry};
 use playact::prelude::*;
@@ -1519,6 +1520,323 @@ fn migrate_strict_rejects_operations_with_no_effect() {
 }
 
 #[test]
+fn migrate_strict_files_checks_per_file_coverage() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"shared.json"}]}}"#,
+    );
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"},
+            {"op":"set_field","where":{"type":"sequence"},"field":"name","value":"sequence","overwrite":true}
+        ]}]}"#,
+    );
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_shared = fs::read_to_string(&shared).expect("original shared");
+    let output = directory.path.join("staged");
+
+    let staged = run(&[
+        "migrate",
+        "--strict",
+        "--json",
+        "--output",
+        output.to_str().expect("output path"),
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(staged.status.success(), "{staged:?}");
+    let report: Value = serde_json::from_slice(&staged.stdout).expect("valid JSON report");
+    assert_eq!(report[0]["valid"], true, "{report}");
+    let operations = report[0]["operations"].as_array().expect("operations");
+    assert!(
+        operations.iter().any(|operation| {
+            operation["op"] == "set_field" && operation["matched"] == 1 && operation["changed"] == 1
+        }),
+        "{report}"
+    );
+    let file_operations = report[0]["file_operations"]
+        .as_array()
+        .expect("per-file operations");
+    assert_eq!(file_operations.len(), 2, "{report}");
+    let root_operations = file_operations
+        .iter()
+        .find(|file| {
+            file["file"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("root.json"))
+        })
+        .expect("root file operations")["operations"]
+        .as_array()
+        .expect("root operations");
+    assert!(
+        root_operations
+            .iter()
+            .any(|operation| operation["op"] == "set_field" && operation["matched"] == 1),
+        "{report}"
+    );
+    let shared_operations = file_operations
+        .iter()
+        .find(|file| {
+            file["file"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("shared.json"))
+        })
+        .expect("shared file operations")["operations"]
+        .as_array()
+        .expect("shared operations");
+    assert!(
+        shared_operations
+            .iter()
+            .any(|operation| operation["op"] == "set_field" && operation["matched"] == 0),
+        "{report}"
+    );
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&shared).expect("shared"),
+        original_shared
+    );
+
+    let strict_files = run(&[
+        "migrate",
+        "--strict-files",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!strict_files.status.success(), "{strict_files:?}");
+    let stderr = String::from_utf8_lossy(&strict_files.stderr);
+    assert!(
+        stderr.contains("strict file migration checks failed:"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("shared.json"), "{stderr}");
+    assert!(stderr.contains("matched no objects"), "{stderr}");
+    assert!(
+        stderr.contains("no files were written because strict migration checks failed"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&shared).expect("shared"),
+        original_shared
+    );
+}
+
+#[test]
+fn migrate_file_operations_skip_current_files_in_shared_graphs() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[
+            {"type":"include","path":"a.json"},
+            {"type":"include","path":"b.json"}
+        ]}}"#,
+    );
+    directory.write(
+        "a.json",
+        r#"{"version":0,"tree":{"type":"include","path":"shared.json"}}"#,
+    );
+    directory.write(
+        "b.json",
+        r#"{"version":0,"tree":{"type":"include","path":"shared.json"}}"#,
+    );
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"}
+        ]}]}"#,
+    );
+    let original_shared = fs::read_to_string(&shared).expect("original shared");
+
+    let migrated = run(&[
+        "migrate",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let report: Value = serde_json::from_slice(&migrated.stdout).expect("valid JSON report");
+    let file_operations = report[0]["file_operations"]
+        .as_array()
+        .expect("per-file operations");
+    assert_eq!(file_operations.len(), 3, "{report}");
+    for expected in ["root.json", "a.json", "b.json"] {
+        assert!(
+            file_operations.iter().any(|file| {
+                file["file"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with(expected))
+            }),
+            "{report}"
+        );
+    }
+    assert!(
+        !file_operations.iter().any(|file| {
+            file["file"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("shared.json"))
+        }),
+        "{report}"
+    );
+    assert_eq!(
+        fs::read_to_string(&shared).expect("shared"),
+        original_shared
+    );
+
+    let linted = run(&["lint", root.to_str().expect("root path")]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn migrate_file_operations_deduplicate_shared_includes() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"sequence","children":[
+            {"type":"include","path":"a.json"},
+            {"type":"include","path":"b.json"}
+        ]}}"#,
+    );
+    directory.write(
+        "a.json",
+        r#"{"version":0,"tree":{"type":"include","path":"shared.json"}}"#,
+    );
+    directory.write(
+        "b.json",
+        r#"{"version":0,"tree":{"type":"include","path":"shared.json"}}"#,
+    );
+    directory.write(
+        "shared.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"}
+        ]}]}"#,
+    );
+
+    let migrated = run(&[
+        "migrate",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let report: Value = serde_json::from_slice(&migrated.stdout).expect("valid JSON report");
+    let file_operations = report[0]["file_operations"]
+        .as_array()
+        .expect("per-file operations");
+    assert_eq!(file_operations.len(), 4, "{report}");
+    assert_eq!(
+        file_operations
+            .iter()
+            .filter(|file| {
+                file["file"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("shared.json"))
+            })
+            .count(),
+        1,
+        "{report}"
+    );
+    assert_eq!(
+        file_operations
+            .iter()
+            .find(|file| {
+                file["file"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("shared.json"))
+            })
+            .expect("shared operations")["operations"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "{report}"
+    );
+}
+
+#[test]
+#[ignore = "manual migration stress benchmark"]
+fn migrate_large_include_graph_and_rule_set() {
+    const FILES: usize = 64;
+    const RULES: usize = 64;
+
+    let directory = TempDir::new();
+    let includes: Vec<String> = (0..FILES)
+        .map(|index| format!(r#"{{"type":"include","path":"inc-{index}.json"}}"#))
+        .collect();
+    let root = directory.write(
+        "root.json",
+        &format!(
+            r#"{{"version":0,"tree":{{"type":"sequence","children":[{}]}}}}"#,
+            includes.join(",")
+        ),
+    );
+    for index in 0..FILES {
+        directory.write(
+            &format!("inc-{index}.json"),
+            r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+        );
+    }
+    let mut operations = vec![String::from(
+        r#"{"op":"rename_field","from":"tree","to":"root"}"#,
+    )];
+    for index in 0..RULES {
+        operations.push(format!(
+            r#"{{"op":"remove_field","where":{{"type":"missing"}},"field":"legacy_{index}"}}"#
+        ));
+    }
+    let manifest = directory.write(
+        "migrations.json",
+        &format!(
+            r#"{{"version":1,"migrations":[{{"from":0,"operations":[{}]}}]}}"#,
+            operations.join(",")
+        ),
+    );
+
+    let started = Instant::now();
+    let migrated = run(&[
+        "migrate",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    let elapsed = started.elapsed();
+    assert!(migrated.status.success(), "{migrated:?}");
+    eprintln!(
+        "migrated {} files with {} operations in {elapsed:?}",
+        FILES + 1,
+        RULES + 1
+    );
+    let report: Value = serde_json::from_slice(&migrated.stdout).expect("valid JSON report");
+    assert_eq!(
+        report[0]["operations"].as_array().map(Vec::len),
+        Some(RULES + 1),
+        "{report}"
+    );
+    assert_eq!(
+        report[0]["file_operations"].as_array().map(Vec::len),
+        Some(FILES + 1),
+        "{report}"
+    );
+}
+
+#[test]
 fn migrate_diff_previews_field_changes_without_writing() {
     let directory = TempDir::new();
     let root = directory.write(
@@ -1880,6 +2198,18 @@ fn migrate_report_schema_matches_json_reports() {
             .is_some(),
         "{schema}"
     );
+    assert!(
+        schema
+            .pointer("/$defs/MigrationReport/properties/file_operations")
+            .is_some(),
+        "{schema}"
+    );
+    assert!(
+        schema
+            .pointer("/$defs/FileOperationReport/properties/operations")
+            .is_some(),
+        "{schema}"
+    );
     let validator = jsonschema::validator_for(&schema).expect("valid report schema");
     validator.validate(&report).expect("report follows schema");
 
@@ -1887,6 +2217,53 @@ fn migrate_report_schema_matches_json_reports() {
     assert!(!conflict.status.success(), "{conflict:?}");
     let stderr = String::from_utf8_lossy(&conflict.stderr);
     assert!(stderr.contains("cannot be combined"), "{stderr}");
+}
+
+#[test]
+fn migrate_schemas_writes_all_schema_documents() {
+    let directory = TempDir::new();
+    let schema_dir = directory.path.join("schemas");
+    let written = run(&[
+        "migrate",
+        "--schemas",
+        schema_dir.to_str().expect("schema directory"),
+    ]);
+    assert!(written.status.success(), "{written:?}");
+    let stdout = String::from_utf8_lossy(&written.stdout);
+    assert!(stdout.contains("wrote 3 schema files"), "{stdout}");
+    for name in [
+        "manifest.schema.json",
+        "report.schema.json",
+        "plan.schema.json",
+    ] {
+        let text = fs::read_to_string(schema_dir.join(name)).expect("schema document");
+        let schema: Value = serde_json::from_str(&text).expect("valid schema JSON");
+        assert_eq!(
+            schema["$schema"], "https://json-schema.org/draft/2020-12/schema",
+            "{name}"
+        );
+    }
+
+    let repeated = run(&[
+        "migrate",
+        "--schemas",
+        schema_dir.to_str().expect("schema directory"),
+    ]);
+    assert!(!repeated.status.success(), "{repeated:?}");
+    let stderr = String::from_utf8_lossy(&repeated.stderr);
+    assert!(stderr.contains("not empty"), "{stderr}");
+
+    let empty_dir = directory.path.join("empty-schemas");
+    fs::create_dir_all(&empty_dir).expect("create empty schema directory");
+    let empty_written = run(&[
+        "migrate",
+        "--schemas",
+        empty_dir.to_str().expect("empty schema directory"),
+    ]);
+    assert!(empty_written.status.success(), "{empty_written:?}");
+    assert!(empty_dir.join("manifest.schema.json").is_file());
+    assert!(empty_dir.join("report.schema.json").is_file());
+    assert!(empty_dir.join("plan.schema.json").is_file());
 }
 
 #[test]
@@ -2168,6 +2545,25 @@ fn migrate_explain_prints_resolved_plan() {
     assert_eq!(operations[1]["target"]["fields"]["type"], "legacy");
     assert_eq!(operations[2]["target"]["scope"], "at");
     assert_eq!(operations[2]["target"]["pointer"], "/root");
+
+    let schema_output = run(&["migrate", "--plan-schema"]);
+    assert!(schema_output.status.success(), "{schema_output:?}");
+    let schema: Value = serde_json::from_slice(&schema_output.stdout).expect("valid plan schema");
+    assert_eq!(schema["title"], "MigrationPlan");
+    assert!(
+        schema
+            .pointer("/$defs/PlanOperation/properties/target")
+            .is_some(),
+        "{schema}"
+    );
+    assert!(
+        schema
+            .pointer("/$defs/PlanOperation/properties/source_index")
+            .is_some(),
+        "{schema}"
+    );
+    let validator = jsonschema::validator_for(&schema).expect("valid plan schema");
+    validator.validate(&plan).expect("plan follows schema");
 
     let with_config = run(&[
         "migrate",

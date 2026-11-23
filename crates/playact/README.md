@@ -798,20 +798,21 @@ let watcher =
   writes files in place, or stages the full include graph with `--output DIR`
   while preserving include strings. Use `--check` for a dry run, `--diff` for
   field-level previews, and `--patch` for unified diffs (`--json` includes
-  changes, per-operation `matched`/`changed` counts, and relative source manifest
-  paths; `--patch` and `--json` are mutually exclusive; `--output` takes one root
-  and cannot be combined with `--check`). `--strict` fails before writing when an
-  executed operation matches no objects or changes none; otherwise those
-  operations are warnings in human output.
-  `--manifest-schema` prints the manifest JSON Schema for editor completion,
-  `--report-schema` prints the schema for `--json` migration reports, and
+  changes, per-operation `matched`/`changed` counts, relative source manifest
+  paths, and per-file `file_operations`; `--patch` and `--json` are mutually
+  exclusive; `--output` takes one root and cannot be combined with `--check`).
+  `--strict` fails before writing when an executed operation matches no objects or
+  changes none; `--strict-files` applies the no-match check per file. Otherwise
+  those operations are warnings in human output.
+  `--manifest-schema`, `--report-schema`, and `--plan-schema` print the manifest,
+  report, and plan JSON Schemas, `--schemas DIR` writes all three, and
   `--init PATH` writes a starter manifest. Manifests can include reusable
-  fragments through `include`; operations for the same version merge from
-  fragments before local operations, and fragment paths stay inside the root
-  manifest's directory. `--explain [--json] --manifest migrations.json` prints a
-  human-readable or JSON plan of the resolved fragment sources and merged
-  operations without configuration files. Arbitrary migrations still belong in a
-  `ConfigMigrator` closure inside the application.
+  fragments through `include`; operations for the same version merge from fragments before
+  local operations, and fragment paths stay inside the root manifest's directory.
+  `--explain [--json] --manifest migrations.json` prints a human-readable or JSON
+  plan of the resolved fragment sources and merged operations without
+  configuration files. Arbitrary migrations still belong in a `ConfigMigrator`
+  closure inside the application.
 - See [`examples/config_migration.rs`](examples/config_migration.rs) for a v0
   root and include that are migrated, built, and ticked.
 

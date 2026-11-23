@@ -130,6 +130,15 @@ jobs:
           cargo run -p playact-cli --quiet -- migrate --report-schema > target/migrate-report.schema.json
           grep -q '"OperationReport"' target/migrate-report.schema.json
           grep -q '"source_index"' target/migrate-report.schema.json
+          grep -q '"file_operations"' target/migrate-report.schema.json
+          cargo run -p playact-cli --quiet -- migrate --plan-schema > target/migrate-plan.schema.json
+          grep -q '"PlanOperation"' target/migrate-plan.schema.json
+          schema_dir=$(mktemp -d)
+          cargo run -p playact-cli --quiet -- migrate --schemas "$schema_dir"
+          test -f "$schema_dir/manifest.schema.json"
+          test -f "$schema_dir/report.schema.json"
+          test -f "$schema_dir/plan.schema.json"
+          rm -rf "$schema_dir"
           cargo run -p playact-cli --quiet -- migrate --init "$migrate_dir/init.json"
           grep -q '"migrations"' "$migrate_dir/init.json"
           if cargo run -p playact-cli --quiet -- migrate --check --diff --patch --manifest "$migrate_dir/migrations.json" "$migrate_dir/root.json"; then
@@ -161,7 +170,16 @@ jobs:
             exit 1
           fi
           grep -q '"matched": 0' target/migrate-strict.json
+          grep -q '"file_operations"' target/migrate-strict.json
           grep -q '"version":0' "$migrate_dir/strict-root.json"
+          printf '%s\n' '{"version":0,"tree":{"type":"sequence","children":[{"type":"include","path":"strict-files-shared.json"}]}}' > "$migrate_dir/strict-files-root.json"
+          printf '%s\n' '{"version":0,"tree":{"type":"action","name":"anything"}}' > "$migrate_dir/strict-files-shared.json"
+          printf '%s\n' '{"version":1,"migrations":[{"from":0,"operations":[{"op":"rename_field","from":"tree","to":"root"},{"op":"set_field","where":{"type":"sequence"},"field":"name","value":"sequence","overwrite":true}]}]}' > "$migrate_dir/strict-files.json"
+          if cargo run -p playact-cli --quiet -- migrate --strict-files --manifest "$migrate_dir/strict-files.json" "$migrate_dir/strict-files-root.json"; then
+            echo "migrate --strict-files should reject per-file zero matches"
+            exit 1
+          fi
+          grep -q '"version":0' "$migrate_dir/strict-files-root.json"
           rm -rf "$migrate_dir"
           bundle_parent=$(mktemp -d)
           bundle_dir="$bundle_parent/bundle"

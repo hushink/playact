@@ -590,42 +590,60 @@ struct ManifestData {
     operations: BTreeMap<u32, Vec<LoadedOperation>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct ManifestPlan {
+    /// Canonical path to the root manifest.
     manifest: String,
+    /// Manifest sources in depth-first load order; the root is depth 0.
     sources: Vec<PlanSource>,
+    /// Merged migration versions in ascending order.
     versions: Vec<PlanVersion>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct PlanSource {
+    /// Path relative to the root manifest's directory.
     path: String,
+    /// Include depth; the root manifest is 0.
     depth: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct PlanVersion {
+    /// Source configuration version.
     from: u32,
+    /// Target version (`from + 1`).
     to: u32,
+    /// Merged operations in execution order.
     operations: Vec<PlanOperation>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct PlanOperation {
+    /// One-based position in the merged version step.
     index: usize,
+    /// Operation name.
     op: &'static str,
+    /// Manifest file that declared the operation.
     source: String,
+    /// One-based position in the source manifest's step.
     source_index: usize,
+    /// Human-readable operation summary.
     description: String,
+    /// Structured target selector.
     target: PlanTarget,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 enum PlanTarget {
+    /// The document root object.
     Root,
+    /// Every object in the document.
     EveryObject,
+    /// One object at a JSON Pointer.
     At { pointer: String },
+    /// Objects matching all listed field values.
     Where { fields: BTreeMap<String, Value> },
 }
 
@@ -1015,6 +1033,15 @@ pub(crate) struct OperationReport {
     pub changed: usize,
 }
 
+/// Operation counters for one migrated file.
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct FileOperationReport {
+    /// Configuration file path as displayed in issues and changes.
+    pub file: String,
+    /// Operations whose migration steps ran for this file.
+    pub operations: Vec<OperationReport>,
+}
+
 /// Result of migrating one root configuration and its include graph.
 #[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct MigrationReport {
@@ -1030,6 +1057,8 @@ pub(crate) struct MigrationReport {
     pub changes: Vec<FieldChange>,
     /// Operations whose migration steps ran, with match and change counts.
     pub operations: Vec<OperationReport>,
+    /// Per-file operation counters for files whose steps ran.
+    pub file_operations: Vec<FileOperationReport>,
 }
 
 /// Result of migrating every supplied root.
@@ -1078,6 +1107,16 @@ pub(crate) fn report_schema() -> Value {
         .expect("report schema serialization cannot fail");
     schema["title"] = Value::from("MigrationReports");
     schema["description"] = Value::from("Per-root reports emitted by `playact migrate --json`.");
+    schema
+}
+
+/// JSON Schema for `--explain --json` migration plans.
+pub(crate) fn plan_schema() -> Value {
+    let mut schema = serde_json::to_value(schemars::schema_for!(ManifestPlan))
+        .expect("plan schema serialization cannot fail");
+    schema["title"] = Value::from("MigrationPlan");
+    schema["description"] =
+        Value::from("Resolved manifest plan emitted by `playact migrate --explain --json`.");
     schema
 }
 
@@ -1297,6 +1336,7 @@ pub(crate) fn migrate_files(
             issues: Vec::new(),
             migrated: BTreeSet::new(),
             changes: Vec::new(),
+            file_operations: Vec::new(),
             visited: HashSet::new(),
             stack: Vec::new(),
         };
@@ -1316,6 +1356,7 @@ pub(crate) fn migrate_files(
             migrated: state.migrated.into_iter().collect(),
             changes: state.changes,
             operations,
+            file_operations: state.file_operations,
         });
     }
 
@@ -1357,6 +1398,7 @@ struct RootState<'a> {
     issues: Vec<LintIssue>,
     migrated: BTreeSet<String>,
     changes: Vec<FieldChange>,
+    file_operations: Vec<FileOperationReport>,
     visited: HashSet<PathBuf>,
     stack: Vec<PathBuf>,
 }
@@ -1416,6 +1458,7 @@ impl RootState<'_> {
             }
         };
         let original = document.clone();
+        let stats_before = self.manifest.snapshot();
         let migrated = match self.manifest.migrator.upgrade(document) {
             Ok(document) => document,
             Err(error) => {
@@ -1427,6 +1470,17 @@ impl RootState<'_> {
                 return;
             }
         };
+        let file_operations = operation_reports(
+            &self.manifest.definitions,
+            &stats_before,
+            &self.manifest.snapshot(),
+        );
+        if !file_operations.is_empty() {
+            self.file_operations.push(FileOperationReport {
+                file: display.clone(),
+                operations: file_operations,
+            });
+        }
         let changed = migrated != original;
         self.changes
             .extend(collect_changes(&original, &migrated, &display));
@@ -1618,7 +1672,40 @@ fn serialize_migrated(document: &Value, format: Format) -> Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use serde_json::json;
+
+    struct TempTree {
+        path: std::path::PathBuf,
+    }
+
+    impl TempTree {
+        fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "playact-prop-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("create property directory");
+            Self { path }
+        }
+
+        fn write(&self, relative: &str, contents: &str) -> std::path::PathBuf {
+            let path = self.path.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("create property parent");
+            }
+            std::fs::write(&path, contents).expect("write property file");
+            path
+        }
+    }
+
+    impl Drop for TempTree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
 
     fn rename_root() -> Operation {
         Operation::Rename {
@@ -2080,6 +2167,134 @@ mod tests {
         ];
         for operation in cases {
             assert!(operation.validate().is_err(), "{operation:?}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn resolved_manifest_includes_stay_inside_the_root(
+            parts in proptest::collection::vec(
+                proptest::sample::select(vec![
+                    "a.json",
+                    "sub",
+                    "b.json",
+                    "..",
+                    ".",
+                    "current.json",
+                ]),
+                0..6,
+            )
+        ) {
+            let tree = TempTree::new();
+            tree.write("base/current.json", "{}");
+            tree.write("base/a.json", "{}");
+            tree.write("base/sub/b.json", "{}");
+            tree.write("escape.json", "{}");
+            let base = tree
+                .path
+                .join("base")
+                .canonicalize()
+                .expect("canonical base");
+            let current = base.join("current.json");
+            let include = parts.join("/");
+            if let Ok(resolved) = resolve_manifest_include(&base, &current, &include) {
+                prop_assert!(
+                    resolved.starts_with(&base),
+                    "include {:?} escaped to {}",
+                    include,
+                    resolved.display()
+                );
+                prop_assert!(resolved.is_file(), "include {:?} is not a file", include);
+            }
+        }
+
+        #[test]
+        fn manifest_include_cycles_are_rejected_for_any_cycle_size(size in 2usize..=5) {
+            let tree = TempTree::new();
+            for index in 0..size {
+                let next = (index + 1) % size;
+                let manifest = json!({
+                    "version": 1,
+                    "include": [format!("m{next}.json")],
+                    "migrations": []
+                });
+                tree.write(
+                    &format!("m{index}.json"),
+                    &serde_json::to_string(&manifest).expect("manifest JSON"),
+                );
+            }
+            let root = tree.path.join("m0.json").canonicalize().expect("root");
+            let error = load_manifest_data(&root).err().expect("cycle");
+            prop_assert!(error.contains("cycle"), "{}", error);
+        }
+
+        #[test]
+        fn manifest_merge_order_follows_unique_include_order(
+            raw in proptest::collection::vec(0u8..5, 2..8)
+        ) {
+            let mut order = Vec::new();
+            for index in raw {
+                if !order.contains(&index) {
+                    order.push(index);
+                }
+            }
+            prop_assume!(order.len() >= 2);
+
+            let tree = TempTree::new();
+            let includes: Vec<Value> = order
+                .iter()
+                .map(|index| Value::from(format!("f{index}.json")))
+                .collect();
+            let manifest = json!({
+                "version": 1,
+                "include": includes,
+                "migrations": [{
+                    "from": 0,
+                    "operations": [{
+                        "op": "remove_field",
+                        "where": {"type": "missing"},
+                        "field": "field_local"
+                    }]
+                }]
+            });
+            tree.write(
+                "migrations.json",
+                &serde_json::to_string(&manifest).expect("manifest JSON"),
+            );
+            for index in &order {
+                let fragment = json!({
+                    "version": 1,
+                    "migrations": [{
+                        "from": 0,
+                        "operations": [{
+                            "op": "remove_field",
+                            "where": {"type": "missing"},
+                            "field": format!("field_{index}")
+                        }]
+                    }]
+                });
+                tree.write(
+                    &format!("f{index}.json"),
+                    &serde_json::to_string(&fragment).expect("fragment JSON"),
+                );
+            }
+
+            let data = load_manifest_data(&tree.path.join("migrations.json"))
+                .expect("merged manifest");
+            let operations = data.operations.get(&0).expect("version 0 operations");
+            let mut fields = Vec::new();
+            for loaded in operations {
+                match &loaded.operation {
+                    Operation::Remove { field, .. } => fields.push(field.clone()),
+                    other => panic!("unexpected operation {other:?}"),
+                }
+            }
+            let mut expected: Vec<String> =
+                order.iter().map(|index| format!("field_{index}")).collect();
+            expected.push(String::from("field_local"));
+            prop_assert_eq!(fields, expected);
         }
     }
 }

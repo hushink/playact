@@ -123,10 +123,12 @@ formatting for every lint-valid file. Writes nothing and exits nonzero when any
 file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
-usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] [--strict] CONFIG...
+usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--output DIR] [--check] [--diff] [--patch] [--strict] [--strict-files] CONFIG...
        playact migrate --manifest PATH --explain [--json]
        playact migrate --manifest-schema
        playact migrate --report-schema
+       playact migrate --plan-schema
+       playact migrate --schemas DIR
        playact migrate --init PATH
 
 Applies versioned declarative operations from a manifest to each configuration
@@ -142,17 +144,19 @@ directory with include strings preserved. --output requires exactly one
 root, cannot be combined with --check, and stages the complete include graph.
 --check reports files that would change without writing; --diff prints
 field-level changes; --patch prints unified diffs; --json prints per-root reports
-including changes, operation match counts, and relative source manifest paths.
---patch and --json are mutually exclusive. --strict fails before writing when an executed
-operation matches no objects or changes none; without it, such operations are
-warnings in human output.
+including changes, operation match counts, relative source manifest paths, and
+per-file counters. --patch and --json are mutually exclusive. --strict fails before writing when an
+executed operation matches no objects or changes none; without it, such operations
+are warnings in human output. --strict-files fails when an operation matches no
+objects in a specific migrated file; per-file counters are always in --json
+reports.
 
 --explain prints the resolved fragment sources and merged operation plan without
 reading configurations or writing files; --json prints that plan as JSON.
---manifest-schema prints the manifest JSON Schema, and --report-schema prints the
-schema for --json migration reports. --init PATH writes a starter manifest,
-choosing JSON/TOML/YAML/RON from the extension and refusing to overwrite an
-existing file.";
+--manifest-schema, --report-schema, and --plan-schema print the corresponding
+JSON Schemas; --schemas DIR writes all three into a new or empty directory.
+--init PATH writes a starter manifest, choosing JSON/TOML/YAML/RON from the
+extension and refusing to overwrite an existing file.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -873,9 +877,12 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut diff_output = false;
     let mut patch_output = false;
     let mut strict = false;
+    let mut strict_files = false;
     let mut explain = false;
     let mut show_manifest_schema = false;
     let mut show_report_schema = false;
+    let mut show_plan_schema = false;
+    let mut schemas_dir = None;
     let mut init_manifest = None;
     let mut options_done = false;
     let mut files = Vec::new();
@@ -894,6 +901,14 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--report-schema") => {
                     show_report_schema = true;
+                    continue;
+                }
+                Some("--plan-schema") => {
+                    show_plan_schema = true;
+                    continue;
+                }
+                Some("--schemas") => {
+                    schemas_dir = Some(next_path(&mut arguments, "--schemas")?);
                     continue;
                 }
                 Some("--init") => {
@@ -918,6 +933,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--strict") => {
                     strict = true;
+                    continue;
+                }
+                Some("--strict-files") => {
+                    strict_files = true;
                     continue;
                 }
                 Some("--explain") => {
@@ -952,18 +971,15 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         }
         files.push(PathBuf::from(argument));
     }
-    if show_manifest_schema || show_report_schema || init_manifest.is_some() {
-        if show_manifest_schema && init_manifest.is_some() {
-            return Err(String::from("--manifest-schema cannot be combined with --init").into());
-        }
-        if show_manifest_schema && show_report_schema {
-            return Err(
-                String::from("--manifest-schema cannot be combined with --report-schema").into(),
-            );
-        }
-        if show_report_schema && init_manifest.is_some() {
-            return Err(String::from("--report-schema cannot be combined with --init").into());
-        }
+    let generation_modes = usize::from(show_manifest_schema)
+        + usize::from(show_report_schema)
+        + usize::from(show_plan_schema)
+        + usize::from(schemas_dir.is_some())
+        + usize::from(init_manifest.is_some());
+    if generation_modes > 1 {
+        return Err(String::from("migration generation modes cannot be combined").into());
+    }
+    if generation_modes > 0 {
         if !files.is_empty()
             || manifest_path.is_some()
             || schema_path.is_some()
@@ -974,6 +990,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             || diff_output
             || patch_output
             || strict
+            || strict_files
             || explain
         {
             return Err(String::from(
@@ -992,6 +1009,18 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&migrate::report_schema())?
+            );
+            return Ok(Outcome::Success);
+        }
+        if show_plan_schema {
+            println!("{}", serde_json::to_string_pretty(&migrate::plan_schema())?);
+            return Ok(Outcome::Success);
+        }
+        if let Some(directory) = schemas_dir.as_deref() {
+            let files = write_schema_directory(directory)?;
+            println!(
+                "wrote {files} schema files to {}",
+                lint::display_path(directory)
             );
             return Ok(Outcome::Success);
         }
@@ -1021,6 +1050,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
             || diff_output
             || patch_output
             || strict
+            || strict_files
         {
             return Err(String::from(
                 "migrate --explain cannot be combined with configuration paths or other migration options",
@@ -1069,12 +1099,24 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let operation_summary = migrate::summarize_operations(&outcome.reports);
     let findings = operation_findings(&operation_summary);
     let strict_failed = strict && invalid == 0 && !findings.is_empty();
-    let has_issues = invalid > 0 || strict_failed;
+    let file_findings = if strict_files && invalid == 0 {
+        file_operation_findings(&outcome.reports)
+    } else {
+        Vec::new()
+    };
+    let strict_files_failed = !file_findings.is_empty();
+    let has_issues = invalid > 0 || strict_failed || strict_files_failed;
     let mut staged = None;
 
     if strict_failed {
         eprintln!("strict migration checks failed:");
         for finding in &findings {
+            eprintln!("  {finding}");
+        }
+    }
+    if strict_files_failed {
+        eprintln!("strict file migration checks failed:");
+        for finding in &file_findings {
             eprintln!("  {finding}");
         }
     }
@@ -1106,7 +1148,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         }
         if has_issues {
             if !check && !migrated.is_empty() {
-                if strict_failed {
+                if strict_failed || strict_files_failed {
                     eprintln!("no files were written because strict migration checks failed");
                 } else {
                     eprintln!("no files were written because validation failed");
@@ -1196,6 +1238,23 @@ fn operation_findings(operations: &[migrate::OperationReport]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn file_operation_findings(reports: &[migrate::MigrationReport]) -> Vec<String> {
+    let mut findings = BTreeSet::new();
+    for report in reports {
+        for file in &report.file_operations {
+            for operation in &file.operations {
+                if operation.matched == 0 {
+                    findings.insert(format!(
+                        "file `{}`: operation {} ({} from version {}, source `{}`) matched no objects",
+                        file.file, operation.index, operation.op, operation.from, operation.source
+                    ));
+                }
+            }
+        }
+    }
+    findings.into_iter().collect()
 }
 
 fn unique_changes(reports: &[migrate::MigrationReport]) -> Vec<&migrate::FieldChange> {
@@ -1514,6 +1573,41 @@ fn write_output(path: Option<&Path>, contents: &[u8]) -> Result<(), Box<dyn Erro
         }
     }
     Ok(())
+}
+
+fn write_schema_directory(directory: &Path) -> Result<usize, String> {
+    let schemas = [
+        ("manifest.schema.json", migrate::manifest_schema()),
+        ("report.schema.json", migrate::report_schema()),
+        ("plan.schema.json", migrate::plan_schema()),
+    ];
+    let mut files = Vec::with_capacity(schemas.len());
+    for (name, schema) in schemas {
+        let mut bytes = serde_json::to_vec_pretty(&schema)
+            .map_err(|error| format!("serialize `{name}`: {error}"))?;
+        bytes.push(b'\n');
+        files.push((name, bytes));
+    }
+
+    let created = convert::prepare_output(directory)?;
+    if created && let Err(error) = fs::create_dir_all(directory) {
+        let _ = fs::remove_dir_all(directory);
+        return Err(format!(
+            "create schema directory `{}`: {error}",
+            lint::display_path(directory)
+        ));
+    }
+
+    let mut written = Vec::with_capacity(files.len());
+    for (name, bytes) in files {
+        let path = directory.join(name);
+        written.push(path.clone());
+        if let Err(error) = fs::write(&path, bytes) {
+            convert::cleanup_output(directory, &written, created);
+            return Err(format!("write `{}`: {error}", lint::display_path(&path)));
+        }
+    }
+    Ok(written.len())
 }
 
 #[cfg(test)]
