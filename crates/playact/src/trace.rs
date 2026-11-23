@@ -42,6 +42,7 @@ impl fmt::Display for AbortReason {
 /// `[1, 2]`. Events carry no wall-clock durations, preserving determinism under
 /// virtual time.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum TraceEvent<'a> {
     /// The node started ticking.
     Enter {
