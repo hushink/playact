@@ -1138,6 +1138,7 @@ shared.tick(&mut goblin_b, &mut world, time);
 | `subtree` / `contract` / `scope` | `SubtreeFactory`、`SubtreeSlot`、`SubtreeContract`、`ScopedSubtree` |
 | `snapshot` / `persistence` / `replay` | `TreeSnapshot`、`NodeIdSnapshot`、`BlackboardCodec`、`TraceRecorder` |
 | `trace` / `stats` / `diff` | `Tracer`、`TraceEvent`、`StatsTracer`、`TreeDiff`、`DiffHistory` |
+| `reload` | `ReloadReport` |
 | `inspector` | `Inspector`、`InspectorServer` |
 | `config` | `TreeSpec`、`NodeRegistry`、`FsIncludeResolver`、`ValidationLimits` |
 | `hot_reload` / `remote_config` | `TreeWatcher`、`RemoteTreeLoader` |
