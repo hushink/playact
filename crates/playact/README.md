@@ -198,6 +198,7 @@ let tree = BehaviorTreeBuilder::<World>::new("player")
 | `MemParallel` | Remembers terminal children across ticks until a threshold is met |
 | `Race` | All children run in parallel; the first terminal result wins and the rest are aborted |
 | `IfThenElse` | Runs `then` or `else`; aborts the old branch if it was Running when the condition flips |
+| `Switch` | Selects a child by a typed blackboard key; missing/unmatched keys return Failure |
 
 Key details:
 
@@ -210,6 +211,14 @@ Key details:
 - `UtilitySelector` evaluates read-only score closures; `NaN` is treated as the lowest
   score and ties go to the earliest child.
 - `Race` picks the first terminal child in child order if several finish in the same tick.
+- `Switch` is constructed from typed branches and attached with `.raw(Box::new(...))`:
+  ```rust
+  let switch = Switch::new("phase", &PHASE, vec![
+      (1, phase_one),
+      (2, phase_two),
+  ]);
+  ```
+  Changing the key aborts a Running old branch before ticking the new one.
 
 ### Decorators
 
@@ -404,8 +413,9 @@ tree.last_status(); // Option<Status>
   last status, and wall-clock time (requires `std`); query a specific node with
   `node_by_id`, or export scrapable text with `render_prometheus()`.
 - `last_status()` and `is_running()` expose the last top-level result.
-- `describe()` renders an ASCII tree or Graphviz DOT; builder/app-config IDs appear in
-  `TreeDescription::id` and DOT labels.
+- `describe()` renders an ASCII tree, Graphviz DOT, or Mermaid `graph TD`;
+  builder/app-config IDs appear in `TreeDescription::id` and diagram labels.
+- `StatsTracer::render_tree(&tree)` renders an ASCII tree with each node's last status.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.

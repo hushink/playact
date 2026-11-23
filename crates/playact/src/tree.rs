@@ -532,6 +532,51 @@ impl TreeDescription {
         out.push_str("}\n");
         out
     }
+
+    /// Renders a Mermaid `graph TD` diagram.
+    #[must_use]
+    pub fn to_mermaid(&self) -> String {
+        fn visit(
+            node: &TreeDescription,
+            parent: Option<usize>,
+            next: &mut usize,
+            out: &mut String,
+        ) {
+            let id = *next;
+            *next += 1;
+            let _ = writeln!(out, "  n{id}[\"{}\"];", escape_mermaid(&node.label()));
+            if let Some(parent) = parent {
+                let _ = writeln!(out, "  n{parent} --> n{id};");
+            }
+            for child in &node.children {
+                visit(child, Some(id), next, out);
+            }
+        }
+
+        let mut out = String::from("graph TD\n");
+        let mut next = 0;
+        visit(self, None, &mut next, &mut out);
+        out
+    }
+
+    fn label(&self) -> String {
+        match &self.id {
+            Some(node_id) => alloc::format!("{}: {} ({node_id})", self.kind.as_str(), self.name),
+            None => alloc::format!("{}: {}", self.kind.as_str(), self.name),
+        }
+    }
+}
+
+fn escape_mermaid(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push('\''),
+            '\n' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 impl fmt::Display for TreeDescription {
@@ -720,6 +765,11 @@ mod tests {
         assert!(dot.starts_with("digraph playact"));
         assert!(dot.contains("gate"));
         assert!(dot.contains("act"));
+
+        let mermaid = description.to_mermaid();
+        assert!(mermaid.starts_with("graph TD"));
+        assert!(mermaid.contains("gate"));
+        assert!(mermaid.contains("-->"));
     }
 
     #[derive(Clone, Default)]

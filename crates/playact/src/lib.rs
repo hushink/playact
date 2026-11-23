@@ -142,7 +142,7 @@ pub use builder::{BehaviorTreeBuilder, BranchBuilder};
 pub use command::CommandBuffer;
 pub use composite::{
     IfThenElse, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
-    Selector, Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild,
+    Selector, Sequence, Switch, Threshold, UtilityChild, UtilitySelector, WeightedChild,
     WeightedRandomSelector,
 };
 #[cfg(feature = "config")]
@@ -205,7 +205,7 @@ pub mod prelude {
         NODE_ID_SNAPSHOT_VERSION, Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, Parallel,
         Probability, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
         RestoreError, Retry, SNAPSHOT_VERSION, Selector, Sequence, SetValue, Status,
-        SubtreeContract, SubtreeFactory, SubtreeSlot, Threshold, Throttle, Time, Timeout,
+        SubtreeContract, SubtreeFactory, SubtreeSlot, Switch, Threshold, Throttle, Time, Timeout,
         TraceEvent, Tracer, TreeDescription, TreeSnapshot, TryAction, UntilFailure, UntilSuccess,
         UtilityChild, UtilitySelector, Wait, WaitForEvent, WaitUntil, WeightedChild,
         WeightedRandomSelector, While,

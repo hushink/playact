@@ -194,6 +194,7 @@ let tree = BehaviorTreeBuilder::<World>::new("player")
 | `MemParallel` | 跨 tick 记住终态，直到阈值满足 |
 | `Race` | 所有子节点并行推进；第一个终态获胜，其余 Running 被 abort |
 | `IfThenElse` | 条件为真执行 then，否则 else；条件翻转时 abort 旧的 Running 分支 |
+| `Switch` | 按 typed 黑板 key 选择子节点；key 缺失或无匹配返回 Failure |
 
 关键细节：
 
@@ -205,6 +206,14 @@ let tree = BehaviorTreeBuilder::<World>::new("player")
   `reset()` 恢复初始 RNG。
 - `UtilitySelector` 的评分闭包只读 `Context`；`NaN` 视为最低分，同分取靠前分支。
 - `Race` 同一 tick 多个终态时按子节点顺序取第一个。
+- `Switch` 用 typed 分支构造，并通过 `.raw(Box::new(...))` 挂载：
+  ```rust
+  let switch = Switch::new("phase", &PHASE, vec![
+      (1, phase_one),
+      (2, phase_two),
+  ]);
+  ```
+  key 改变时会先 abort 仍 Running 的旧分支，再 tick 新分支。
 
 ### 装饰节点
 
@@ -395,8 +404,9 @@ tree.last_status(); // Option<Status>
   需要 `std`；可用 `node_by_id` 按稳定 ID 查询，或用 `render_prometheus()` 导出
   可抓取的 Prometheus 文本。
 - `last_status()` / `is_running()` 暴露上一次顶层结果。
-- `describe()` 输出 ASCII 树或 Graphviz DOT；builder/配置中的 `NodeId` 会出现在
-  `TreeDescription::id` 和 DOT 标签中。
+- `describe()` 输出 ASCII 树、Graphviz DOT 或 Mermaid `graph TD`；builder/配置中的
+  `NodeId` 会出现在 `TreeDescription::id` 和图中。
+- `StatsTracer::render_tree(&tree)` 输出带每个节点最后状态的 ASCII 树。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。

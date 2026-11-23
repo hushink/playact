@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use crate::node::{Kind, NodeId};
 use crate::status::Status;
 use crate::trace::{TraceEvent, Tracer};
+use crate::tree::{BehaviorTree, TreeDescription};
 
 /// Accumulated statistics for a single node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +307,27 @@ impl StatsTracer {
         out
     }
 
+    /// Renders the tree structure with each node's last observed status.
+    ///
+    /// Nodes that have not completed a tick yet are shown as `[?]`.
+    #[must_use]
+    pub fn render_tree<W>(&self, tree: &BehaviorTree<W>) -> String {
+        let inner = self.lock();
+        let description = tree.describe();
+        let mut out = String::new();
+        let mut path = Vec::new();
+        render_status_tree(
+            &description,
+            &inner.nodes,
+            &mut path,
+            "",
+            true,
+            true,
+            &mut out,
+        );
+        out
+    }
+
     /// Clear the statistics and any in-progress timings.
     pub fn clear(&self) {
         let mut inner = self.lock();
@@ -373,6 +395,57 @@ fn escape_label(value: &str) -> String {
         }
     }
     out
+}
+
+fn render_status_tree(
+    node: &TreeDescription,
+    nodes: &BTreeMap<Vec<usize>, NodeStats>,
+    path: &mut Vec<usize>,
+    prefix: &str,
+    last: bool,
+    root: bool,
+    out: &mut String,
+) {
+    let connector = if root {
+        ""
+    } else if last {
+        "└─ "
+    } else {
+        "├─ "
+    };
+    let status = nodes
+        .get(path)
+        .and_then(|stats| stats.last_status)
+        .map_or("?", status_label);
+    let id = node
+        .id
+        .as_ref()
+        .map(|id| alloc::format!(" ({id})"))
+        .unwrap_or_default();
+    let _ = writeln!(
+        out,
+        "{prefix}{connector}{} \"{}\"{} [{status}]",
+        node.kind, node.name, id
+    );
+
+    let child_prefix = if root {
+        String::new()
+    } else {
+        alloc::format!("{prefix}{}", if last { "   " } else { "│  " })
+    };
+    for (index, child) in node.children.iter().enumerate() {
+        path.push(index);
+        render_status_tree(
+            child,
+            nodes,
+            path,
+            &child_prefix,
+            index + 1 == node.children.len(),
+            false,
+            out,
+        );
+        path.pop();
+    }
 }
 
 fn status_label(status: Status) -> &'static str {
@@ -559,6 +632,23 @@ mod tests {
         assert!(text.contains(
             "playact_node_last_status{path=\"\",name=\"work\",kind=\"action\",id=\"worker\",status=\"success\"} 1"
         ));
+    }
+
+    #[test]
+    fn renders_the_tree_with_last_statuses() {
+        let stats = StatsTracer::new();
+        let mut tree = BehaviorTreeBuilder::<()>::new("view")
+            .sequence(|b| b.action("work", |_| Status::Success))
+            .build()
+            .expect("tree");
+        tree.set_tracer(Some(Box::new(stats.clone())));
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+
+        let rendered = stats.render_tree(&tree);
+        assert!(rendered.contains("sequence \"Sequence\" [success]"));
+        assert!(rendered.contains("action \"work\" [success]"));
     }
 
     #[test]

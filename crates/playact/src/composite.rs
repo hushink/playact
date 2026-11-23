@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
+use crate::blackboard::Key;
 use crate::context::Context;
 use crate::error::BuildError;
 use crate::node::{BoxedNode, Kind, Node};
@@ -1487,6 +1488,149 @@ impl<W> Node<W> for IfThenElse<W> {
     }
 }
 
+// ==================== Switch ====================
+
+/// Selects a child by a typed blackboard value.
+///
+/// The key is read on every tick. If the selected branch changes while the old
+/// branch is `Running`, the old branch is `abort → reset` first. A missing key
+/// or no matching branch returns `Failure`.
+pub struct Switch<W, K: Clone + PartialEq + Send + 'static> {
+    name: String,
+    key: Key<K>,
+    keys: Vec<K>,
+    children: Vec<BoxedNode<W>>,
+    active: Option<usize>,
+}
+
+impl<W, K> Switch<W, K>
+where
+    K: Clone + PartialEq + Send + 'static,
+{
+    /// Creates a switch from typed branch keys and child nodes.
+    ///
+    /// The `branches` vector supplies keys and children in matching order.
+    #[must_use]
+    pub fn new(name: impl Into<String>, key: &Key<K>, branches: Vec<(K, BoxedNode<W>)>) -> Self {
+        let mut keys = Vec::with_capacity(branches.len());
+        let mut children = Vec::with_capacity(branches.len());
+        for (branch_key, child) in branches {
+            keys.push(branch_key);
+            children.push(child);
+        }
+        Self {
+            name: name.into(),
+            key: *key,
+            keys,
+            children,
+            active: None,
+        }
+    }
+
+    /// Overrides the display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn abort_active(&mut self, ctx: &mut Context<'_, W>) {
+        if let Some(index) = self.active.take() {
+            ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+        }
+    }
+}
+
+impl<W, K> Node<W> for Switch<W, K>
+where
+    K: Clone + PartialEq + Send + 'static,
+{
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        let selected = ctx
+            .blackboard_ref()
+            .get(&self.key)
+            .and_then(|value| self.keys.iter().position(|key| key == value));
+
+        if selected != self.active {
+            if let Some(index) = self.active.take() {
+                ctx.abort_child(index, &mut self.children[index], AbortReason::Preempted);
+            }
+            self.active = selected;
+        }
+
+        let Some(index) = selected else {
+            return Status::Failure;
+        };
+
+        let status = ctx.tick_child(index, &mut self.children[index]);
+        if !status.is_running() {
+            self.active = None;
+        }
+        status
+    }
+
+    fn abort(&mut self, ctx: &mut Context<'_, W>) {
+        self.abort_active(ctx);
+    }
+
+    fn reset(&mut self) {
+        self.active = None;
+        for child in &mut self.children {
+            child.reset();
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Switch
+    }
+
+    fn children(&self) -> &[BoxedNode<W>] {
+        &self.children
+    }
+
+    fn children_mut(&mut self) -> &mut [BoxedNode<W>] {
+        &mut self.children
+    }
+
+    fn save_own_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&self.active))
+    }
+
+    fn load_own_state(&mut self, bytes: &[u8]) -> bool {
+        let Some(active) = state::decode::<Option<usize>>(bytes) else {
+            return false;
+        };
+        if active.is_some_and(|index| index >= self.children.len()) {
+            return false;
+        }
+        self.active = active;
+        true
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        Some(state::encode(&(self.active, save_children(&self.children))))
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> bool {
+        let Some((active, children)) =
+            state::decode::<(Option<usize>, Vec<Option<Vec<u8>>>)>(bytes)
+        else {
+            return false;
+        };
+        if active.is_some_and(|index| index >= self.children.len())
+            || !load_children(&mut self.children, &children)
+        {
+            return false;
+        }
+        self.active = active;
+        true
+    }
+}
+
 // ==================== Parallel ====================
 
 fn validate_parallel_thresholds(
@@ -2061,6 +2205,90 @@ mod tests {
 
     fn ctx<'a>(world: &'a mut (), bb: &'a mut Blackboard) -> Context<'a, ()> {
         Context::new(world, bb, Time::from_millis(0, 100))
+    }
+
+    #[test]
+    fn switch_selects_branch_and_fails_on_missing_key() {
+        static PHASE: Key<u32> = Key::new("test.switch.phase");
+        static MARK: Key<u32> = Key::new("test.switch.mark");
+
+        let branches = vec![
+            (
+                1_u32,
+                Box::new(Action::<()>::new("one", |ctx| {
+                    ctx.blackboard().set(&MARK, 1_u32);
+                    Status::Success
+                })) as BoxedNode<()>,
+            ),
+            (
+                2_u32,
+                Box::new(Action::<()>::new("two", |ctx| {
+                    ctx.blackboard().set(&MARK, 2_u32);
+                    Status::Success
+                })) as BoxedNode<()>,
+            ),
+        ];
+        let mut node = Switch::new("switch", &PHASE, branches);
+        let mut world = ();
+        let mut board = Blackboard::new();
+
+        board.set(&PHASE, 1_u32);
+        {
+            let mut context = ctx(&mut world, &mut board);
+            assert_eq!(node.tick(&mut context), Status::Success);
+        }
+        assert_eq!(board.get(&MARK), Some(&1));
+
+        board.set(&PHASE, 2_u32);
+        {
+            let mut context = ctx(&mut world, &mut board);
+            assert_eq!(node.tick(&mut context), Status::Success);
+        }
+        assert_eq!(board.get(&MARK), Some(&2));
+
+        board.clear_key(&PHASE);
+        {
+            let mut context = ctx(&mut world, &mut board);
+            assert_eq!(node.tick(&mut context), Status::Failure);
+        }
+    }
+
+    #[test]
+    fn switch_aborts_the_old_running_branch() {
+        static PHASE: Key<u32> = Key::new("test.switch.abort.phase");
+        let aborts = Arc::new(AtomicU32::new(0));
+        let aborts_in_one = Arc::clone(&aborts);
+
+        let branches = vec![
+            (
+                1_u32,
+                Box::new(
+                    Action::<()>::new("one", |_| Status::Running).with_abort(move |_| {
+                        aborts_in_one.fetch_add(1, Ordering::Relaxed);
+                    }),
+                ) as BoxedNode<()>,
+            ),
+            (
+                2_u32,
+                Box::new(Action::<()>::new("two", |_| Status::Success)) as BoxedNode<()>,
+            ),
+        ];
+        let mut node = Switch::new("switch", &PHASE, branches);
+        let mut world = ();
+        let mut board = Blackboard::new();
+
+        board.set(&PHASE, 1_u32);
+        {
+            let mut context = ctx(&mut world, &mut board);
+            assert_eq!(node.tick(&mut context), Status::Running);
+        }
+
+        board.set(&PHASE, 2_u32);
+        {
+            let mut context = ctx(&mut world, &mut board);
+            assert_eq!(node.tick(&mut context), Status::Success);
+        }
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
     }
 
     #[test]

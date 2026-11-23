@@ -37,6 +37,8 @@ pub enum Kind {
     Guard,
     /// Picks the then/else branch by condition.
     IfThenElse,
+    /// Selects a child by a typed blackboard value.
+    Switch,
     /// Parallel node.
     Parallel,
     /// Parallel node that remembers terminal states across ticks.
@@ -109,6 +111,7 @@ impl Kind {
             Self::UtilitySelector => "utility_selector",
             Self::Guard => "guard",
             Self::IfThenElse => "if_then_else",
+            Self::Switch => "switch",
             Self::Parallel => "parallel",
             Self::MemParallel => "mem_parallel",
             Self::Race => "race",
