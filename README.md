@@ -102,7 +102,7 @@ fn main() -> Result<(), BuildError> {
 | Composites | `Sequence`, `ReactiveSequence`, `Selector`, `ReactiveSelector`, `RandomSelector`, `WeightedRandomSelector`, `UtilitySelector`, `Parallel`, `MemParallel`, `Race`, `IfThenElse` |
 | Decorators | `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`, `UntilFailure`, `While`, `Probability`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard` |
 | Leaves | `Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`, `AsyncAction` |
-| Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, nested `BehaviorTree`, services |
+| Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, `SubtreeContract`, nested `BehaviorTree`, services |
 | Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, error events, `last_status`, ASCII/DOT `describe` |
 | Persistence | Versioned structural and ID-keyed node snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |

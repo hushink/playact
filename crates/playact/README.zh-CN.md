@@ -294,6 +294,29 @@ let tree = BehaviorTreeBuilder::<World>::new("pair")
     .build()?;
 ```
 
+### 子树契约
+
+`SubtreeContract` 为子树声明必需输入与输出 key：
+
+```rust
+static TARGET: Key<u32> = playact::key!("target");
+static RESULT: Key<u32> = playact::key!("result");
+
+let contract = SubtreeContract::new("scan", subtree_root)
+    .require(&TARGET)
+    .provide(&RESULT);
+
+let tree = BehaviorTreeBuilder::<World>::new("ai")
+    .raw(Box::new(contract))
+    .build()?;
+```
+
+- 缺少必需 key 时通过 Tracer 报错并返回 `Failure`
+- 每次新激活开始时清理声明的输出 key
+- abort 契约会 abort Running 子节点并清理输出
+- 终态后输出保留，父节点可以读取
+- 它是校验/生命周期边界，不是独立的黑板命名空间
+
 ### 运行时子树槽
 
 `SubtreeSlot` 根据 typed key 切换子树：
@@ -638,8 +661,8 @@ playact = { version = "0.1", default-features = false }
 
 核心可用：节点、`BehaviorTree`（含 services 与快照）、builder、`Blackboard`
 （内部 `BTreeMap`）、组合/装饰/叶子、`CommandBuffer`、`SubtreeFactory`、
-`SubtreeSlot`、`EventQueue` / `EventKey`、`WaitUntil` / `WaitForEvent` /
-`TryAction`、`MultiTracer` 与 `describe`。
+`SubtreeSlot`、`SubtreeContract`、`EventQueue` / `EventKey`、`WaitUntil` /
+`WaitForEvent` / `TryAction`、`MultiTracer` 与 `describe`。
 
 需要 `std`：`SharedBlackboard`、`AsyncAction` / `ThreadTask` / `TokioTask`、
 `StatsTracer`、配置层、黑板序列化、热重载、远程配置、`TracingTracer`。

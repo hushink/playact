@@ -301,6 +301,29 @@ let tree = BehaviorTreeBuilder::<World>::new("pair")
     .build()?;
 ```
 
+### Subtree contracts
+
+`SubtreeContract` declares required input keys and output keys for a subtree:
+
+```rust
+static TARGET: Key<u32> = playact::key!("target");
+static RESULT: Key<u32> = playact::key!("result");
+
+let contract = SubtreeContract::new("scan", subtree_root)
+    .require(&TARGET)
+    .provide(&RESULT);
+
+let tree = BehaviorTreeBuilder::<World>::new("ai")
+    .raw(Box::new(contract))
+    .build()?;
+```
+
+- Missing required keys report an error through the tracer and return `Failure`.
+- Declared outputs are cleared when a new activation starts.
+- Aborting the contract aborts a Running child and clears outputs.
+- Outputs remain after a terminal result so the parent can read them.
+- It is a validation/lifecycle boundary, not a separate blackboard namespace.
+
 ### Runtime subtree slots
 
 `SubtreeSlot` switches subtrees from a typed blackboard key:
@@ -659,8 +682,9 @@ playact = { version = "0.1", default-features = false }
 
 Available in the core: nodes, `BehaviorTree` (including services and snapshots),
 builder, `Blackboard` (backed by `BTreeMap`), composites, decorators, leaves,
-`CommandBuffer`, `SubtreeFactory`, `SubtreeSlot`, `EventQueue` / `EventKey`,
-`WaitUntil` / `WaitForEvent` / `TryAction`, `MultiTracer`, and `describe`.
+`CommandBuffer`, `SubtreeFactory`, `SubtreeSlot`, `SubtreeContract`,
+`EventQueue` / `EventKey`, `WaitUntil` / `WaitForEvent` / `TryAction`, `MultiTracer`,
+and `describe`.
 
 Requires `std`: `SharedBlackboard`, `AsyncAction` / `ThreadTask` / `TokioTask`,
 `StatsTracer`, configuration, blackboard serialization, hot reload, remote config, and

@@ -87,6 +87,8 @@ pub enum Kind {
     SetValue,
     /// Subtree slot switched dynamically by a blackboard key.
     SubtreeSlot,
+    /// Subtree boundary with required/provided blackboard keys.
+    Contract,
     /// A whole behavior tree as a node.
     Tree,
     /// Custom node type.
@@ -132,6 +134,7 @@ impl Kind {
             Self::Condition => "condition",
             Self::SetValue => "set_value",
             Self::SubtreeSlot => "subtree_slot",
+            Self::Contract => "contract",
             Self::Tree => "tree",
             Self::Custom(name) => name,
         }
