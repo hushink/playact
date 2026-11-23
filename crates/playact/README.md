@@ -1027,6 +1027,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
+cargo run -p playact --example config_lint --features config,schema -- crates/playact/examples/battle_ai.json
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Shows
@@ -1049,6 +1050,8 @@ cargo run -p playact --example schema_export --features config,schema
   action, condition, predicate, key, custom, and subtree names, with optional
   descriptions, derived parameter schemas, typed key values, and a Markdown
   node catalog.
+- `config_lint`: validates a configuration against the registry schema and then
+  builds it, reporting paths and exiting nonzero on failure.
 
 ## Testing and benchmarks
 

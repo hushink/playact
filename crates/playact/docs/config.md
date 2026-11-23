@@ -362,3 +362,19 @@ remain usable as predicates without being repeated under Predicates.
 schema and the catalog. The test suite validates the shipped example
 configurations against a registry-generated schema with a JSON Schema
 validator, so the schema and the parser stay aligned.
+
+## Preflight
+
+[`examples/config_lint.rs`](../examples/config_lint.rs) validates a file against
+the registry schema, then parses and builds it so parameter deserialization,
+unknown names, includes, and duplicate IDs are checked as well:
+
+```text
+cargo run -p playact --example config_lint --features config,schema -- config/tree.json
+```
+
+The example uses the demo registry from `battle_ai.json`; replace its
+`build_registry` function with your own registrations. Schema errors are
+reported with instance paths; build errors include the precise configuration
+path. It exits nonzero on failure, so it can gate a deployment or configuration
+publish step.

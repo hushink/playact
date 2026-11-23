@@ -102,6 +102,10 @@ required-features = ["hot-reload"]
 name = "config_schema"
 required-features = ["config", "schema"]
 
+[[example]]
+name = "config_lint"
+required-features = ["config", "schema"]
+
 [[bench]]
 name = "engine"
 harness = false

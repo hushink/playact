@@ -1094,8 +1094,10 @@ documentation:
 let catalog = registry.markdown_catalog(); // Markdown node catalog
 ```
 
-See the [configuration reference](config.md#editor-completion) for a complete
-editor setup.
+`examples/config_lint.rs` combines schema validation with `TreeSpec::build` as a
+deployment preflight. See the
+[configuration reference](config.md#editor-completion) for a complete editor
+setup.
 
 ### Hot reload
 

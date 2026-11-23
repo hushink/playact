@@ -123,6 +123,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo run -p playact --example reload_audit --features hot-reload,inspector,diff-serde
 cargo run -p playact --example save_game --features blackboard-serde,snapshot-serde
 cargo run -p playact --example schema_export --features config,schema
+cargo run -p playact --example config_lint --features config,schema -- crates/playact/examples/battle_ai.json
 ```
 
 - `battle_ai`：确定性的 1D 玩家 vs 三只哥布林战斗，展示 ReactiveSelector 打断、
@@ -142,6 +143,7 @@ cargo run -p playact --example schema_export --features config,schema
 - `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
   predicate、key、custom 与 subtree 名称，并演示描述、派生参数 schema、key 值类型与
   Markdown 节点目录。
+- `config_lint`：先用注册表 schema 校验配置，再构建树；错误带路径，失败时非零退出。
 
 ## Feature 矩阵
 

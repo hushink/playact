@@ -343,3 +343,16 @@ std::fs::write("docs/node-catalog.md", registry.markdown_catalog())?;
 [`examples/schema_export.rs`](../examples/schema_export.rs) 会同时写出 schema 与
 节点目录。测试套件使用 JSON Schema 校验器验证仓库中的示例配置，确保 schema 与解析器
 保持一致。
+
+## 预检
+
+[`examples/config_lint.rs`](../examples/config_lint.rs) 先用注册表 schema 校验文件，
+再解析并构建，因此参数反序列化、未知名称、include 与重复 ID 也会被检查：
+
+```text
+cargo run -p playact --example config_lint --features config,schema -- config/tree.json
+```
+
+示例使用 `battle_ai.json` 对应的演示注册表；请把其中的 `build_registry` 替换为
+自己的注册。schema 错误会带实例路径输出；构建错误会带精确的配置路径。失败时示例以
+非零状态退出，可作为部署或配置发布流程的门禁。
