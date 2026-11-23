@@ -1039,7 +1039,16 @@ registry.describe_params::<PatrolParams>(
 
 `describe` 添加悬停描述；`describe_params::<P>` 还会通过
 `playact::schemars::JsonSchema` 从 `P` 生成 schema 并放入 `params`，包含字段描述与
-校验关键字。递归参数类型也受支持。完整编辑器配置见
+校验关键字。递归参数类型也受支持。key 字段同样覆盖：
+
+```rust
+registry.describe(NodeCategory::EventKey, "demo.alarm", "Alarm signal.")?;
+registry.describe_switch_key::<String>(MODE, "Current game mode.")?;
+registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
+```
+
+`describe_switch_key` 为 `switch.values` 元素提供类型，`describe_set_value_key`
+为 `set_value.value` 提供类型。完整编辑器配置见
 [配置参考](config.zh-CN.md#编辑器补全)。
 
 ### 热重载

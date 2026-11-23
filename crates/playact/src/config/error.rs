@@ -276,6 +276,13 @@ pub enum RegistryError {
         /// The name that was not registered.
         name: String,
     },
+    /// The category cannot carry the requested schema.
+    UnsupportedSchema {
+        /// Registration category, such as `switch key`.
+        category: &'static str,
+        /// Schema being attached, such as `params`.
+        target: &'static str,
+    },
 }
 
 impl fmt::Display for RegistryError {
@@ -289,6 +296,12 @@ impl fmt::Display for RegistryError {
             }
             Self::UnknownName { category, name } => {
                 write!(f, "cannot describe unknown {category} `{name}`")
+            }
+            Self::UnsupportedSchema { category, target } => {
+                write!(
+                    f,
+                    "the {category} category does not support a {target} schema"
+                )
             }
         }
     }

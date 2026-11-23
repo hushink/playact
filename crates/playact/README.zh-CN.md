@@ -701,7 +701,8 @@ let mut tree = spec.build(&registry)?;
   `NodeRegistry::json_schema()` 还会把已注册的 action、condition、predicate、score、
   key、custom 与 subtree 名称注入为 `enum` 约束，使补全内容与实际可构建内容一致。
   `NodeRegistry::describe` 添加悬停描述，`NodeRegistry::describe_params::<P>`
-  添加派生参数 schema，包含字段描述与校验关键字。
+  添加派生参数 schema，包含字段描述与校验关键字；`describe_switch_key` 与
+  `describe_set_value_key` 还会为 key 值提供类型。
 - [`examples/schema_export.rs`](examples/schema_export.rs) 可把该 schema 写到
   `target/playact-schema.json`；[配置参考](docs/config.zh-CN.md#编辑器补全) 给出
   VS Code 映射示例。
@@ -936,7 +937,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
-| `schema` | `TreeSpec::json_schema()` 与 `NodeRegistry::json_schema()` JSON Schema 生成，以及 `describe` / `describe_params` 元数据（依赖 `config`） |
+| `schema` | `TreeSpec::json_schema()` 与 `NodeRegistry::json_schema()` JSON Schema 生成，以及描述、参数与 key 值元数据（依赖 `config`） |
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |
@@ -992,7 +993,7 @@ cargo run -p playact --example schema_export --features config,schema
 - `save_game`：把有状态树与 typed 黑板保存为 JSON，重建树后恢复两者，并验证
   行为从保存进度继续、已完成的步骤不会重跑。
 - `schema_export`：导出注册表感知的 JSON Schema，供编辑器补全 action、condition、
-  predicate、key、custom 与 subtree 名称，并演示描述与派生参数 schema。
+  predicate、key、custom 与 subtree 名称，并演示描述、派生参数 schema 与 key 值类型。
 
 ## 测试与基准
 

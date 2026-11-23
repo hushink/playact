@@ -79,6 +79,16 @@ pub enum NodeCategory {
     /// Code-built subtree template registered with [`NodeRegistry::subtree`]
     /// or [`NodeRegistry::subtree_with_params`].
     Subtree,
+    /// Key registered with [`NodeRegistry::switch_key`].
+    SwitchKey,
+    /// Key registered with [`NodeRegistry::set_value_key`].
+    SetValueKey,
+    /// Key registered with [`NodeRegistry::event_key`].
+    EventKey,
+    /// Key registered with [`NodeRegistry::scoped_key`].
+    ScopedKey,
+    /// Key registered with [`NodeRegistry::contract_key`].
+    ContractKey,
 }
 
 #[cfg(feature = "schema")]
@@ -93,7 +103,26 @@ impl NodeCategory {
             Self::Score => "score",
             Self::Custom => "custom",
             Self::Subtree => "subtree",
+            Self::SwitchKey => "switch key",
+            Self::SetValueKey => "set value key",
+            Self::EventKey => "event key",
+            Self::ScopedKey => "scoped key",
+            Self::ContractKey => "contract key",
         }
+    }
+
+    const fn supports_params(self) -> bool {
+        matches!(
+            self,
+            Self::Action
+                | Self::TryAction
+                | Self::AsyncAction
+                | Self::Condition
+                | Self::Predicate
+                | Self::Score
+                | Self::Custom
+                | Self::Subtree
+        )
     }
 }
 
@@ -103,6 +132,7 @@ impl NodeCategory {
 struct NodeDoc {
     description: Option<String>,
     params: Option<Value>,
+    value: Option<Value>,
 }
 
 /// Factory that turns typed params into an independent tick closure per node.
@@ -574,7 +604,10 @@ impl<W: 'static> NodeRegistry<W> {
     /// custom, and subtree names become `enum` constraints on the matching
     /// fields, so editors complete the names this registry actually accepts.
     /// Descriptions and parameter schemas added with [`NodeRegistry::describe`]
-    /// and [`NodeRegistry::describe_params`] are injected as well.
+    /// and [`NodeRegistry::describe_params`] are injected as well, together
+    /// with the key value schemas added by
+    /// [`NodeRegistry::describe_switch_key`] and
+    /// [`NodeRegistry::describe_set_value_key`].
     #[cfg(feature = "schema")]
     #[must_use]
     pub fn json_schema(&self) -> Value {
@@ -638,20 +671,55 @@ impl<W: 'static> NodeRegistry<W> {
                 &[NodeCategory::Condition, NodeCategory::Predicate],
             );
         }
-        for (kind, field, names) in [
-            ("switch", "key", &switch_keys),
-            ("set_value", "key", &set_value_keys),
-            ("wait_for_event", "event", &event_keys),
-        ] {
-            injection.variant(&mut schema, kind, field, names, &[]);
+        if let Some(variant) = variant_mut(&mut schema, "switch") {
+            injection.field(variant, "key", &switch_keys, &[NodeCategory::SwitchKey]);
+            let clauses = injection.value_clauses(
+                "key",
+                &switch_keys,
+                &[NodeCategory::SwitchKey],
+                |value| json!({ "properties": { "values": { "items": value } } }),
+            );
+            append_all_of(variant, clauses);
         }
+        if let Some(variant) = variant_mut(&mut schema, "set_value") {
+            injection.field(
+                variant,
+                "key",
+                &set_value_keys,
+                &[NodeCategory::SetValueKey],
+            );
+            let clauses = injection.value_clauses(
+                "key",
+                &set_value_keys,
+                &[NodeCategory::SetValueKey],
+                |value| json!({ "properties": { "value": value } }),
+            );
+            append_all_of(variant, clauses);
+        }
+        injection.variant(
+            &mut schema,
+            "wait_for_event",
+            "event",
+            &event_keys,
+            &[NodeCategory::EventKey],
+        );
         if let Some(variant) = variant_mut(&mut schema, "scoped") {
-            set_array_item_enum(variant, "inputs", &scoped_keys);
-            set_array_item_enum(variant, "outputs", &scoped_keys);
+            injection.items(variant, "inputs", &scoped_keys, &[NodeCategory::ScopedKey]);
+            injection.items(variant, "outputs", &scoped_keys, &[NodeCategory::ScopedKey]);
         }
         if let Some(variant) = variant_mut(&mut schema, "contract") {
-            set_array_item_enum(variant, "required", &contract_keys);
-            set_array_item_enum(variant, "provided", &contract_keys);
+            injection.items(
+                variant,
+                "required",
+                &contract_keys,
+                &[NodeCategory::ContractKey],
+            );
+            injection.items(
+                variant,
+                "provided",
+                &contract_keys,
+                &[NodeCategory::ContractKey],
+            );
         }
         injection.variant(
             &mut schema,
@@ -701,9 +769,9 @@ impl<W: 'static> NodeRegistry<W> {
     /// Attaches an editor description to an already-registered name.
     ///
     /// Requires the `schema` feature. The description appears in
-    /// [`NodeRegistry::json_schema`] completions for the matching field.
-    /// Calling this again replaces the previous description; an empty
-    /// description is ignored.
+    /// [`NodeRegistry::json_schema`] completions for the matching field,
+    /// including key and event fields. Calling this again replaces the previous
+    /// description; an empty description is ignored.
     ///
     /// Returns [`RegistryError::UnknownName`] when `name` is not registered in
     /// `category`.
@@ -738,7 +806,8 @@ impl<W: 'static> NodeRegistry<W> {
     ///
     /// An empty description is ignored, so this can also be used to attach only
     /// the params schema. Returns [`RegistryError::UnknownName`] when `name` is
-    /// not registered in `category`.
+    /// not registered in `category`, and [`RegistryError::UnsupportedSchema`]
+    /// for key categories, which do not take params.
     #[cfg(feature = "schema")]
     pub fn describe_params<P>(
         &mut self,
@@ -749,6 +818,12 @@ impl<W: 'static> NodeRegistry<W> {
     where
         P: schemars::JsonSchema,
     {
+        if !category.supports_params() {
+            return Err(RegistryError::UnsupportedSchema {
+                category: category.registry_name(),
+                target: "params",
+            });
+        }
         let name = name.into();
         self.ensure_describable(category, &name)?;
         let params = params_schema::<P>();
@@ -760,6 +835,65 @@ impl<W: 'static> NodeRegistry<W> {
             .or_default();
         set_doc_description(doc, description.into());
         doc.params = Some(params);
+        Ok(())
+    }
+
+    /// Attaches a description and value schema to a registered switch key.
+    ///
+    /// Requires the `schema` feature. `K` must match the key's value type and
+    /// implement [`schemars::JsonSchema`]. [`NodeRegistry::json_schema`] then
+    /// types the corresponding `values` array items, so branch values validate
+    /// against the key type in the editor.
+    #[cfg(feature = "schema")]
+    pub fn describe_switch_key<K>(
+        &mut self,
+        key: Key<K>,
+        description: impl Into<String>,
+    ) -> Result<(), RegistryError>
+    where
+        K: schemars::JsonSchema + Send + 'static,
+    {
+        self.describe_key_value(NodeCategory::SwitchKey, key, description)
+    }
+
+    /// Attaches a description and value schema to a registered set-value key.
+    ///
+    /// Requires the `schema` feature. `K` must match the key's value type and
+    /// implement [`schemars::JsonSchema`]. [`NodeRegistry::json_schema`] then
+    /// types the `value` field of the matching `set_value` node.
+    #[cfg(feature = "schema")]
+    pub fn describe_set_value_key<K>(
+        &mut self,
+        key: Key<K>,
+        description: impl Into<String>,
+    ) -> Result<(), RegistryError>
+    where
+        K: schemars::JsonSchema + Send + 'static,
+    {
+        self.describe_key_value(NodeCategory::SetValueKey, key, description)
+    }
+
+    #[cfg(feature = "schema")]
+    fn describe_key_value<K>(
+        &mut self,
+        category: NodeCategory,
+        key: Key<K>,
+        description: impl Into<String>,
+    ) -> Result<(), RegistryError>
+    where
+        K: schemars::JsonSchema + Send + 'static,
+    {
+        let name = String::from(key.name());
+        self.ensure_describable(category, &name)?;
+        let value = params_schema::<K>();
+        let doc = self
+            .docs
+            .entry(category)
+            .or_default()
+            .entry(name)
+            .or_default();
+        set_doc_description(doc, description.into());
+        doc.value = Some(value);
         Ok(())
     }
 
@@ -786,6 +920,11 @@ impl<W: 'static> NodeRegistry<W> {
             NodeCategory::Score => self.scores.contains_key(name),
             NodeCategory::Custom => self.custom.contains_key(name),
             NodeCategory::Subtree => self.subtrees.contains_key(name),
+            NodeCategory::SwitchKey => self.switch_keys.contains_key(name),
+            NodeCategory::SetValueKey => self.set_value_keys.contains_key(name),
+            NodeCategory::EventKey => self.event_keys.contains_key(name),
+            NodeCategory::ScopedKey => self.scoped_keys.contains_key(name),
+            NodeCategory::ContractKey => self.contract_keys.contains_key(name),
         }
     }
 
@@ -1093,6 +1232,30 @@ fn doc_params(docs: &NodeDocs, categories: &[NodeCategory], name: &str) -> Optio
 }
 
 #[cfg(feature = "schema")]
+fn doc_value(docs: &NodeDocs, categories: &[NodeCategory], name: &str) -> Option<Value> {
+    categories.iter().find_map(|category| {
+        docs.get(category)
+            .and_then(|entries| entries.get(name))
+            .and_then(|doc| doc.value.clone())
+    })
+}
+
+#[cfg(feature = "schema")]
+fn append_all_of(node: &mut Value, clauses: Vec<Value>) {
+    if clauses.is_empty() {
+        return;
+    }
+    let object = node.as_object_mut().expect("schema node object");
+    match object
+        .entry(String::from("allOf"))
+        .or_insert_with(|| Value::Array(Vec::new()))
+    {
+        Value::Array(all_of) => all_of.extend(clauses),
+        entry => *entry = Value::Array(clauses),
+    }
+}
+
+#[cfg(feature = "schema")]
 fn params_schema<P>() -> Value
 where
     P: schemars::JsonSchema,
@@ -1148,31 +1311,7 @@ impl<'a> SchemaInjection<'a> {
         if names.is_empty() {
             return;
         }
-
-        let descriptions: Vec<Option<String>> = names
-            .iter()
-            .map(|name| doc_description(self.docs, categories, name))
-            .collect();
-        if descriptions.iter().any(Option::is_some) {
-            let entries: Vec<Value> = names
-                .iter()
-                .zip(descriptions)
-                .map(|(name, description)| {
-                    let mut entry = serde_json::Map::new();
-                    entry.insert(String::from("const"), Value::String(name.clone()));
-                    if let Some(description) = description {
-                        entry.insert(String::from("description"), Value::String(description));
-                    }
-                    Value::Object(entry)
-                })
-                .collect();
-            if let Some(property) = node
-                .pointer_mut(&format!("/properties/{field}"))
-                .and_then(Value::as_object_mut)
-            {
-                property.insert(String::from("oneOf"), Value::Array(entries));
-            }
-        }
+        self.descriptions(node, &format!("/properties/{field}"), names, categories);
 
         let docs = self.docs;
         let defs = &mut self.defs;
@@ -1192,18 +1331,84 @@ impl<'a> SchemaInjection<'a> {
                 }))
             })
             .collect();
+        append_all_of(node, clauses);
+    }
 
-        if clauses.is_empty() {
+    fn items(
+        &mut self,
+        node: &mut Value,
+        field: &str,
+        names: &[String],
+        categories: &[NodeCategory],
+    ) {
+        set_array_item_enum(node, field, names);
+        if names.is_empty() {
             return;
         }
-        let object = node.as_object_mut().expect("schema node object");
-        match object
-            .entry(String::from("allOf"))
-            .or_insert_with(|| Value::Array(Vec::new()))
-        {
-            Value::Array(all_of) => all_of.extend(clauses),
-            entry => *entry = Value::Array(clauses),
+        self.descriptions(
+            node,
+            &format!("/properties/{field}/items"),
+            names,
+            categories,
+        );
+    }
+
+    fn descriptions(
+        &self,
+        node: &mut Value,
+        pointer: &str,
+        names: &[String],
+        categories: &[NodeCategory],
+    ) {
+        let descriptions: Vec<Option<String>> = names
+            .iter()
+            .map(|name| doc_description(self.docs, categories, name))
+            .collect();
+        if !descriptions.iter().any(Option::is_some) {
+            return;
         }
+        let entries: Vec<Value> = names
+            .iter()
+            .zip(descriptions)
+            .map(|(name, description)| {
+                let mut entry = serde_json::Map::new();
+                entry.insert(String::from("const"), Value::String(name.clone()));
+                if let Some(description) = description {
+                    entry.insert(String::from("description"), Value::String(description));
+                }
+                Value::Object(entry)
+            })
+            .collect();
+        if let Some(target) = node.pointer_mut(pointer).and_then(Value::as_object_mut) {
+            target.insert(String::from("oneOf"), Value::Array(entries));
+        }
+    }
+
+    fn value_clauses(
+        &mut self,
+        key_field: &str,
+        names: &[String],
+        categories: &[NodeCategory],
+        build: impl Fn(Value) -> Value,
+    ) -> Vec<Value> {
+        let docs = self.docs;
+        let defs = &mut self.defs;
+        let counter = &mut self.counter;
+        names
+            .iter()
+            .filter_map(|name| {
+                let value = doc_value(docs, categories, name)?;
+                *counter += 1;
+                let value = relocate_defs(value, &format!("playact_value_{}", *counter), defs);
+                Some(json!({
+                    "if": {
+                        "properties": { (key_field): { "const": name } },
+                        "required": [key_field]
+                    },
+                    "then": build(value)
+                }))
+            })
+            .collect()
     }
 
     fn finish(self, schema: &mut Value) {

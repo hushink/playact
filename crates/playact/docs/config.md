@@ -263,8 +263,9 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 - `NodeRegistry::json_schema()` (feature `schema`) returns the same schema with
   the registered action, condition, predicate, score, key, custom, and subtree
   names injected as `enum` values, so completion matches what actually builds.
-  `describe` adds hover descriptions and `describe_params::<P>` adds the derived
-  params schema.
+  `describe` adds hover descriptions, `describe_params::<P>` adds the derived
+  params schema, and `describe_switch_key` / `describe_set_value_key` add typed
+  key values.
 - The optional hot-reload and remote-config loaders rebuild through the same
   `TreeSpec` pipeline, so validation and path errors apply there too.
 
@@ -321,6 +322,21 @@ and validation keywords apply in the editor. `playact::schemars` is re-exported
 by the `schema` feature, so the derive does not need a separate dependency.
 Recursive parameter types are supported: their definitions are moved into the
 root schema and references are rewritten. Empty descriptions are ignored.
+
+Key and event fields accept descriptions too, and switch/set-value keys can
+carry their value schema:
+
+```rust
+registry.describe(NodeCategory::EventKey, "demo.alarm", "Raised when the alarm fires.")?;
+registry.describe_switch_key::<String>(MODE, "Current game mode.")?;
+registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
+```
+
+`describe_switch_key` types the matching `switch.values` items, and
+`describe_set_value_key` types the matching `set_value.value`. Scoped and
+contract key lists use `describe` with `ScopedKey` / `ContractKey` for
+descriptions. Event keys have no configurable payload, so only their
+description is injected.
 
 Regenerate the file whenever the registry changes, for example as a build or
 pre-commit step. If the schema is committed, relative `url` values resolve

@@ -255,7 +255,8 @@ let tree = spec.build_with_resolver(&registry, &resolver)?;
 - `NodeRegistry::json_schema()`（`schema` feature）在相同 schema 中把已注册的
   action、condition、predicate、score、key、custom 与 subtree 名称注入为 `enum`，
   使补全内容与实际可构建内容一致。`describe` 添加悬停描述，
-  `describe_params::<P>` 添加派生的参数 schema。
+  `describe_params::<P>` 添加派生的参数 schema，
+  `describe_switch_key` / `describe_set_value_key` 添加带类型的 key 值。
 - 可选的热重载与远程配置加载器走同一套 `TreeSpec` 流程，因此校验与路径错误同样适用。
 
 ## 编辑器补全
@@ -308,6 +309,19 @@ registry.describe(NodeCategory::Action, "attack", "Strike the current target.")?
 `params`，因此字段描述、类型、必填项与校验关键字在编辑器中同样生效。`schema`
 feature 会重导出 `playact::schemars`，无需额外声明依赖。递归参数类型也受支持：
 其定义会迁移到根 schema 并重写引用。空描述会被忽略。
+
+key 与 event 字段同样支持描述，switch/set-value key 还可携带值 schema：
+
+```rust
+registry.describe(NodeCategory::EventKey, "demo.alarm", "Raised when the alarm fires.")?;
+registry.describe_switch_key::<String>(MODE, "Current game mode.")?;
+registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
+```
+
+`describe_switch_key` 为匹配的 `switch.values` 元素提供类型，
+`describe_set_value_key` 为匹配的 `set_value.value` 提供类型。scoped/contract
+的 key 列表可用 `describe` 配合 `ScopedKey` / `ContractKey` 添加描述。event key
+没有可配置的载荷，因此只注入描述。
 
 注册表变化后重新生成即可，例如放入构建或 pre-commit 步骤。若把 schema 提交到仓库，
 相对 `url` 会按工作区目录解析。

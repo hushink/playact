@@ -10,9 +10,10 @@
 //! The optional argument is the output path; the default is
 //! `target/playact-schema.json`. Point your editor at the generated file so
 //! that action, condition, predicate, score, key, custom, and subtree fields
-//! complete from this registry instead of from free-form strings. Descriptions
-//! and parameter schemas added with `describe` and `describe_params` become
-//! hover text and validation constraints.
+//! complete from this registry instead of from free-form strings. Descriptions,
+//! parameter schemas, and key value schemas added with `describe`,
+//! `describe_params`, and `describe_*_key` become hover text and validation
+//! constraints.
 
 use std::env;
 use std::error::Error;
@@ -100,6 +101,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         "patrol_loop",
         "Reusable patrol loop.",
     )?;
+    registry.describe_switch_key::<String>(MODE, "Current game mode.")?;
+    registry.describe_set_value_key::<u32>(MORALE, "Morale written to the blackboard.")?;
+    registry.describe(
+        NodeCategory::EventKey,
+        "demo.alarm",
+        "Raised when the alarm fires.",
+    )?;
 
     let output = env::args_os().nth(1).map_or_else(
         || PathBuf::from("target/playact-schema.json"),
@@ -113,6 +121,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::write(&output, serde_json::to_vec_pretty(&schema)?)?;
 
     println!("wrote {}", output.display());
-    println!("registered names, descriptions, and params are available for editors");
+    println!("registered names, descriptions, params, and key values are available for editors");
     Ok(())
 }

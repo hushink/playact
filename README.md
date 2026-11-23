@@ -107,7 +107,7 @@ fn main() -> Result<(), BuildError> {
 | Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, live status tree, error events, `last_status`, ASCII/DOT/Mermaid `describe`, structural `TreeDiff`, HTML inspector |
 | Persistence | Versioned structural and ID-keyed node snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |
-| Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, registry-aware JSON Schema, validation, hot reload, remote loading |
+| Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, registry-aware JSON Schema with descriptions, params, and key values, validation, hot reload, remote loading |
 | Async | Runtime-agnostic `AsyncTask`, `ThreadTask`, optional `TokioTask` |
 | Portability | `no_std + alloc` core; optional integrations gated by features |
 | Developer experience | `bt!` DSL, `BtNode` derive, two complete battle AI examples, benchmarks, deterministic stress tests |
@@ -149,7 +149,7 @@ cargo run -p playact --example schema_export --features config,schema
   completed step.
 - `schema_export`: writes a registry-aware JSON Schema for editor completion of
   action, condition, predicate, key, custom, and subtree names, with optional
-  descriptions and derived parameter schemas.
+  descriptions, derived parameter schemas, and typed key values.
 
 ## Feature flags
 
@@ -158,7 +158,7 @@ cargo run -p playact --example schema_export --features config,schema
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
-| `schema` | JSON Schema generation for `TreeSpec` and a populated `NodeRegistry`, with optional descriptions and params schemas (requires `config`) |
+| `schema` | JSON Schema generation for `TreeSpec` and a populated `NodeRegistry`, with optional descriptions, params schemas, and key value schemas (requires `config`) |
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
 | `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |

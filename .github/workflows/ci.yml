@@ -86,3 +86,4 @@ jobs:
           cargo run -p playact --example schema_export --features config,schema --quiet > /dev/null
           grep -q '"patrol"' target/playact-schema.json
           grep -q '"waypoints"' target/playact-schema.json
+          grep -q '"Morale written to the blackboard."' target/playact-schema.json

@@ -770,7 +770,7 @@ mod tests {
 
     #[cfg(feature = "schema")]
     #[allow(dead_code)]
-    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
     struct RecursiveParams {
         /// Remaining depth.
         depth: u32,
@@ -806,13 +806,13 @@ mod tests {
     }
 
     #[cfg(feature = "schema")]
-    fn one_of_entry<'a>(
-        variant: &'a serde_json::Value,
-        field: &str,
+    fn one_of_at<'a>(
+        value: &'a serde_json::Value,
+        pointer: &str,
         name: &str,
     ) -> &'a serde_json::Value {
-        variant
-            .pointer(&format!("/properties/{field}/oneOf"))
+        value
+            .pointer(pointer)
             .and_then(serde_json::Value::as_array)
             .expect("oneOf entries")
             .iter()
@@ -821,7 +821,16 @@ mod tests {
     }
 
     #[cfg(feature = "schema")]
-    fn params_clause<'a>(
+    fn one_of_entry<'a>(
+        variant: &'a serde_json::Value,
+        field: &str,
+        name: &str,
+    ) -> &'a serde_json::Value {
+        one_of_at(variant, &format!("/properties/{field}/oneOf"), name)
+    }
+
+    #[cfg(feature = "schema")]
+    fn clause_for<'a>(
         node: &'a serde_json::Value,
         field: &str,
         name: &str,
@@ -836,7 +845,7 @@ mod tests {
                     .and_then(serde_json::Value::as_str)
                     == Some(name)
             })
-            .unwrap_or_else(|| panic!("missing params clause `{name}`"))
+            .unwrap_or_else(|| panic!("missing schema clause `{name}`"))
     }
 
     #[cfg(feature = "schema")]
@@ -2344,7 +2353,7 @@ mod tests {
 
         let patrol_params = resolve_ref(
             &schema,
-            params_clause(action, "name", "patrol")
+            clause_for(action, "name", "patrol")
                 .pointer("/then/properties/params")
                 .expect("patrol params"),
         );
@@ -2416,7 +2425,7 @@ mod tests {
         );
         let morale_params = resolve_ref(
             &schema,
-            params_clause(branch, "score", "morale")
+            clause_for(branch, "score", "morale")
                 .pointer("/then/properties/params")
                 .expect("morale params"),
         );
@@ -2458,7 +2467,7 @@ mod tests {
         );
         let route_params = resolve_ref(
             &schema,
-            params_clause(subtree, "template", "route")
+            clause_for(subtree, "template", "route")
                 .pointer("/then/properties/params")
                 .expect("route params"),
         );
@@ -2467,7 +2476,131 @@ mod tests {
 
     #[cfg(feature = "schema")]
     #[test]
+    fn registry_schema_documents_keys_and_values() {
+        static MODE: Key<String> = Key::new("test.config.schema.mode");
+        static HP: Key<u32> = Key::new("test.config.schema.hp");
+        static SIGNAL: EventKey<()> = EventKey::new("test.config.schema.signal");
+        static SHARED: Key<u32> = Key::new("test.config.schema.shared");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.switch_key(MODE).unwrap();
+        registry.set_value_key(HP).unwrap();
+        registry.event_key(SIGNAL).unwrap();
+        registry.scoped_key(&SHARED).unwrap();
+        registry.contract_key(&SHARED).unwrap();
+
+        registry
+            .describe_switch_key::<String>(MODE, "Game mode.")
+            .unwrap();
+        registry
+            .describe_set_value_key::<u32>(HP, "Health value.")
+            .unwrap();
+        registry
+            .describe(
+                NodeCategory::EventKey,
+                "test.config.schema.signal",
+                "Alarm signal.",
+            )
+            .unwrap();
+        registry
+            .describe(
+                NodeCategory::ScopedKey,
+                "test.config.schema.shared",
+                "Shared counter.",
+            )
+            .unwrap();
+        registry
+            .describe(
+                NodeCategory::ContractKey,
+                "test.config.schema.shared",
+                "Contract counter.",
+            )
+            .unwrap();
+
+        let schema = registry.json_schema();
+
+        let switch = schema_variant(&schema, "switch");
+        assert_eq!(
+            one_of_entry(switch, "key", "test.config.schema.mode")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Game mode.")
+        );
+        assert_eq!(
+            clause_for(switch, "key", "test.config.schema.mode")
+                .pointer("/then/properties/values/items/type")
+                .and_then(serde_json::Value::as_str),
+            Some("string")
+        );
+
+        let set_value = schema_variant(&schema, "set_value");
+        assert_eq!(
+            one_of_entry(set_value, "key", "test.config.schema.hp")
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+            Some("Health value.")
+        );
+        assert_eq!(
+            clause_for(set_value, "key", "test.config.schema.hp")
+                .pointer("/then/properties/value/type")
+                .and_then(serde_json::Value::as_str),
+            Some("integer")
+        );
+
+        assert_eq!(
+            one_of_entry(
+                schema_variant(&schema, "wait_for_event"),
+                "event",
+                "test.config.schema.signal"
+            )
+            .pointer("/description")
+            .and_then(serde_json::Value::as_str),
+            Some("Alarm signal.")
+        );
+
+        let scoped = schema_variant(&schema, "scoped");
+        for field in ["inputs", "outputs"] {
+            let pointer = format!("/properties/{field}/items");
+            assert_eq!(
+                one_of_at(
+                    scoped,
+                    &format!("{pointer}/oneOf"),
+                    "test.config.schema.shared"
+                )
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+                Some("Shared counter."),
+                "scoped `{field}` description"
+            );
+            assert_eq!(
+                schema_enum(scoped, &format!("{pointer}/enum")),
+                ["test.config.schema.shared"],
+                "scoped `{field}` enum"
+            );
+        }
+
+        let contract = schema_variant(&schema, "contract");
+        for field in ["required", "provided"] {
+            let pointer = format!("/properties/{field}/items");
+            assert_eq!(
+                one_of_at(
+                    contract,
+                    &format!("{pointer}/oneOf"),
+                    "test.config.schema.shared"
+                )
+                .pointer("/description")
+                .and_then(serde_json::Value::as_str),
+                Some("Contract counter."),
+                "contract `{field}` description"
+            );
+        }
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
     fn registry_schema_relocates_recursive_param_defs() {
+        static GROW: Key<RecursiveParams> = Key::new("test.config.schema.grow");
+
         let mut registry = NodeRegistry::<()>::new();
         registry
             .action::<RecursiveParams>("grow", |_| |_: &mut Context<'_, ()>| Status::Success)
@@ -2475,9 +2608,13 @@ mod tests {
         registry
             .describe_params::<RecursiveParams>(NodeCategory::Action, "grow", "Grows a tree.")
             .unwrap();
+        registry.set_value_key(GROW).unwrap();
+        registry
+            .describe_set_value_key::<RecursiveParams>(GROW, "Grow value.")
+            .unwrap();
 
         let schema = registry.json_schema();
-        let params = params_clause(schema_variant(&schema, "action"), "name", "grow")
+        let params = clause_for(schema_variant(&schema, "action"), "name", "grow")
             .pointer("/then/properties/params")
             .expect("recursive params");
         assert!(params.pointer("/$defs").is_none());
@@ -2502,6 +2639,29 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .expect("child reference");
         assert_eq!(child_ref, reference);
+
+        let value = clause_for(
+            schema_variant(&schema, "set_value"),
+            "key",
+            "test.config.schema.grow",
+        )
+        .pointer("/then/properties/value")
+        .expect("recursive value");
+        let value_ref = value
+            .pointer("/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("recursive value reference");
+        let value_name = value_ref
+            .strip_prefix("#/$defs/")
+            .expect("value definition reference");
+        assert!(value_name.starts_with("playact_value_"), "{value_name}");
+        assert!(
+            schema
+                .pointer(&format!("/$defs/{value_name}"))
+                .expect("relocated value definition")
+                .pointer("/properties/depth")
+                .is_some()
+        );
     }
 
     #[cfg(feature = "schema")]
@@ -2521,6 +2681,13 @@ mod tests {
                 assert_eq!(name, "missing");
             }
             other => panic!("unexpected describe_params result: {other:?}"),
+        }
+        match registry.describe_params::<()>(NodeCategory::SwitchKey, "missing", "text") {
+            Err(RegistryError::UnsupportedSchema { category, target }) => {
+                assert_eq!(category, "switch key");
+                assert_eq!(target, "params");
+            }
+            other => panic!("unexpected key params result: {other:?}"),
         }
 
         registry

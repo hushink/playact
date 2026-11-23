@@ -1078,8 +1078,18 @@ registry.describe_params::<PatrolParams>(
 `describe` adds hover text. `describe_params::<P>` also derives a schema from
 `P` (via `playact::schemars::JsonSchema`) and attaches it under `params`,
 including field descriptions and validation keywords. Recursive parameter types
-are supported. See the [configuration reference](config.md#editor-completion)
-for a complete editor setup.
+are supported. Key fields are covered as well:
+
+```rust
+registry.describe(NodeCategory::EventKey, "demo.alarm", "Alarm signal.")?;
+registry.describe_switch_key::<String>(MODE, "Current game mode.")?;
+registry.describe_set_value_key::<u32>(MORALE, "Written morale value.")?;
+```
+
+`describe_switch_key` types `switch.values` items and `describe_set_value_key`
+types `set_value.value`. See the
+[configuration reference](config.md#editor-completion) for a complete editor
+setup.
 
 ### Hot reload
 
