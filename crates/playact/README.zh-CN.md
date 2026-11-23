@@ -715,9 +715,10 @@ if watcher.poll()? {
 
 成功重建会替换旧树（根节点与配置中的服务）、保留黑板数据并重置节点状态。启用
 `with_state_preservation(true)` 后，还会按稳定的 `NodeId` 为仍然存在的节点恢复
-自身状态；被改名或删除的 ID 从 reset 状态开始。`last_diff()` 按 `NodeId` 与
-`NodePath` 报告新增、删除、移动和改名的节点；`with_diff_history(n)` 可通过
-`diff_history()` 保留最近多次差异。解析/构建失败保留旧树并返回错误。默认 200ms
+自身状态；被改名或删除的 ID 从 reset 状态开始。`last_restored()` 报告最近一次成功
+重载实际恢复了多少节点状态。`last_diff()` 按 `NodeId` 与 `NodePath` 报告新增、
+删除、移动和改名的节点；`with_diff_history(n)` 可通过 `diff_history()` 保留最近多次
+差异。解析/构建失败保留旧树并返回错误。默认 200ms
 去抖。include 使用 `json_with_resolver` / `with_parser_and_resolver`。
 
 监听器同时轮询根文件与 resolver 报告的 include 路径，因此被 include 的文件单独
@@ -744,7 +745,8 @@ loader.tree_mut().tick(&mut world, time);
 保留旧树。成功刷新会重建根节点与配置中的服务、保留黑板并重置节点状态；
 `with_state_preservation(true)` 还会按稳定 `NodeId` 恢复仍存在节点的状态，与热重载
 行为一致。`last_diff()` 提供与热重载相同的 `TreeDiff`，列出新增、删除、移动和
-改名的节点；`with_diff_history(n)` 可保留有界历史。请求在调用线程同步执行；高延迟
+改名的节点；`last_restored()` 报告最近一次刷新恢复了多少节点状态；
+`with_diff_history(n)` 可保留有界历史。请求在调用线程同步执行；高延迟
 环境请放到工作线程或设置 Client 超时。include 使用 `json_with_resolver` /
 `with_client_and_resolver`。
 

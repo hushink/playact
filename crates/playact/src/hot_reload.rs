@@ -152,6 +152,7 @@ pub struct TreeWatcher<W: 'static> {
     debounce: Duration,
     pending_since: Option<Instant>,
     preserve_state: bool,
+    last_restored: Option<usize>,
     diff_history: DiffHistory,
 }
 
@@ -235,6 +236,7 @@ impl<W: 'static> TreeWatcher<W> {
             debounce: Duration::from_millis(200),
             pending_since: None,
             preserve_state: false,
+            last_restored: None,
             diff_history: DiffHistory::default(),
         })
     }
@@ -367,6 +369,16 @@ impl<W: 'static> TreeWatcher<W> {
             .and_then(|entry| entry.timestamp)
     }
 
+    /// Nodes whose own state was restored by the most recent successful reload.
+    ///
+    /// `None` before the first successful reload. `Some(0)` means the reload
+    /// succeeded but no state was restored: preservation is disabled, the
+    /// snapshot could not be captured, or no stateful `NodeId` matched.
+    #[must_use]
+    pub fn last_restored(&self) -> Option<usize> {
+        self.last_restored
+    }
+
     /// Takes the structural changes from the most recent successful reload.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -453,14 +465,19 @@ impl<W: 'static> TreeWatcher<W> {
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
 
-        if let Some(snapshot) = &snapshot
-            && new_tree.restore_by_id_matching(snapshot).is_err()
-        {
-            new_tree.reset();
-        }
+        let restored = match &snapshot {
+            Some(snapshot) => new_tree
+                .restore_by_id_matching(snapshot)
+                .unwrap_or_else(|_| {
+                    new_tree.reset();
+                    0
+                }),
+            None => 0,
+        };
 
         let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
+        self.last_restored = Some(restored);
         self.diff_history.push_now(diff);
 
         Ok(())
@@ -747,9 +764,11 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut watcher), vec!["old"]);
+        assert_eq!(watcher.last_restored(), None);
 
         write_limiter_config(&path, "new");
         watcher.reload_now().expect("reload");
+        assert_eq!(watcher.last_restored(), Some(0));
 
         assert_eq!(
             watcher.tree_mut().tick(&mut world, Time::ZERO),
@@ -784,9 +803,11 @@ mod tests {
             Status::Success
         );
         assert_eq!(drain(&mut watcher), vec!["old"]);
+        assert_eq!(watcher.last_restored(), None);
 
         write_limiter_config(&path, "new");
         watcher.reload_now().expect("reload");
+        assert_eq!(watcher.last_restored(), Some(1));
 
         // The limiter already consumed one of its two runs before the reload.
         assert_eq!(

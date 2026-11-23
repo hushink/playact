@@ -1054,7 +1054,8 @@ watcher.tree_mut().tick(&mut world, time);
 - Blackboard data is preserved across reloads; node state resets by default.
 - `with_state_preservation(true)` restores own state by `NodeId`.
 - `last_diff()`, `last_revision()`, `last_timestamp()`, `diff_history()` expose
-  changes.
+  changes. `last_restored()` reports how many nodes loaded own state in the latest
+  successful reload (`None` before the first one, `Some(0)` when none matched).
 - Include files reported by the resolver are polled and trigger reloads too.
 - Parse/build failures keep the old tree and return an error.
 
@@ -1073,7 +1074,8 @@ loader.tree_mut().tick(&mut world, time);
 
 `RemoteTreeLoader` supports ETag / Last-Modified, bounded response size, UTF-8
 validation, includes, and an optional `ResponseVerifier` for signatures or
-allowlists. Requests are synchronous on the calling thread.
+allowlists. `last_restored()`, `last_revision()`, and `last_timestamp()` expose
+refresh metadata. Requests are synchronous on the calling thread.
 
 ## 14. Proc-macro DSL
 

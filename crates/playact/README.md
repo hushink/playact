@@ -751,9 +751,10 @@ if watcher.poll()? {
 A successful rebuild replaces the tree (root and configured services), preserves
 blackboard data, and resets node state. Enable `with_state_preservation(true)` to also
 restore own state by stable `NodeId` for nodes that still exist; renamed or removed IDs
-start from their reset state. `last_diff()` reports added, removed, moved, and renamed
-nodes by `NodeId` and `NodePath`; `with_diff_history(n)` keeps recent diffs in
-`diff_history()`. Parse/build failures keep the old tree and return an error. Edits are
+start from their reset state. `last_restored()` reports how many nodes actually loaded
+state in the most recent successful reload. `last_diff()` reports added, removed, moved,
+and renamed nodes by `NodeId` and `NodePath`; `with_diff_history(n)` keeps recent diffs
+in `diff_history()`. Parse/build failures keep the old tree and return an error. Edits are
 debounced (200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver`
 for includes.
 
@@ -783,6 +784,7 @@ the old tree on refresh errors. A successful refresh rebuilds the root and confi
 services, preserves the blackboard, and resets node state; `with_state_preservation(true)`
 also restores node state by stable `NodeId`, matching the hot-reload behavior.
 `last_diff()` exposes the same added/removed/moved/renamed `TreeDiff` as hot reload;
+`last_restored()` reports how many nodes loaded state in the latest refresh;
 `with_diff_history(n)` keeps a bounded history. Requests happen on the calling thread;
 use a worker thread or a custom `Client` timeout in high-latency environments. Includes
 are available through `json_with_resolver` / `with_client_and_resolver`.

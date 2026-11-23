@@ -141,6 +141,7 @@ pub struct RemoteTreeLoader<W: 'static> {
     etag: Option<String>,
     last_modified: Option<String>,
     preserve_state: bool,
+    last_restored: Option<usize>,
     diff_history: DiffHistory,
 }
 
@@ -275,6 +276,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
             etag,
             last_modified,
             preserve_state: false,
+            last_restored: None,
             diff_history: DiffHistory::default(),
         })
     }
@@ -393,6 +395,16 @@ impl<W: 'static> RemoteTreeLoader<W> {
             .and_then(|entry| entry.timestamp)
     }
 
+    /// Nodes whose own state was restored by the most recent successful refresh.
+    ///
+    /// `None` before the first successful refresh. `Some(0)` means the refresh
+    /// succeeded but no state was restored: preservation is disabled, the
+    /// snapshot could not be captured, or no stateful `NodeId` matched.
+    #[must_use]
+    pub fn last_restored(&self) -> Option<usize> {
+        self.last_restored
+    }
+
     /// Takes the structural changes from the most recent successful refresh.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -461,16 +473,21 @@ impl<W: 'static> RemoteTreeLoader<W> {
         let board = std::mem::take(self.tree.blackboard_mut());
         *new_tree.blackboard_mut() = board;
 
-        if let Some(snapshot) = &snapshot
-            && new_tree.restore_by_id_matching(snapshot).is_err()
-        {
-            new_tree.reset();
-        }
+        let restored = match &snapshot {
+            Some(snapshot) => new_tree
+                .restore_by_id_matching(snapshot)
+                .unwrap_or_else(|_| {
+                    new_tree.reset();
+                    0
+                }),
+            None => 0,
+        };
 
         let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
         self.etag = etag;
         self.last_modified = last_modified;
+        self.last_restored = Some(restored);
         self.diff_history.push_now(diff);
 
         Ok(true)
@@ -701,6 +718,7 @@ mod tests {
         assert_eq!(drain(&mut loader), vec!["old"]);
 
         assert!(loader.refresh_now().expect("refresh"));
+        assert_eq!(loader.last_restored(), Some(1));
         assert_eq!(
             loader.tree_mut().tick(&mut world, Time::ZERO),
             Status::Success
@@ -734,6 +752,7 @@ mod tests {
 
         assert!(loader.refresh_now().expect("refresh"));
         assert_eq!(loader.last_revision(), Some(1));
+        assert_eq!(loader.last_restored(), Some(0));
         assert!(loader.last_timestamp().is_some());
         let diff = loader.last_diff().expect("diff");
         assert_eq!(diff.added.len(), 2);
