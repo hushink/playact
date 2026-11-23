@@ -174,7 +174,6 @@ enum Outcome {
 }
 
 /// Runs the command line and returns the process exit code.
-#[must_use]
 pub fn main_entry() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
     let Some(command) = arguments.next() else {

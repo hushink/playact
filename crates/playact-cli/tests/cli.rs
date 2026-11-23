@@ -1955,6 +1955,7 @@ fn migrate_output_copies_current_include_graph() {
 #[test]
 fn migrate_output_preserves_include_parent_segments() {
     let directory = TempDir::new();
+    fs::create_dir_all(directory.path.join("sub")).expect("create include directory");
     let root = directory.write(
         "root.json",
         r#"{"version":0,"tree":{"type":"include","path":"sub/../shared.json"}}"#,
