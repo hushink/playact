@@ -195,7 +195,7 @@ impl<'a, W> Inspector<'a, W> {
 /// | `/` | HTML report (auto-refreshes every second by default) |
 /// | `/metrics` | `StatsTracer` Prometheus text |
 /// | `/tree` | ASCII tree with last statuses; requires a `StatsTracer` |
-/// | `/status.json` | Summary JSON: tree name, root status, node/stats counts, history length, latest revision and timestamp |
+/// | `/status.json` | Summary JSON: tree name, root status, node/stats counts, history length, oldest/latest revision, latest timestamp |
 /// | `/diff.json` | Latest `TreeDiff` JSON; requires `diff-serde` and a diff |
 /// | `/diffs.json[?since=N]` | `{"revision", "diff"}` entries as a JSON array, oldest first; `since` keeps revisions above N; requires `diff-serde` |
 /// | `/health` | `ok` |
@@ -996,17 +996,25 @@ fn render_status_json<W>(
             (Some(entry.revision), entry.timestamp)
         });
     let history_len = history.map_or(0, DiffHistory::len);
+    let oldest_revision = history.and_then(DiffHistory::oldest_revision);
 
     let mut out = String::with_capacity(256);
     let _ = write!(
         out,
         "{{\"tree\":\"{}\",\"root_status\":\"{status_label}\",\"nodes\":{nodes},\
          \"services\":{},\"observed\":{},\"ticks\":{ticks},\"errors\":{errors},\
-         \"aborts\":{aborts},\"history_len\":{history_len},\"latest_revision\":",
+         \"aborts\":{aborts},\"history_len\":{history_len},\"oldest_revision\":",
         escape_json(tree.name()),
         services.len(),
         node_stats.len(),
     );
+    match oldest_revision {
+        Some(revision) => {
+            let _ = write!(out, "{revision}");
+        }
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"latest_revision\":");
     match latest_revision {
         Some(revision) => {
             let _ = write!(out, "{revision}");
@@ -1577,6 +1585,7 @@ mod tests {
         assert_eq!(value["services"], 0);
         assert_eq!(value["observed"], 3);
         assert_eq!(value["history_len"], 0);
+        assert!(value["oldest_revision"].is_null());
         assert!(value["latest_revision"].is_null());
         assert!(value["latest_timestamp"].is_null());
 
@@ -1739,6 +1748,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(body).expect("status json");
         assert_eq!(value["root_status"], "unknown");
         assert_eq!(value["history_len"], 2);
+        assert_eq!(value["oldest_revision"], 1);
         assert_eq!(value["latest_revision"], 2);
         assert_eq!(value["latest_timestamp"], 1_600_000_000_000_u64);
 

@@ -353,6 +353,20 @@ impl<W: 'static> TreeWatcher<W> {
         self.diff_history.latest()
     }
 
+    /// Revision assigned to the most recent diff, if any.
+    #[must_use]
+    pub fn last_revision(&self) -> Option<u64> {
+        self.diff_history.latest_revision()
+    }
+
+    /// Unix-millisecond timestamp of the most recent diff, if any.
+    #[must_use]
+    pub fn last_timestamp(&self) -> Option<u64> {
+        self.diff_history
+            .latest_entry()
+            .and_then(|entry| entry.timestamp)
+    }
+
     /// Takes the structural changes from the most recent successful reload.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -647,6 +661,9 @@ mod tests {
         .expect("write new");
         watcher.reload_now().expect("reload");
 
+        assert_eq!(watcher.last_revision(), Some(1));
+        assert!(watcher.last_timestamp().is_some());
+
         let diff = watcher.last_diff().expect("diff");
         assert_eq!(diff.added.len(), 2);
         assert_eq!(diff.added[0].id.as_str(), "c");
@@ -695,6 +712,8 @@ mod tests {
         }
 
         assert_eq!(watcher.diff_history().len(), 2);
+        assert_eq!(watcher.last_revision(), Some(2));
+        assert_eq!(watcher.diff_history().oldest_revision(), Some(1));
         let ids: Vec<&str> = watcher
             .diff_history()
             .iter()

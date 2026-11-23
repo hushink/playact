@@ -482,7 +482,8 @@ newest entry expanded; entries are labeled by a monotonic revision that is never
 reused, plus their UTC timestamp when one was recorded. `/metrics`, `/tree`, and
 `/health` serve Prometheus text, the ASCII status tree, and a readiness probe;
 `/status.json` returns a machine-readable summary with the root status, node and
-statistics counts, history length, and the latest revision and timestamp. With
+statistics counts, history length, the oldest and latest revisions, and the latest
+timestamp. With
 `diff-serde`, `/diff.json` returns the latest diff and `/diffs.json` the whole
 `DiffHistory` as an array of `{"revision", "diff"}` entries (oldest first); append
 `?since=N` to fetch only revisions after `N`. The server has no authentication and
@@ -525,7 +526,9 @@ and remote watchers use it automatically. The history serializes to a JSON array
 `{"revision", "diff"}` entries (plus `"timestamp"` when set), oldest first; combine it
 with `InspectorServer::poll_with_history` to serve `/diffs.json`. For incremental polling,
 `entries_since(rev)` and `to_json_since(rev)` return only revisions above `rev`, and
-`/diffs.json?since=rev` exposes the same filter over HTTP.
+`/diffs.json?since=rev` exposes the same filter over HTTP. `oldest_revision()` reports
+the retention floor: if a client's cursor is below it, the limit already evicted entries
+it has not seen. Watchers also expose `last_revision()` and `last_timestamp()` directly.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.

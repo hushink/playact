@@ -465,7 +465,7 @@ server.poll(&tree, Some(&stats))?;
 最新一条默认展开；条目使用永不复用的单调 revision 编号，并在记录了时间戳时显示
 UTC 时间。`/metrics`、`/tree`、`/health` 分别提供 Prometheus 文本、ASCII 状态树与
 就绪探针；`/status.json` 返回机器可读摘要（根状态、节点与统计计数、历史长度、
-最新 revision 与时间戳）。启用 `diff-serde` 后，
+最旧与最新 revision、最新时间戳）。启用 `diff-serde` 后，
 `/diff.json` 返回最近一次差异的 JSON，`/diffs.json` 返回整个 `DiffHistory`
 的 `{"revision", "diff"}` 条目数组（由旧到新）；追加 `?since=N` 可只取 revision
 大于 N 的条目。服务器没有鉴权，并会暴露树元数据；请只绑定 loopback，并仅在 debug
@@ -506,7 +506,9 @@ let parsed = TreeDiff::from_json(&json)?;
 `{"revision", "diff"}` 条目数组（有时间戳时增加 `"timestamp"`），配合
 `InspectorServer::poll_with_history` 提供给 `/diffs.json`。增量轮询
 可使用 `entries_since(rev)` / `to_json_since(rev)` 只取 revision 大于 `rev` 的条目，
-HTTP 侧对应 `/diffs.json?since=rev`。
+HTTP 侧对应 `/diffs.json?since=rev`。`oldest_revision()` 给出保留下限：若客户端游标
+低于它，说明部分未读条目已被上限淘汰。watcher 还直接提供 `last_revision()` 与
+`last_timestamp()`。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。

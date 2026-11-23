@@ -267,6 +267,15 @@ impl DiffHistory {
         self.diffs.back().map(|stored| stored.revision)
     }
 
+    /// The smallest retained revision.
+    ///
+    /// A polling client whose cursor is below this value has missed entries
+    /// that the limit already evicted.
+    #[must_use]
+    pub fn oldest_revision(&self) -> Option<u64> {
+        self.diffs.iter().map(|stored| stored.revision).min()
+    }
+
     /// Iterates over diffs from oldest to newest.
     pub fn iter(&self) -> impl Iterator<Item = &TreeDiff> {
         self.diffs.iter().map(|stored| &stored.diff)
@@ -596,6 +605,7 @@ mod tests {
         assert_eq!(ids, vec!["b", "c"]);
         let revisions: Vec<u64> = history.entries().map(|entry| entry.revision).collect();
         assert_eq!(revisions, vec![2, 3]);
+        assert_eq!(history.oldest_revision(), Some(2));
 
         let latest = history.pop_latest().expect("popped");
         assert_eq!(latest.added[0].id.as_str(), "c");
@@ -604,19 +614,23 @@ mod tests {
             "b"
         );
         assert_eq!(history.latest_entry().expect("previous").revision, 2);
+        assert_eq!(history.oldest_revision(), Some(2));
 
         history.set_limit(0);
         assert!(history.is_empty());
+        assert_eq!(history.oldest_revision(), None);
         assert_eq!(history.push(TreeDiff::default()), None);
         assert!(history.is_empty());
 
         history.set_limit(1);
         assert_eq!(history.push(TreeDiff::default()), Some(4));
         assert_eq!(history.len(), 1);
+        assert_eq!(history.oldest_revision(), Some(4));
         history.clear();
         assert!(history.is_empty());
         // Revisions stay monotonic across a clear.
         assert_eq!(history.push(TreeDiff::default()), Some(5));
+        assert_eq!(history.oldest_revision(), Some(5));
     }
 
     #[test]
@@ -768,6 +782,7 @@ mod tests {
         let actual: Vec<_> = parsed.entries().collect();
         assert_eq!(actual, expected);
         assert_eq!(actual[1].timestamp, Some(1_600_000_000_000));
+        assert_eq!(parsed.oldest_revision(), Some(1));
         assert_eq!(parsed.limit(), 3);
         assert_eq!(parsed.push(TreeDiff::default()), Some(4));
     }

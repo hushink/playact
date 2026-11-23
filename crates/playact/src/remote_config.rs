@@ -379,6 +379,20 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.diff_history.latest()
     }
 
+    /// Revision assigned to the most recent diff, if any.
+    #[must_use]
+    pub fn last_revision(&self) -> Option<u64> {
+        self.diff_history.latest_revision()
+    }
+
+    /// Unix-millisecond timestamp of the most recent diff, if any.
+    #[must_use]
+    pub fn last_timestamp(&self) -> Option<u64> {
+        self.diff_history
+            .latest_entry()
+            .and_then(|entry| entry.timestamp)
+    }
+
     /// Takes the structural changes from the most recent successful refresh.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -719,6 +733,8 @@ mod tests {
         assert!(loader.last_diff().is_none());
 
         assert!(loader.refresh_now().expect("refresh"));
+        assert_eq!(loader.last_revision(), Some(1));
+        assert!(loader.last_timestamp().is_some());
         let diff = loader.last_diff().expect("diff");
         assert_eq!(diff.added.len(), 2);
         assert_eq!(diff.added[0].id.as_str(), "c");
@@ -756,6 +772,8 @@ mod tests {
         assert!(loader.refresh_now().expect("second refresh"));
 
         assert_eq!(loader.diff_history().len(), 2);
+        assert_eq!(loader.last_revision(), Some(2));
+        assert_eq!(loader.diff_history().oldest_revision(), Some(1));
         let ids: Vec<&str> = loader
             .diff_history()
             .iter()
