@@ -15,7 +15,8 @@ pr_branch_prefix = "release-plz-"
 pr_labels = ["area: ci"]
 publish_timeout = "30m"
 release = true
-release_always = true
+# Release  when you merge the release PR only
+release_always = false
 # Only real changes trigger a version bump. In particular, release-plz's own
 # "chore: release ..." commit must not start another release PR.
 release_commits = '^(feat|fix|perf|refactor|docs?|deps|build|revert|security|changed|deprecated)(\([^)]*\))?!?:'
