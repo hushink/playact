@@ -463,6 +463,94 @@ fn bundle_rejects_output_inside_the_include_base() {
 }
 
 #[test]
+fn graph_renders_mermaid_nodes_and_includes() {
+    let directory = TempDir::new();
+    directory.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"sequence","children":[{"type":"include","path":"child.json"}]}}"#,
+    );
+
+    let output = run(&["graph", root.to_str().expect("root path")]);
+    assert!(output.status.success(), "{output:?}");
+    let graph = String::from_utf8_lossy(&output.stdout);
+    assert!(graph.contains("flowchart LR"), "{graph}");
+    assert!(graph.contains("include: child.json"), "{graph}");
+    assert!(graph.contains("action: anything"), "{graph}");
+    assert!(graph.contains("-.->|include|"), "{graph}");
+}
+
+#[test]
+fn graph_renders_dot() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+
+    let output = run(&[
+        "graph",
+        "--format",
+        "dot",
+        root.to_str().expect("root path"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let graph = String::from_utf8_lossy(&output.stdout);
+    assert!(graph.contains("digraph config"), "{graph}");
+    assert!(graph.contains("label=\"action: anything\""), "{graph}");
+}
+
+#[test]
+fn graph_marks_missing_includes() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"missing.json"}}"#,
+    );
+
+    let output = run(&["graph", root.to_str().expect("root path")]);
+    assert!(output.status.success(), "{output:?}");
+    let graph = String::from_utf8_lossy(&output.stdout);
+    assert!(graph.contains("missing"), "{graph}");
+    assert!(graph.contains(":::error"), "{graph}");
+}
+
+#[test]
+fn graph_marks_include_cycles() {
+    let directory = TempDir::new();
+    directory.write("a.json", r#"{"root":{"type":"include","path":"b.json"}}"#);
+    directory.write("b.json", r#"{"root":{"type":"include","path":"a.json"}}"#);
+    let root = directory.path.join("a.json");
+
+    let output = run(&["graph", root.to_str().expect("root path")]);
+    assert!(output.status.success(), "{output:?}");
+    let graph = String::from_utf8_lossy(&output.stdout);
+    assert!(graph.contains("include cycle"), "{graph}");
+}
+
+#[test]
+fn graph_rejects_unknown_formats() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+
+    let output = run(&[
+        "graph",
+        "--format",
+        "svg",
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported graph format"), "{stderr}");
+}
+
+#[test]
 fn lint_uses_registry_names_from_the_schema() {
     let schema = TempFile::new("json", &registry_schema());
     let bad = TempFile::new("json", r#"{"root":{"type":"action","name":"missing"}}"#);

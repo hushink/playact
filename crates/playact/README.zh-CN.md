@@ -707,7 +707,7 @@ let mut tree = spec.build(&registry)?;
 - [`examples/schema_export.rs`](examples/schema_export.rs) 可把该 schema 写到
   `target/playact-schema.json`；[配置参考](docs/config.zh-CN.md#编辑器补全) 给出
   VS Code 映射示例。工作区 `playact-cli` crate 还提供 `schema`、`catalog`、
-  `lint`、`convert` 与 `bundle` 命令，可读取注册表感知的 schema 文件。
+  `lint`、`convert`、`bundle` 与 `graph` 命令，可读取注册表感知的 schema 文件。
 - 用 `identified` 包装配置节点可指定稳定 `NodeId`：
   ```json
   {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}

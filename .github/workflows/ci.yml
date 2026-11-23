@@ -112,3 +112,6 @@ jobs:
           cargo run -p playact-cli --quiet -- bundle crates/playact/examples/battle_ai.json "$bundle_dir"
           cargo run -p playact-cli --quiet -- lint "$bundle_dir/battle_ai.json"
           rm -rf "$bundle_parent"
+          cargo run -p playact-cli --quiet -- graph crates/playact/examples/battle_ai.json > target/cli-graph.mmd
+          grep -q 'flowchart LR' target/cli-graph.mmd
+          grep -q 'action: wait' target/cli-graph.mmd

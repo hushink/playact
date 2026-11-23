@@ -8,7 +8,8 @@
 //!   recursively resolved includes;
 //! - `convert`: validate and rewrite a configuration in another format;
 //! - `bundle`: validate a configuration and copy its include graph into an
-//!   empty output directory.
+//!   empty output directory;
+//! - `graph`: render node structure and include relationships as Mermaid or DOT.
 //!
 //! Registry-aware schemas produced by `NodeRegistry::json_schema()` can be
 //! passed to `catalog`, `lint`, `convert`, and `bundle` with `--schema`.
@@ -16,6 +17,7 @@
 mod bundle;
 mod catalog;
 mod format;
+mod graph;
 mod lint;
 
 use std::env;
@@ -42,6 +44,7 @@ Commands:
   lint     Validate configurations against a TreeSpec schema
   convert  Convert a validated configuration between formats
   bundle   Copy a configuration and its includes into one directory
+  graph    Render node structure and includes as Mermaid or DOT
 
 Run `playact <COMMAND> --help` for command options.";
 
@@ -77,6 +80,11 @@ into an empty OUTPUT_DIR while preserving include strings. Include paths must be
 relative and cannot leave the include base. The output directory must be outside
 that base; load the bundled root with OUTPUT_DIR as the include base. Without
 --schema, the base TreeSpec schema is used.";
+const GRAPH_USAGE: &str = "\
+usage: playact graph [--include-base PATH] [--format mermaid|dot] [--output PATH] INPUT
+
+Renders node structure and include relationships. Missing or invalid includes are
+shown as error nodes. Without --output the graph is written to stdout.";
 
 enum Outcome {
     Success,
@@ -99,6 +107,7 @@ pub fn main_entry() -> ExitCode {
         Some("lint") => run_lint(arguments),
         Some("convert") => run_convert(arguments),
         Some("bundle") => run_bundle(arguments),
+        Some("graph") => run_graph(arguments),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -361,6 +370,59 @@ fn run_bundle(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
         output.display(),
         outcome.root.display()
     );
+    Ok(Outcome::Success)
+}
+
+fn run_graph(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
+    let mut include_base = None;
+    let mut output = None;
+    let mut graph_format = graph::GraphFormat::Mermaid;
+    let mut options_done = false;
+    let mut paths = Vec::new();
+    let mut arguments = arguments.into_iter();
+
+    while let Some(argument) = arguments.next() {
+        if !options_done {
+            match argument.to_str() {
+                Some("-h" | "--help") => {
+                    println!("{GRAPH_USAGE}");
+                    return Ok(Outcome::Success);
+                }
+                Some("-b" | "--include-base") => {
+                    include_base = Some(next_path(&mut arguments, "--include-base")?);
+                    continue;
+                }
+                Some("-o" | "--output") => {
+                    output = Some(next_path(&mut arguments, "--output")?);
+                    continue;
+                }
+                Some("-f" | "--format") => {
+                    let value = arguments
+                        .next()
+                        .ok_or("--format requires a value")?
+                        .into_string()
+                        .map_err(|_| "--format must be valid UTF-8")?;
+                    graph_format = graph::GraphFormat::from_name(&value)?;
+                    continue;
+                }
+                Some("--") => {
+                    options_done = true;
+                    continue;
+                }
+                Some(option) if option.starts_with('-') => {
+                    return Err(format!("unknown option `{option}`").into());
+                }
+                _ => {}
+            }
+        }
+        paths.push(PathBuf::from(argument));
+    }
+    if paths.len() != 1 {
+        return Err(String::from("graph requires one INPUT path").into());
+    }
+
+    let rendered = graph::render(&paths[0], include_base.as_deref(), graph_format)?;
+    write_output(output.as_deref(), rendered.as_bytes())?;
     Ok(Outcome::Success)
 }
 
