@@ -2,7 +2,7 @@
 
 **A type-safe, extensible behavior-tree engine for game automation.**
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md) · [API guide](docs/api.md) · [API 指南](docs/api.zh-CN.md)
 
 [![Crates.io](https://img.shields.io/crates/v/playact.svg)](https://crates.io/crates/playact)
 [![Docs.rs](https://img.shields.io/docsrs/playact)](https://docs.rs/playact)

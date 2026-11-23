@@ -113,7 +113,9 @@ fn main() -> Result<(), BuildError> {
 | Developer experience | `bt!` DSL, `BtNode` derive, two complete battle AI examples, benchmarks, deterministic stress tests |
 
 Detailed semantics, caveats, and API examples live in the
-[crate README](crates/playact/README.md).
+[crate README](crates/playact/README.md). For method-level usage, tables, and
+scenario recipes, see the [API guide](crates/playact/docs/api.md)
+([中文](crates/playact/docs/api.zh-CN.md)).
 
 ## Examples
 

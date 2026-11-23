@@ -2,7 +2,7 @@
 
 **面向游戏自动化的类型安全、可扩展行为树引擎。**
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 · [API 指南](docs/api.zh-CN.md) · [API guide](docs/api.md)
 
 [![Crates.io](https://img.shields.io/crates/v/playact.svg)](https://crates.io/crates/playact)
 [![Docs.rs](https://img.shields.io/docsrs/playact)](https://docs.rs/playact)

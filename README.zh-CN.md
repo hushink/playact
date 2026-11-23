@@ -108,7 +108,8 @@ fn main() -> Result<(), BuildError> {
 | 开发体验 | `bt!` DSL、`BtNode` derive、两个完整战斗 AI 示例、基准与确定性压力测试 |
 
 详细语义、注意事项与 API 示例见
-[crate 中文文档](crates/playact/README.zh-CN.md)。
+[crate 中文文档](crates/playact/README.zh-CN.md)。方法级用法、方法表与场景配方见
+[API 指南](crates/playact/docs/api.zh-CN.md)（[English](crates/playact/docs/api.md)）。
 
 ## 示例
 
