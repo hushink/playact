@@ -168,6 +168,7 @@ cargo run -p playact-cli -- catalog --schema schema.json
 cargo run -p playact-cli -- lint --schema schema.json --json config/*.toml
 cargo run -p playact-cli -- lint --watch config/*.toml
 cargo run -p playact-cli -- convert config/a.json config/b.yaml
+cargo run -p playact-cli -- convert --recursive --format yaml config/root.json dist/config
 cargo run -p playact-cli -- bundle config/root.json dist/config
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- graph --format dot config/root.json
@@ -187,21 +188,25 @@ lints `include` files (against each root's parent directory or
 `--include-base`), accepts multiple files, can watch for changes, and exits
 nonzero when any file is invalid. `convert` validates the input and its includes
 before writing the target format; TOML output omits null optional fields because
-TOML has no null representation. Include paths are preserved, not copied, so
-keep the output within the same include base or adjust paths afterwards.
-`bundle` validates the root and its include graph, then copies the root and every
-included file into an empty output directory without rewriting include strings.
-The output directory must be outside the include base; load the bundled root with
-that directory as the include base. `graph` renders node structure and include
-relationships as Mermaid (default) or DOT; missing or invalid includes appear as
-error nodes. `fmt` validates each input and rewrites it in canonical form;
-included files are validated but not rewritten unless passed explicitly or
-`--recursive` is set, which formats the entire include graph. Every target is
-validated and formatted in memory before the first write, and a write failure
-restores files already written. `fmt --check` writes nothing and exits nonzero
-when files would change. `diff`
-validates two configurations, then reports path-based node, parameter, and
-include-file set changes; child nodes are matched by type and name/kind/key, so
+TOML has no null representation. Without `--recursive`, include paths are
+preserved, not copied, so keep the output within the same include base or adjust
+paths afterwards. `bundle` validates the root and its include graph, then copies
+the root and every included file into an empty output directory without
+rewriting include strings. The output directory must be outside the include
+base; load the bundled root with that directory as the include base.
+`convert --recursive --format FORMAT` writes into a new or empty output
+directory, converts every file in the include graph, and rewrites include paths
+to the new extensions; load the converted root with that directory as the
+include base. `graph` renders node structure and include relationships as
+Mermaid (default) or DOT; missing or invalid includes appear as error nodes.
+`fmt` validates each input and rewrites it in canonical form; included files are
+validated but not rewritten unless passed explicitly or `--recursive` is set,
+which formats the entire include graph. Every target is validated and formatted
+in memory before the first write, and a write failure restores files already
+written. `fmt --check` writes nothing and exits nonzero when files would change.
+`diff` validates two configurations, then reports path-based node, parameter,
+and include-file set changes; child nodes are matched by type and name/kind/key,
+so
 insertions and reorders report moves rather than changing every later index.
 Included files with matching relative paths are compared recursively, and their
 findings carry a `file` field. It exits nonzero when differences exist and

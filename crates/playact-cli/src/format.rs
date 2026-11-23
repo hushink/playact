@@ -39,6 +39,23 @@ impl Format {
         }
     }
 
+    /// Parses a format name such as `json`, `toml`, `yaml`, `yml`, or `ron`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message for an unsupported format name.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        match name.to_ascii_lowercase().as_str() {
+            "json" => Ok(Self::Json),
+            "toml" => Ok(Self::Toml),
+            "yaml" | "yml" => Ok(Self::Yaml),
+            "ron" => Ok(Self::Ron),
+            _ => Err(format!(
+                "unsupported format `{name}`; expected json, toml, yaml, yml, or ron"
+            )),
+        }
+    }
+
     /// Human-readable format name.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -47,6 +64,17 @@ impl Format {
             Self::Toml => "TOML",
             Self::Yaml => "YAML",
             Self::Ron => "RON",
+        }
+    }
+
+    /// Preferred file extension for this format.
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Toml => "toml",
+            Self::Yaml => "yaml",
+            Self::Ron => "ron",
         }
     }
 
@@ -239,6 +267,21 @@ mod tests {
                 .parse_spec(text)
                 .unwrap_or_else(|error| panic!("{format:?}: {error}\n{text}"));
             assert_eq!(reparsed.version, spec.version, "{format:?}");
+        }
+    }
+
+    #[test]
+    fn parses_names_and_prefers_canonical_extensions() {
+        assert_eq!(Format::from_name("JSON"), Ok(Format::Json));
+        assert_eq!(Format::from_name("toml"), Ok(Format::Toml));
+        assert_eq!(Format::from_name("yml"), Ok(Format::Yaml));
+        assert_eq!(Format::from_name("ron"), Ok(Format::Ron));
+        assert!(Format::from_name("xml").is_err());
+        for format in [Format::Json, Format::Toml, Format::Yaml, Format::Ron] {
+            assert_eq!(
+                Format::from_path(Path::new(&format!("tree.{}", format.extension()))),
+                Ok(format)
+            );
         }
     }
 

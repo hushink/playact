@@ -107,6 +107,16 @@ jobs:
           cargo run -p playact-cli --quiet -- lint crates/playact/examples/battle_ai.json
           cargo run -p playact-cli --quiet -- convert crates/playact/examples/battle_ai.json target/cli-battle.toml
           cargo run -p playact-cli --quiet -- lint target/cli-battle.toml
+          convert_dir=$(mktemp -d)
+          mkdir -p "$convert_dir/src/shared" "$convert_dir/out"
+          printf '%s\n' '{"version":1,"root":{"type":"include","path":"shared/child.toml"}}' > "$convert_dir/src/root.json"
+          printf '%s\n' 'version = 1' '[root]' 'type = "include"' 'path = "shared/grand.json"' > "$convert_dir/src/shared/child.toml"
+          printf '%s\n' '{"version":1,"root":{"type":"action","name":"anything"}}' > "$convert_dir/src/shared/grand.json"
+          cargo run -p playact-cli --quiet -- convert --recursive --format yaml "$convert_dir/src/root.json" "$convert_dir/out"
+          grep -q 'shared/child.yaml' "$convert_dir/out/root.yaml"
+          grep -q 'shared/grand.yaml' "$convert_dir/out/shared/child.yaml"
+          cargo run -p playact-cli --quiet -- lint "$convert_dir/out/root.yaml"
+          rm -rf "$convert_dir"
           bundle_parent=$(mktemp -d)
           bundle_dir="$bundle_parent/bundle"
           cargo run -p playact-cli --quiet -- bundle crates/playact/examples/battle_ai.json "$bundle_dir"

@@ -374,6 +374,7 @@ cargo run -p playact-cli -- catalog --schema schema.json
 cargo run -p playact-cli -- lint --schema schema.json config/a.toml config/b.yaml
 cargo run -p playact-cli -- lint --watch --schema schema.json config/*.toml
 cargo run -p playact-cli -- convert --schema schema.json config/a.json config/b.yaml
+cargo run -p playact-cli -- convert --recursive --format yaml --schema schema.json config/root.json dist/config
 cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/config
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
@@ -392,7 +393,10 @@ cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new
 错误在 JSON 报告中带有 `file` 字段。`--watch` 在根配置、被包含
 文件或 schema 变化时重新 lint。`convert` 在写入 JSON/TOML/YAML/RON 前先校验输入及
 其 include。TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。
-include 路径会被保留而不会复制文件，转换后应保持在相同 include 基准目录内或自行调整。
+不使用 `--recursive` 时 include 路径会被保留而不会复制文件，转换后应保持在相同
+include 基准目录内或自行调整。`convert --recursive --format FORMAT` 可写入新的或空的
+输出目录，转换 include 图中的每个文件，并把 include 路径改写为目标扩展名；加载转换
+后的根文件时以该输出目录作为 include 基准目录。
 `bundle` 在验证根配置及其 include 后，把根文件与所有被包含文件复制到空输出目录，
 不重写 include 字符串。输出目录必须位于 include 基准目录之外；加载 bundle 根文件时
 以该输出目录作为 include 基准目录。`graph` 把节点结构与 include 关系渲染为 Mermaid

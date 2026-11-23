@@ -208,6 +208,268 @@ fn convert_rejects_invalid_input_without_writing() {
 }
 
 #[test]
+fn convert_recursive_rewrites_include_paths_and_converts_nested_formats() {
+    let directory = TempDir::new();
+    directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"sequence","children":[{"type":"include","path":"shared/child.toml"}]}}"#,
+    );
+    directory.write(
+        "shared/child.toml",
+        "version = 1\n[root]\ntype = \"include\"\npath = \"shared/grand.yaml\"\n",
+    );
+    directory.write(
+        "shared/grand.yaml",
+        "version: 1\nroot:\n  type: action\n  name: anything\n",
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "yaml",
+        directory
+            .path
+            .join("root.json")
+            .to_str()
+            .expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(converted.status.success(), "{converted:?}");
+    let stdout = String::from_utf8_lossy(&converted.stdout);
+    assert!(stdout.contains("converted 3 file(s)"), "{stdout}");
+
+    let root = fs::read_to_string(output.join("root.yaml")).expect("converted root");
+    assert!(root.contains("shared/child.yaml"), "{root}");
+    let child = fs::read_to_string(output.join("shared/child.yaml")).expect("converted child");
+    assert!(child.contains("shared/grand.yaml"), "{child}");
+    assert!(output.join("shared/grand.yaml").is_file());
+
+    let linted = run(&[
+        "lint",
+        output
+            .join("root.yaml")
+            .to_str()
+            .expect("converted root path"),
+    ]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn convert_recursive_supports_ron_targets() {
+    let directory = TempDir::new();
+    directory.write(
+        "child.json",
+        r#"{"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = directory.write(
+        "root.ron",
+        r#"(version: 1, root: (type: "include", path: "child.json"))"#,
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "ron",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(converted.status.success(), "{converted:?}");
+    let text = fs::read_to_string(output.join("root.ron")).expect("converted root");
+    assert!(text.contains("child.ron"), "{text}");
+
+    let linted = run(&[
+        "lint",
+        output
+            .join("root.ron")
+            .to_str()
+            .expect("converted root path"),
+    ]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn convert_recursive_requires_an_explicit_format() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"action","name":"anything"}}"#,
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let stderr = String::from_utf8_lossy(&converted.stderr);
+    assert!(stderr.contains("--format"), "{stderr}");
+    assert!(!output.exists());
+}
+
+#[test]
+fn convert_recursive_requires_an_empty_output_directory() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"action","name":"anything"}}"#,
+    );
+    let output = directory.path.join("out");
+    fs::create_dir(&output).expect("output directory");
+    fs::write(output.join("existing.txt"), "keep").expect("existing output file");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "yaml",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let stderr = String::from_utf8_lossy(&converted.stderr);
+    assert!(stderr.contains("is not empty"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(output.join("existing.txt")).expect("existing output"),
+        "keep"
+    );
+    assert!(!output.join("root.yaml").exists());
+}
+
+#[test]
+fn convert_recursive_writes_nothing_when_an_include_is_invalid() {
+    let directory = TempDir::new();
+    directory.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"bad.json"}}"#,
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "yaml",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    assert!(!output.exists());
+}
+
+#[test]
+fn convert_recursive_rejects_destination_collisions() {
+    let directory = TempDir::new();
+    directory.write("a.json", r#"{"root":{"type":"action","name":"anything"}}"#);
+    directory.write(
+        "a.yaml",
+        "version: 1\nroot:\n  type: action\n  name: anything\n",
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"sequence","children":[{"type":"include","path":"a.json"},{"type":"include","path":"a.yaml"}]}}"#,
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "yaml",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let stderr = String::from_utf8_lossy(&converted.stderr);
+    assert!(stderr.contains("conversion maps"), "{stderr}");
+    assert!(stderr.contains("a.yaml"), "{stderr}");
+    assert!(!output.exists());
+}
+
+#[test]
+fn convert_recursive_rejects_file_and_directory_collisions() {
+    let directory = TempDir::new();
+    directory.write("a.json", r#"{"root":{"type":"action","name":"anything"}}"#);
+    directory.write(
+        "a.yaml/b.json",
+        r#"{"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"sequence","children":[{"type":"include","path":"a.json"},{"type":"include","path":"a.yaml/b.json"}]}}"#,
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "yaml",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let stderr = String::from_utf8_lossy(&converted.stderr);
+    assert!(stderr.contains("both a file and a directory"), "{stderr}");
+    assert!(!output.exists());
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn convert_recursive_rejects_case_insensitive_destination_collisions() {
+    let directory = TempDir::new();
+    directory.write("A.json", r#"{"root":{"type":"action","name":"anything"}}"#);
+    directory.write(
+        "a.yml",
+        "version: 1\nroot:\n  type: action\n  name: anything\n",
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"root":{"type":"sequence","children":[{"type":"include","path":"A.json"},{"type":"include","path":"a.yml"}]}}"#,
+    );
+    let output = directory.path.join("out");
+
+    let converted = run(&[
+        "convert",
+        "--recursive",
+        "--format",
+        "yaml",
+        root.to_str().expect("root path"),
+        output.to_str().expect("output path"),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let stderr = String::from_utf8_lossy(&converted.stderr);
+    assert!(stderr.contains("conversion maps"), "{stderr}");
+    assert!(!output.exists());
+}
+
+#[test]
+fn convert_rejects_format_without_recursive() {
+    let input = TempFile::new("json", r#"{"root":{"type":"action","name":"anything"}}"#);
+    let output = TempFile::new("toml", "");
+
+    let converted = run(&[
+        "convert",
+        "--format",
+        "yaml",
+        input.as_str(),
+        output.as_str(),
+    ]);
+    assert!(!converted.status.success(), "{converted:?}");
+    let stderr = String::from_utf8_lossy(&converted.stderr);
+    assert!(
+        stderr.contains("--format is only valid with --recursive"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn watch_cannot_be_combined_with_json_reports() {
     let valid = TempFile::new(
         "json",

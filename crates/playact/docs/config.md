@@ -397,6 +397,7 @@ cargo run -p playact-cli -- catalog --schema schema.json
 cargo run -p playact-cli -- lint --schema schema.json config/a.toml config/b.yaml
 cargo run -p playact-cli -- lint --watch --schema schema.json config/*.toml
 cargo run -p playact-cli -- convert --schema schema.json config/a.json config/b.yaml
+cargo run -p playact-cli -- convert --recursive --format yaml --schema schema.json config/root.json dist/config
 cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/config
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
@@ -415,25 +416,30 @@ the `config_lint` example for an app-integrated preflight. `include` nodes are
 resolved recursively; paths are confined to `--include-base`, or to each root
 file's parent directory when the option is omitted. Include formats follow their
 extension and fall back to the including file's format. Included-file issues
-carry a `file` field in JSON reports. `--watch` re-lints when a root, an included file,
-or the schema changes. `convert` validates the input and its includes before
-writing JSON, TOML, YAML, or RON. TOML has no null representation, so converting
-to TOML omits optional fields whose value is null. Include paths are preserved
-rather than copied, so keep the output within the same include base or adjust
-them afterwards. `bundle` validates the root and its includes, then copies the
-root and every included file into an empty output directory without rewriting
-include strings. The output directory must be outside the include base; use it as
-the include base when loading the bundled root. `graph` renders node structure
-and include relationships as Mermaid (default) or DOT; missing or invalid
-includes appear as error nodes. `fmt` validates each input and rewrites it in
-canonical form; included files are validated but not rewritten unless passed
-explicitly or `--recursive` is set, which formats the entire include graph.
-Every target is validated and formatted in memory before the first write, and a
-write failure restores files already written. `--check` writes nothing and exits
-nonzero when files would change. RON formatting serializes the parsed spec
+carry a `file` field in JSON reports. `--watch` re-lints when a root, an included
+file, or the schema changes. `convert` validates the input and its includes
+before writing JSON, TOML, YAML, or RON. TOML has no null representation, so
+converting to TOML omits optional fields whose value is null. Without
+`--recursive`, include paths are preserved rather than copied, so keep the
+output within the same include base or adjust them afterwards.
+`convert --recursive --format FORMAT` writes into a new or empty output
+directory, converts every file in the include graph, and rewrites include paths
+to the target extension; load the converted root with that directory as the
+include base. `bundle` validates the root and its includes, then copies the root
+and every included file into an empty output directory without rewriting
+include strings. The output directory must be outside the include base; use it
+as the include base when loading the bundled root. `graph` renders node
+structure and include relationships as Mermaid (default) or DOT; missing or
+invalid includes appear as error nodes. `fmt` validates each input and rewrites
+it in canonical form; included files are validated but not rewritten unless
+passed explicitly or `--recursive` is set, which formats the entire include
+graph. Every target is validated and formatted in memory before the first write,
+and a write failure restores files already written. `--check` writes nothing and
+exits nonzero when files would change. RON formatting serializes the parsed spec
 because RON's generic map syntax does not deserialize as a `TreeSpec`; other
-formats preserve the original field presence. `diff` validates both inputs, then reports path-based node, parameter,
-and include-file set changes. Child nodes are matched by type and
+formats preserve the original field presence. `diff` validates both inputs, then
+reports path-based node, parameter, and include-file set changes. Child nodes are
+matched by type and
 name/kind/key, so insertions and reorders report moves instead of shifting every
 later index. Included files with matching relative paths are compared
 recursively, and their findings include a `file` field. It exits nonzero when

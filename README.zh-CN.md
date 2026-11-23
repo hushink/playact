@@ -157,6 +157,7 @@ cargo run -p playact-cli -- catalog --schema schema.json
 cargo run -p playact-cli -- lint --schema schema.json --json config/*.toml
 cargo run -p playact-cli -- lint --watch config/*.toml
 cargo run -p playact-cli -- convert config/a.json config/b.yaml
+cargo run -p playact-cli -- convert --recursive --format yaml config/root.json dist/config
 cargo run -p playact-cli -- bundle config/root.json dist/config
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- graph --format dot config/root.json
@@ -173,11 +174,14 @@ cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 名称、描述与参数 schema。`lint` 支持 JSON/TOML/YAML/RON，递归解析并校验
 `include`（基准目录默认为根文件父目录，也可用 `--include-base` 指定），支持多文件与
 watch，任一文件无效时非零退出。`convert` 在写入目标格式前先校验输入及其 include；
-TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。include 路径
-会被保留而不会复制文件，转换后应保持在相同 include 基准目录内或自行调整路径。
-`bundle` 在验证根配置及 include 图后，把根文件与所有被包含文件复制到空输出目录，
-不重写 include 字符串。输出目录必须位于 include 基准目录之外；加载 bundle 根文件时
-以该输出目录作为 include 基准目录。`graph` 把节点结构与 include 关系渲染为 Mermaid
+TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。不使用
+`--recursive` 时 include 路径会被保留而不会复制文件，转换后应保持在相同 include
+基准目录内或自行调整路径。`bundle` 在验证根配置及 include 图后，把根文件与所有被
+包含文件复制到空输出目录，不重写 include 字符串。输出目录必须位于 include 基准目录
+之外；加载 bundle 根文件时以该输出目录作为 include 基准目录。
+`convert --recursive --format FORMAT` 可写入新的或空的输出目录，会把 include 图中的
+每个文件转换为目标格式，并把 include 路径改写为新扩展名；加载转换后的根文件时以该
+输出目录作为 include 基准目录。`graph` 把节点结构与 include 关系渲染为 Mermaid
 （默认）或 DOT；缺失或无效的 include 会显示为错误节点。`fmt` 校验输入后按规范格式
 重写；被包含文件只做校验，除非显式传入或使用 `--recursive` 格式化整个 include 图。
 所有目标都会先在内存中完成校验与格式化，再开始写入；写入失败时会恢复已写入的文件。
