@@ -1044,8 +1044,9 @@ let watcher =
 未来版本或格式错误的版本、非对象返回值以及最终 `TreeSpec` 失败都会带配置路径报告。
 顶层 `version` 缺失时默认为 `CURRENT_VERSION`，因此旧版文档必须显式声明版本。
 `FsIncludeResolver` 会迁移每个被包含文件；`RemoteTreeLoader::with_migrator` 为远程
-刷新提供同样的管线。简单的字段重命名、删除与默认值可用
-`playact migrate --manifest` 在无应用代码的情况下迁移根配置与 include。
+刷新提供同样的管线。简单的字段重命名、删除、默认值、值映射与数值换算可用
+`playact migrate --manifest` 在无应用代码的情况下迁移根配置与 include；`--diff`
+可预览字段级变化。
 
 ### 校验与 schema
 

@@ -756,8 +756,9 @@ let watcher =
   `RemoteTreeLoader::with_migrator` / `with_migrator_and_resolver` 会在每次重载或
   刷新时重新执行迁移。
 - `playact migrate --manifest migrations.json CONFIG...` 按声明式
-  `rename_field`、`remove_field` 与 `set_field` 规则迁移根配置及其 include，校验
-  结果后原地写入；`--check` 可用于 dry run。任意复杂迁移仍应在应用内使用
+  `rename_field`、`remove_field`、`set_field`、`rename_value` 与 `scale` 规则迁移
+  根配置及其 include，校验结果后原地写入；`--check` 可用于 dry run，`--diff` 输出
+  字段级预览（`--json` 始终包含变更）。任意复杂迁移仍应在应用内使用
   `ConfigMigrator` 闭包。
 - 完整示例见 [`examples/config_migration.rs`](examples/config_migration.rs)：迁移
   v0 根配置与 include，构建并 tick。

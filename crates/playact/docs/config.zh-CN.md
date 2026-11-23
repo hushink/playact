@@ -127,7 +127,9 @@ include，然后构建并 tick。
       "from": 0,
       "operations": [
         {"op": "rename_field", "from": "tree", "to": "root"},
+        {"op": "rename_value", "where": {"type": "legacy_wait"}, "field": "type", "from": "legacy_wait", "to": "wait"},
         {"op": "rename_field", "where": {"type": "wait"}, "from": "seconds", "to": "duration_ms"},
+        {"op": "scale", "where": {"type": "wait"}, "field": "duration_ms", "multiply": 1000},
         {"op": "remove_field", "where": {"type": "wait"}, "field": "legacy"},
         {"op": "set_field", "at": "/root", "field": "name", "value": "migrated", "overwrite": false}
       ]
@@ -141,6 +143,9 @@ include，然后构建并 tick。
   直到 `CURRENT_VERSION`。
 - `rename_field` 在源字段不存在时无操作，目标字段已存在时报错；`remove_field` 在字段
   不存在时无操作；`set_field` 只在字段缺失时插入，`"overwrite": true` 时覆盖。
+- `rename_value` 仅在字段值等于 `from` 时替换，否则无操作；`scale` 对数值字段执行
+  `value * multiply + add`，字段缺失时无操作，非数值时报错；整数输入在结果为整数时
+  保持整数 JSON 表示。操作按顺序执行，应先重命名值或字段，再对目标字段做换算。
 - 目标选择：
   - 不写 `at` 或 `where`：仅根对象。
   - `at`：指向单个对象的 JSON Pointer（`""` 为根，`"/root"` 为根节点）。
@@ -149,8 +154,10 @@ include，然后构建并 tick。
 - 每个根文件与 include 文件都会迁移，然后按 schema 校验；include 图按迁移后的路径
   重新解析。所有文件均有效后才写入；写入具备事务回滚。
 - 迁移后的文件按源格式规范化序列化；已处于 `CURRENT_VERSION` 的文件保持字节不变。
-- `--check` 只报告将要变更的文件；`--json` 输出逐根报告。任意 Rust 变换仍需应用中
-  的 `ConfigMigrator` 闭包。
+- `--check` 只报告将要变更的文件；`--diff` 输出字段级变化（`+` 新增、`-` 删除、`~`
+  修改，包含写入的 `version`）；`--json` 输出带 `changes` 数组的逐根报告，条目包含
+  `file`、JSON Pointer `path`、`kind`（`added`、`removed`、`changed`）与可选
+  `from` / `to`。任意 Rust 变换仍需应用中的 `ConfigMigrator` 闭包。
 
 ## 名称、参数与 ID
 
@@ -476,7 +483,7 @@ cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
-cargo run -p playact-cli -- migrate --check --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -504,8 +511,9 @@ include 基准目录内或自行调整。`convert --recursive --format FORMAT` �
 与只读格式检查结合：所有通过 lint 的根文件和被包含文件必须已经是规范格式。存在 lint
 错误、无法格式化或需要格式化的文件时非零退出；`--json` 同时输出根配置的 lint 报告
 与逐文件格式状态。`migrate` 对每个根文件及其 include 应用声明式清单，校验迁移后的
-图，所有文件有效时才原地写入；`--check` 只报告待迁移文件，`--json` 输出逐根报告。
-RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法反序列化为
+图，所有文件有效时才原地写入；`--check` 只报告待迁移文件，`--diff` 输出字段级变化，
+`--json` 输出包含变更的逐根报告。RON 格式化使用解析后的 spec 序列化，因为 RON 的
+通用 map 语法无法反序列化为
 `TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
 参数与 include 文件集合变化。子节点按 type 与 name/kind/key 匹配，插入与
 重排会报告为 moved，而不是后续索引全部变化。相对路径相同的 include 文件会递归比较，

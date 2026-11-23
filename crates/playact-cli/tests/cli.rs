@@ -1375,6 +1375,81 @@ fn migrate_json_reports_migrated_files() {
         Some(2),
         "{report}"
     );
+    let changes = report[0]["changes"]
+        .as_array()
+        .expect("field-level changes");
+    assert!(
+        changes
+            .iter()
+            .any(|change| change["path"] == "/version" && change["kind"] == "changed"),
+        "{report}"
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|change| change["path"] == "/root" && change["kind"] == "added"),
+        "{report}"
+    );
+}
+
+#[test]
+fn migrate_diff_previews_field_changes_without_writing() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = rename_manifest(&directory);
+    let original = fs::read_to_string(&root).expect("original");
+
+    let preview = run(&[
+        "migrate",
+        "--check",
+        "--diff",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!preview.status.success(), "{preview:?}");
+    let stdout = String::from_utf8_lossy(&preview.stdout);
+    assert!(stdout.contains("/version: 0 -> 1"), "{stdout}");
+    assert!(stdout.contains("/tree"), "{stdout}");
+    assert!(stdout.contains("/root"), "{stdout}");
+    assert!(stdout.contains("3 field change(s)"), "{stdout}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_applies_value_renames_and_numeric_scaling() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"root":{"type":"legacy_wait","time":2}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_value","where":{"type":"legacy_wait"},"field":"type","from":"legacy_wait","to":"wait"},
+            {"op":"rename_field","where":{"type":"wait"},"from":"time","to":"duration_ms"},
+            {"op":"scale","where":{"type":"wait"},"field":"duration_ms","multiply":1000}
+        ]}]}"#,
+    );
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let value: Value =
+        serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["root"]["type"], "wait");
+    assert_eq!(value["root"]["duration_ms"], 2000);
+
+    let linted = run(&["lint", root.to_str().expect("root path")]);
+    assert!(linted.status.success(), "{linted:?}");
 }
 
 #[test]

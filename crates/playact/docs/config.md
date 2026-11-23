@@ -134,7 +134,9 @@ TOML, YAML, and RON work:
       "from": 0,
       "operations": [
         {"op": "rename_field", "from": "tree", "to": "root"},
+        {"op": "rename_value", "where": {"type": "legacy_wait"}, "field": "type", "from": "legacy_wait", "to": "wait"},
         {"op": "rename_field", "where": {"type": "wait"}, "from": "seconds", "to": "duration_ms"},
+        {"op": "scale", "where": {"type": "wait"}, "field": "duration_ms", "multiply": 1000},
         {"op": "remove_field", "where": {"type": "wait"}, "field": "legacy"},
         {"op": "set_field", "at": "/root", "field": "name", "value": "migrated", "overwrite": false}
       ]
@@ -149,6 +151,11 @@ TOML, YAML, and RON work:
 - `rename_field` is a no-op when `from` is absent and fails if `to` already
   exists. `remove_field` is a no-op when the field is absent. `set_field`
   inserts a missing field, or overwrites it when `"overwrite": true`.
+- `rename_value` replaces the field value only when it equals `from`, and is a
+  no-op otherwise. `scale` computes `value * multiply + add` for numeric fields;
+  a missing field is a no-op, a non-numeric value is an error, and integer inputs
+  keep an integer JSON representation when the result is integral. Operations run
+  in order, so rename a value or field before scaling the renamed field.
 - Target selection:
   - No `at` or `where`: the root object only.
   - `at`: a JSON Pointer to one object (`""` is the root, `"/root"` the root node,
@@ -162,8 +169,11 @@ TOML, YAML, and RON work:
   and restore already-written files on failure.
 - Migrated files are serialized canonically in their source format; files
   already at `CURRENT_VERSION` are left byte-for-byte unchanged.
-- `--check` reports files that would change without writing; `--json` emits
-  per-root reports. Custom Rust transformations still require a
+- `--check` reports files that would change without writing; `--diff` prints
+  field-level changes (`+` added, `-` removed, `~` changed, including the stamped
+  `version`); `--json` emits per-root reports with a `changes` array whose entries
+  carry `file`, JSON Pointer `path`, `kind` (`added`, `removed`, or `changed`),
+  and optional `from` / `to` values. Custom Rust transformations still require a
   `ConfigMigrator` closure in the application.
 
 ## Name, parameters, and IDs
@@ -511,7 +521,7 @@ cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/
 cargo run -p playact-cli -- check --schema schema.json config/root.json
 cargo run -p playact-cli -- check --json --schema schema.json config/root.json
 cargo run -p playact-cli -- migrate --manifest migrations.json --schema schema.json config/root.json
-cargo run -p playact-cli -- migrate --check --manifest migrations.json config/root.json
+cargo run -p playact-cli -- migrate --check --diff --manifest migrations.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -550,8 +560,9 @@ must already be canonical. It exits nonzero on lint errors, formatting errors,
 or files that would change; `--json` reports root lint findings plus per-file
 formatting status. `migrate` applies a declarative manifest to every root and
 included file, validates the migrated graph, and writes in place only when all
-files are valid; `--check` reports pending migrations without writing and
-`--json` reports per-root results. RON formatting serializes the parsed spec
+files are valid; `--check` reports pending migrations without writing, `--diff`
+prints field-level changes, and `--json` reports per-root results with changes.
+RON formatting serializes the parsed spec
 because RON's generic map syntax does not deserialize as a `TreeSpec`; other
 formats preserve the original field presence. `diff` validates both inputs, then
 reports

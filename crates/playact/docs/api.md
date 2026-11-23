@@ -1084,8 +1084,9 @@ non-object results, and final `TreeSpec` failures all report configuration paths
 A missing top-level `version` defaults to `CURRENT_VERSION`, so legacy documents
 must declare it. `FsIncludeResolver` migrates every included file;
 `RemoteTreeLoader::with_migrator` offers the same pipeline for remote refreshes.
-For simple field renames, removals, and defaults, `playact migrate --manifest`
-can upgrade roots and includes without application code.
+For simple field renames, removals, defaults, value mappings, and numeric
+scaling, `playact migrate --manifest` can upgrade roots and includes without
+application code; `--diff` previews field-level changes.
 
 ### Validation and schema
 

@@ -122,14 +122,15 @@ formatting for every lint-valid file. Writes nothing and exits nonzero when any
 file is invalid, cannot be formatted, or would be reformatted. --json prints a
 machine-readable report.";
 const MIGRATE_USAGE: &str = "\
-usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--check] [--json] CONFIG...
+usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--check] [--diff] [--json] CONFIG...
 
-Applies versioned declarative field operations from a manifest to each
-configuration and its include graph, then validates every result. Operations
-are rename_field, remove_field, and set_field, targeted by `at` (JSON Pointer)
-or `where` (recursive object match). Files are written in place only when the
-whole graph is valid. --check reports files that would change without writing;
---json prints per-root reports.";
+Applies versioned declarative operations from a manifest to each configuration
+and its include graph, then validates every result. Operations are
+rename_field, remove_field, set_field, rename_value, and scale, targeted by
+`at` (JSON Pointer) or `where` (recursive object match). Files are written in
+place only when the whole graph is valid. --check reports files that would
+change without writing; --diff prints field-level changes; --json prints
+per-root reports including changes.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -846,6 +847,7 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut include_base = None;
     let mut check = false;
     let mut json_output = false;
+    let mut diff_output = false;
     let mut options_done = false;
     let mut files = Vec::new();
     let mut arguments = arguments.into_iter();
@@ -863,6 +865,10 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--json") => {
                     json_output = true;
+                    continue;
+                }
+                Some("--diff") => {
+                    diff_output = true;
                     continue;
                 }
                 Some("-m" | "--manifest") => {
@@ -952,6 +958,9 @@ fn run_migrate(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 println!("migrated {} file(s)", migrated.len());
             }
         }
+        if diff_output {
+            print_field_changes(&unique_changes(&outcome.reports));
+        }
     }
 
     Ok(if has_issues || (check && !migrated.is_empty()) {
@@ -967,6 +976,89 @@ fn unique_migrated(reports: &[migrate::MigrationReport]) -> Vec<String> {
         files.extend(report.migrated.iter().cloned());
     }
     files.into_iter().collect()
+}
+
+fn unique_changes(reports: &[migrate::MigrationReport]) -> Vec<&migrate::FieldChange> {
+    let mut seen = BTreeSet::new();
+    let mut changes = Vec::new();
+    for report in reports {
+        for change in &report.changes {
+            let key = serde_json::to_string(change).unwrap_or_else(|_| format!("{change:?}"));
+            if seen.insert(key) {
+                changes.push(change);
+            }
+        }
+    }
+    changes.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.path.cmp(&right.path))
+            .then(left.kind.cmp(&right.kind))
+    });
+    changes
+}
+
+fn print_field_changes(changes: &[&migrate::FieldChange]) {
+    for change in changes {
+        let path = if change.path.is_empty() {
+            String::from("/")
+        } else {
+            change.path.clone()
+        };
+        match change.kind {
+            migrate::ChangeKind::Added => println!(
+                "+ {} {}{}",
+                change.file,
+                path,
+                change_value_suffix(change.to.as_ref())
+            ),
+            migrate::ChangeKind::Removed => println!(
+                "- {} {}{}",
+                change.file,
+                path,
+                change_value_suffix(change.from.as_ref())
+            ),
+            migrate::ChangeKind::Changed => println!(
+                "~ {} {}: {} -> {}",
+                change.file,
+                path,
+                compact_change_value(change.from.as_ref()),
+                compact_change_value(change.to.as_ref())
+            ),
+        }
+    }
+    if !changes.is_empty() {
+        println!("{} field change(s)", changes.len());
+    }
+}
+
+fn change_value_suffix(value: Option<&Value>) -> String {
+    match value {
+        Some(value) => format!(": {}", compact_change_value(Some(value))),
+        None => String::new(),
+    }
+}
+
+fn compact_change_value(value: Option<&Value>) -> String {
+    let text = match value {
+        Some(Value::Object(_)) => String::from("{...}"),
+        Some(Value::Array(_)) => String::from("[...]"),
+        Some(Value::String(text)) => {
+            serde_json::to_string(text).unwrap_or_else(|_| format!("\"{text}\""))
+        }
+        Some(value) => serde_json::to_string(value).unwrap_or_else(|_| String::from("<value>")),
+        None => String::from("<none>"),
+    };
+    truncate_chars(text, 80)
+}
+
+fn truncate_chars(text: String, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text;
+    }
+    let mut truncated: String = text.chars().take(limit.saturating_sub(3)).collect();
+    truncated.push_str("...");
+    truncated
 }
 
 fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {

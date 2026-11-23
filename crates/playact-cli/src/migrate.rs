@@ -61,6 +61,27 @@ enum Operation {
         #[serde(default)]
         overwrite: bool,
     },
+    #[serde(rename = "rename_value")]
+    RenameValue {
+        #[serde(default)]
+        at: Option<String>,
+        #[serde(default, rename = "where")]
+        r#where: Option<BTreeMap<String, Value>>,
+        field: String,
+        from: Value,
+        to: Value,
+    },
+    #[serde(rename = "scale")]
+    Scale {
+        #[serde(default)]
+        at: Option<String>,
+        #[serde(default, rename = "where")]
+        r#where: Option<BTreeMap<String, Value>>,
+        field: String,
+        multiply: f64,
+        #[serde(default)]
+        add: f64,
+    },
 }
 
 impl Operation {
@@ -69,6 +90,8 @@ impl Operation {
             Self::Rename { .. } => "rename_field",
             Self::Remove { .. } => "remove_field",
             Self::Set { .. } => "set_field",
+            Self::RenameValue { .. } => "rename_value",
+            Self::Scale { .. } => "scale",
         }
     }
 
@@ -76,7 +99,9 @@ impl Operation {
         match self {
             Self::Rename { at, r#where, .. }
             | Self::Remove { at, r#where, .. }
-            | Self::Set { at, r#where, .. } => (at.as_deref(), r#where.as_ref()),
+            | Self::Set { at, r#where, .. }
+            | Self::RenameValue { at, r#where, .. }
+            | Self::Scale { at, r#where, .. } => (at.as_deref(), r#where.as_ref()),
         }
     }
 
@@ -117,6 +142,31 @@ impl Operation {
             Self::Set { field, .. } => {
                 if field.is_empty() {
                     return Err(String::from("set_field: field name cannot be empty"));
+                }
+            }
+            Self::RenameValue {
+                field, from, to, ..
+            } => {
+                if field.is_empty() {
+                    return Err(String::from("rename_value: field name cannot be empty"));
+                }
+                if from == to {
+                    return Err(String::from("rename_value: `from` and `to` must differ"));
+                }
+            }
+            Self::Scale {
+                field,
+                multiply,
+                add,
+                ..
+            } => {
+                if field.is_empty() {
+                    return Err(String::from("scale: field name cannot be empty"));
+                }
+                if !multiply.is_finite() || !add.is_finite() {
+                    return Err(String::from(
+                        "scale: `multiply` and `add` must be finite numbers",
+                    ));
                 }
             }
         }
@@ -160,8 +210,54 @@ impl Operation {
                 }
                 Ok(())
             }),
+            Self::RenameValue {
+                field, from, to, ..
+            } => apply_to_target(document, at, matcher, self.name(), |object, _| {
+                if object.get(field) == Some(from) {
+                    object.insert(field.clone(), to.clone());
+                }
+                Ok(())
+            }),
+            Self::Scale {
+                field,
+                multiply,
+                add,
+                ..
+            } => apply_to_target(document, at, matcher, self.name(), |object, path| {
+                let Some(current) = object.get(field).cloned() else {
+                    return Ok(());
+                };
+                let Some(number) = current.as_f64() else {
+                    return Err(ConfigError::with_path(
+                        child_pointer(path, field),
+                        format!("scale: field `{field}` is not a number"),
+                    ));
+                };
+                let value = scale_value(&current, number * multiply + add).map_err(|message| {
+                    ConfigError::with_path(child_pointer(path, field), format!("scale: {message}"))
+                })?;
+                object.insert(field.clone(), value);
+                Ok(())
+            }),
         }
     }
+}
+
+fn scale_value(original: &Value, scaled: f64) -> Result<Value, String> {
+    if !scaled.is_finite() {
+        return Err(String::from("result is not finite"));
+    }
+    if scaled.fract() == 0.0 {
+        if original.is_u64() && scaled >= 0.0 && scaled <= u64::MAX as f64 {
+            return Ok(Value::from(scaled as u64));
+        }
+        if original.is_i64() && scaled >= i64::MIN as f64 && scaled <= i64::MAX as f64 {
+            return Ok(Value::from(scaled as i64));
+        }
+    }
+    serde_json::Number::from_f64(scaled)
+        .map(Value::Number)
+        .ok_or_else(|| String::from("result is not a finite JSON number"))
 }
 
 fn apply_operations(mut document: Value, operations: &[Operation]) -> Result<Value, ConfigError> {
@@ -279,6 +375,32 @@ pub(crate) fn load_manifest(path: &Path) -> Result<ConfigMigrator, String> {
     Ok(migrator)
 }
 
+/// Type of a field-level migration change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ChangeKind {
+    Added,
+    Removed,
+    Changed,
+}
+
+/// One field-level difference between the original and migrated document.
+#[derive(Debug, Serialize)]
+pub(crate) struct FieldChange {
+    /// File containing the field.
+    pub file: String,
+    /// JSON Pointer to the field; empty means the document root.
+    pub path: String,
+    /// Kind of change.
+    pub kind: ChangeKind,
+    /// Previous value for removed or changed fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<Value>,
+    /// New value for added or changed fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<Value>,
+}
+
 /// Result of migrating one root configuration and its include graph.
 #[derive(Debug, Serialize)]
 pub(crate) struct MigrationReport {
@@ -290,6 +412,8 @@ pub(crate) struct MigrationReport {
     pub issues: Vec<LintIssue>,
     /// Files that were migrated (or would be, with `--check`).
     pub migrated: Vec<String>,
+    /// Field-level changes across the root and its includes.
+    pub changes: Vec<FieldChange>,
 }
 
 /// Result of migrating every supplied root.
@@ -316,6 +440,7 @@ pub(crate) fn migrate_files(
             writes: &mut writes,
             issues: Vec::new(),
             migrated: BTreeSet::new(),
+            changes: Vec::new(),
             visited: HashSet::new(),
             stack: Vec::new(),
         };
@@ -332,6 +457,7 @@ pub(crate) fn migrate_files(
             valid,
             issues: state.issues,
             migrated: state.migrated.into_iter().collect(),
+            changes: state.changes,
         });
     }
 
@@ -348,6 +474,7 @@ struct RootState<'a> {
     writes: &'a mut BTreeMap<PathBuf, PendingWrite>,
     issues: Vec<LintIssue>,
     migrated: BTreeSet<String>,
+    changes: Vec<FieldChange>,
     visited: HashSet<PathBuf>,
     stack: Vec<PathBuf>,
 }
@@ -419,6 +546,8 @@ impl RootState<'_> {
             }
         };
         let changed = migrated != original;
+        self.changes
+            .extend(collect_changes(&original, &migrated, &display));
         let issue_count = self.issues.len();
         for mut issue in lint::validate_value(self.schema, &migrated) {
             if !is_root {
@@ -517,6 +646,83 @@ impl RootState<'_> {
             issue.file = Some(file.to_owned());
         }
         self.issues.push(issue);
+    }
+}
+
+fn collect_changes(from: &Value, to: &Value, file: &str) -> Vec<FieldChange> {
+    let mut changes = Vec::new();
+    diff_values(from, to, "", file, &mut changes);
+    changes
+}
+
+fn diff_values(from: &Value, to: &Value, path: &str, file: &str, changes: &mut Vec<FieldChange>) {
+    if from == to {
+        return;
+    }
+    match (from, to) {
+        (Value::Object(old), Value::Object(new)) => {
+            let fields: BTreeSet<&String> = old.keys().chain(new.keys()).collect();
+            for field in fields {
+                let child = child_pointer(path, field);
+                match (old.get(field), new.get(field)) {
+                    (Some(before), Some(after)) => {
+                        diff_values(before, after, &child, file, changes);
+                    }
+                    (Some(before), None) => changes.push(FieldChange {
+                        file: file.to_owned(),
+                        path: child,
+                        kind: ChangeKind::Removed,
+                        from: Some(before.clone()),
+                        to: None,
+                    }),
+                    (None, Some(after)) => changes.push(FieldChange {
+                        file: file.to_owned(),
+                        path: child,
+                        kind: ChangeKind::Added,
+                        from: None,
+                        to: Some(after.clone()),
+                    }),
+                    (None, None) => {}
+                }
+            }
+        }
+        (Value::Array(old), Value::Array(new)) => {
+            let shared = old.len().min(new.len());
+            for index in 0..shared {
+                diff_values(
+                    &old[index],
+                    &new[index],
+                    &format!("{path}/{index}"),
+                    file,
+                    changes,
+                );
+            }
+            for (index, value) in old.iter().enumerate().skip(shared) {
+                changes.push(FieldChange {
+                    file: file.to_owned(),
+                    path: format!("{path}/{index}"),
+                    kind: ChangeKind::Removed,
+                    from: Some(value.clone()),
+                    to: None,
+                });
+            }
+            for (index, value) in new.iter().enumerate().skip(shared) {
+                changes.push(FieldChange {
+                    file: file.to_owned(),
+                    path: format!("{path}/{index}"),
+                    kind: ChangeKind::Added,
+                    from: None,
+                    to: Some(value.clone()),
+                });
+            }
+        }
+        _ => changes.push(FieldChange {
+            file: file.to_owned(),
+            path: path.to_owned(),
+            kind: ChangeKind::Changed,
+            from: Some(from.clone()),
+            to: Some(to.clone()),
+        }),
     }
 }
 
@@ -662,6 +868,101 @@ mod tests {
     }
 
     #[test]
+    fn renames_values_and_scales_numbers() {
+        let operations = vec![
+            Operation::RenameValue {
+                at: None,
+                r#where: Some(BTreeMap::from([(
+                    String::from("type"),
+                    Value::String(String::from("wait_legacy")),
+                )])),
+                field: String::from("type"),
+                from: Value::String(String::from("wait_legacy")),
+                to: Value::String(String::from("wait")),
+            },
+            Operation::Scale {
+                at: None,
+                r#where: Some(BTreeMap::from([(
+                    String::from("type"),
+                    Value::String(String::from("wait")),
+                )])),
+                field: String::from("duration"),
+                multiply: 1000.0,
+                add: 0.0,
+            },
+        ];
+        let document = json!({
+            "root": {
+                "type": "sequence",
+                "children": [
+                    {"type": "wait_legacy", "duration": 2},
+                    {"type": "action", "name": "keep", "duration": 2}
+                ]
+            }
+        });
+        let migrated = apply_operations(document, &operations).expect("value and scale ops");
+        assert_eq!(migrated["root"]["children"][0]["type"], "wait");
+        assert_eq!(migrated["root"]["children"][0]["duration"], 2000);
+        assert_eq!(migrated["root"]["children"][1]["duration"], 2);
+    }
+
+    #[test]
+    fn scale_rejects_non_numeric_fields() {
+        let operation = Operation::Scale {
+            at: Some(String::from("/root")),
+            r#where: None,
+            field: String::from("duration"),
+            multiply: 1000.0,
+            add: 0.0,
+        };
+        let document = json!({"root": {"type": "wait", "duration": "soon"}});
+        let error = apply_operations(document, &[operation]).expect_err("not a number");
+        assert_eq!(error.path(), Some("/root/duration"));
+        assert!(error.message().contains("not a number"), "{error}");
+    }
+
+    #[test]
+    fn field_changes_cover_added_removed_and_changed_values() {
+        let from = json!({
+            "version": 0,
+            "tree": {"type": "action", "name": "old"},
+            "gone": true
+        });
+        let to = json!({
+            "version": 1,
+            "root": {"type": "action", "name": "new"},
+            "added": 2
+        });
+        let changes = collect_changes(&from, &to, "root.json");
+        assert!(changes.iter().any(|change| {
+            change.path == "/version"
+                && change.kind == ChangeKind::Changed
+                && change.from == Some(json!(0))
+                && change.to == Some(json!(1))
+        }));
+        assert!(changes.iter().any(|change| {
+            change.path == "/tree"
+                && change.kind == ChangeKind::Removed
+                && change.file == "root.json"
+        }));
+        assert!(
+            changes
+                .iter()
+                .any(|change| { change.path == "/root" && change.kind == ChangeKind::Added })
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|change| { change.path == "/gone" && change.kind == ChangeKind::Removed })
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|change| { change.path == "/added" && change.kind == ChangeKind::Added })
+        );
+    }
+
+    #[test]
     fn invalid_operations_are_rejected() {
         let cases = [
             Operation::Rename {
@@ -696,6 +997,27 @@ mod tests {
                 field: String::new(),
                 value: Value::Null,
                 overwrite: false,
+            },
+            Operation::RenameValue {
+                at: None,
+                r#where: None,
+                field: String::new(),
+                from: json!("a"),
+                to: json!("b"),
+            },
+            Operation::RenameValue {
+                at: None,
+                r#where: None,
+                field: String::from("type"),
+                from: json!("a"),
+                to: json!("a"),
+            },
+            Operation::Scale {
+                at: None,
+                r#where: None,
+                field: String::from("duration"),
+                multiply: f64::NAN,
+                add: 0.0,
             },
         ];
         for operation in cases {
