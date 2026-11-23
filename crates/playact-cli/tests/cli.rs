@@ -1748,6 +1748,11 @@ fn migrate_manifest_schema_and_init_template() {
         schema["$schema"],
         "https://json-schema.org/draft/2020-12/schema"
     );
+    let include = schema
+        .pointer("/properties/include")
+        .expect("manifest include schema");
+    assert_eq!(include["type"], "array");
+    assert_eq!(include.pointer("/items/type"), Some(&json!("string")));
     let operations = schema
         .pointer("/$defs/Operation/oneOf")
         .and_then(Value::as_array)
@@ -1762,6 +1767,7 @@ fn migrate_manifest_schema_and_init_template() {
     validator
         .validate(&serde_json::json!({
             "version": 1,
+            "include": ["fragments/shared.json"],
             "migrations": [{
                 "from": 0,
                 "operations": [{
@@ -1858,6 +1864,132 @@ fn migrate_init_supports_yaml_manifests() {
     let value: Value =
         serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
     assert_eq!(value["version"], 1);
+}
+
+#[test]
+fn migrate_manifest_includes_fragments() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,
+            "include":["fragments/base.json","fragments/shared.json","fragments/extra.yaml"],
+            "migrations":[{"from":0,"operations":[
+                {"op":"set_field","at":"/root","field":"name","value":"from-local","overwrite":true}
+            ]}]}"#,
+    );
+    directory.write(
+        "fragments/base.json",
+        r#"{"version":1,"include":["common.json"],"migrations":[]}"#,
+    );
+    directory.write(
+        "fragments/shared.json",
+        r#"{"version":1,"include":["common.json"],"migrations":[]}"#,
+    );
+    directory.write(
+        "fragments/common.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"}
+        ]}]}"#,
+    );
+    directory.write(
+        "fragments/extra.yaml",
+        "version: 1\nmigrations:\n  - from: 0\n    operations:\n      - op: set_field\n        at: /root\n        field: name\n        value: from-fragment\n        overwrite: true\n",
+    );
+
+    let migrated = run(&[
+        "migrate",
+        "--json",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(migrated.status.success(), "{migrated:?}");
+    let report: Value = serde_json::from_slice(&migrated.stdout).expect("valid JSON report");
+    assert_eq!(report[0]["valid"], true, "{report}");
+    let operations = report[0]["operations"]
+        .as_array()
+        .expect("operation match counts");
+    assert_eq!(operations.len(), 3, "{report}");
+    assert_eq!(operations[0]["op"], "rename_field");
+    assert_eq!(operations[1]["op"], "set_field");
+    assert_eq!(operations[1]["index"], 2);
+    assert_eq!(operations[1]["matched"], 1, "{report}");
+    assert_eq!(operations[1]["changed"], 1, "{report}");
+    assert_eq!(operations[2]["op"], "set_field");
+    assert_eq!(operations[2]["index"], 3);
+    let value: Value =
+        serde_json::from_str(&fs::read_to_string(&root).expect("migrated")).expect("valid JSON");
+    assert_eq!(value["version"], 1);
+    assert!(value.get("tree").is_none(), "{value}");
+    assert_eq!(value["root"]["name"], "from-local", "{value}");
+}
+
+#[test]
+fn migrate_manifest_include_cycles_are_rejected() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "migrations.json",
+        r#"{"version":1,"include":["cycle.json"],"migrations":[]}"#,
+    );
+    directory.write(
+        "cycle.json",
+        r#"{"version":1,"include":["migrations.json"],"migrations":[]}"#,
+    );
+    let original = fs::read_to_string(&root).expect("original");
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!migrated.status.success(), "{migrated:?}");
+    let stderr = String::from_utf8_lossy(&migrated.stderr);
+    assert!(stderr.contains("creates a cycle"), "{stderr}");
+    assert!(stderr.contains("migrations.json"), "{stderr}");
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
+}
+
+#[test]
+fn migrate_manifest_includes_cannot_escape_the_manifest_base() {
+    let directory = TempDir::new();
+    let root = directory.write(
+        "config/root.json",
+        r#"{"version":0,"tree":{"type":"action","name":"anything"}}"#,
+    );
+    let manifest = directory.write(
+        "config/migrations.json",
+        r#"{"version":1,"include":["../outside.json"],"migrations":[]}"#,
+    );
+    directory.write(
+        "outside.json",
+        r#"{"version":1,"migrations":[{"from":0,"operations":[
+            {"op":"rename_field","from":"tree","to":"root"}
+        ]}]}"#,
+    );
+    let original = fs::read_to_string(&root).expect("original");
+
+    let migrated = run(&[
+        "migrate",
+        "--manifest",
+        manifest.to_str().expect("manifest path"),
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!migrated.status.success(), "{migrated:?}");
+    let stderr = String::from_utf8_lossy(&migrated.stderr);
+    assert!(
+        stderr.contains("escapes the root manifest's directory"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&root).expect("unchanged"), original);
 }
 
 #[test]

@@ -1049,7 +1049,8 @@ let watcher =
 可预览字段级变化，`--patch` 输出 unified diff，`--output DIR` 暂存完整 include 图；
 `--json` 包含逐操作 `matched`/`changed` 计数，`--strict` 在写入前拒绝未匹配任何对象
 或未修改任何对象的操作；`--manifest-schema` 与 `--init PATH` 提供编辑器补全与
-starter 清单。
+starter 清单。清单可复用片段；同一版本的操作按深度优先的 include 顺序合并后再执行
+本地操作。
 
 ### 校验与 schema
 

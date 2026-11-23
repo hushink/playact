@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use playact::config::{ConfigError, ConfigMigrator, MAX_INCLUDE_DEPTH, TreeSpec};
+use playact::config::{CURRENT_VERSION, ConfigError, ConfigMigrator, MAX_INCLUDE_DEPTH, TreeSpec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -26,6 +26,11 @@ struct Manifest {
     /// Manifest format version. Only `1` is supported.
     #[serde(default = "default_manifest_version")]
     version: u32,
+    /// Manifest fragments merged before this manifest's migrations. Paths are
+    /// relative to this manifest and must stay inside the root manifest's
+    /// directory.
+    #[serde(default)]
+    include: Vec<String>,
     /// Ordered list of versioned migration steps.
     migrations: Vec<MigrationStep>,
 }
@@ -524,40 +529,136 @@ impl LoadedManifest {
     }
 }
 
-/// Loads a declarative migration manifest and builds its version pipeline.
-pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("read manifest `{}`: {error}", display_path(path)))?;
-    let format = Format::from_path(path)?;
-    let document = format
-        .parse_document(&text)
-        .map_err(|error| format!("parse manifest `{}`: {error}", display_path(path)))?;
-    let manifest: Manifest = serde_json::from_value(document)
-        .map_err(|error| format!("manifest `{}`: {error}", display_path(path)))?;
-    if manifest.version != MANIFEST_VERSION {
+struct ManifestLoader {
+    base: PathBuf,
+    visited: HashSet<PathBuf>,
+    stack: Vec<PathBuf>,
+    operations: BTreeMap<u32, Vec<Operation>>,
+}
+
+impl ManifestLoader {
+    fn load(&mut self, path: &Path, depth: usize) -> Result<(), String> {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("read manifest `{}`: {error}", display_path(path)))?;
+        let format = Format::from_path(path)
+            .map_err(|error| format!("manifest `{}`: {error}", display_path(path)))?;
+        let document = format
+            .parse_document(&text)
+            .map_err(|error| format!("parse manifest `{}`: {error}", display_path(path)))?;
+        let manifest: Manifest = serde_json::from_value(document)
+            .map_err(|error| format!("manifest `{}`: {error}", display_path(path)))?;
+        if manifest.version != MANIFEST_VERSION {
+            return Err(format!(
+                "manifest `{}`: unsupported manifest version {}; supported is {MANIFEST_VERSION}",
+                display_path(path),
+                manifest.version
+            ));
+        }
+
+        for include in &manifest.include {
+            if depth >= MAX_INCLUDE_DEPTH {
+                return Err(format!(
+                    "manifest `{}`: include `{include}` exceeds {MAX_INCLUDE_DEPTH} nesting levels",
+                    display_path(path)
+                ));
+            }
+            let target = resolve_manifest_include(&self.base, path, include)
+                .map_err(|error| format!("manifest `{}`: {error}", display_path(path)))?;
+            if self.stack.contains(&target) {
+                return Err(format!(
+                    "manifest `{}`: include `{include}` creates a cycle through `{}`",
+                    display_path(path),
+                    display_path(&target)
+                ));
+            }
+            if self.visited.contains(&target) {
+                continue;
+            }
+            self.visited.insert(target.clone());
+            self.stack.push(target.clone());
+            self.load(&target, depth + 1)?;
+            self.stack.pop();
+        }
+
+        for step in manifest.migrations {
+            if step.from >= CURRENT_VERSION {
+                return Err(format!(
+                    "manifest `{}`: migration source version {} must be lower than {CURRENT_VERSION}",
+                    display_path(path),
+                    step.from
+                ));
+            }
+            for (index, operation) in step.operations.iter().enumerate() {
+                operation.validate().map_err(|error| {
+                    format!(
+                        "manifest `{}`: migration from version {} operation {}: {error}",
+                        display_path(path),
+                        step.from,
+                        index + 1
+                    )
+                })?;
+            }
+            self.operations
+                .entry(step.from)
+                .or_default()
+                .extend(step.operations);
+        }
+        Ok(())
+    }
+}
+
+fn resolve_manifest_include(base: &Path, current: &Path, include: &str) -> Result<PathBuf, String> {
+    let include_path = Path::new(include);
+    if include_path.as_os_str().is_empty() {
+        return Err(String::from("include path cannot be empty"));
+    }
+    if include_path.is_absolute() {
+        return Err(format!("include `{include}` must be relative"));
+    }
+    let parent = current
+        .parent()
+        .ok_or_else(|| String::from("manifest path has no parent directory"))?;
+    let canonical = parent
+        .join(include_path)
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve include `{include}`: {error}"))?;
+    if !canonical.starts_with(base) {
         return Err(format!(
-            "unsupported manifest version {}; supported is {MANIFEST_VERSION}",
-            manifest.version
+            "include `{include}` escapes the root manifest's directory"
         ));
     }
-
-    for step in &manifest.migrations {
-        for (index, operation) in step.operations.iter().enumerate() {
-            operation.validate().map_err(|error| {
-                format!(
-                    "manifest migration from version {} operation {}: {error}",
-                    step.from,
-                    index + 1
-                )
-            })?;
-        }
+    if !canonical.is_file() {
+        return Err(format!("include `{include}` is not a file"));
     }
+    Ok(canonical)
+}
+
+/// Loads a declarative migration manifest and builds its version pipeline.
+///
+/// Fragments listed in `include` are loaded depth-first, and operations for the
+/// same source version are concatenated before the including manifest's own
+/// operations.
+pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
+    let root = path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize manifest `{}`: {error}", display_path(path)))?;
+    let base = root
+        .parent()
+        .ok_or_else(|| String::from("manifest path has no parent directory"))?
+        .to_path_buf();
+    let mut loader = ManifestLoader {
+        base,
+        visited: HashSet::from([root.clone()]),
+        stack: vec![root.clone()],
+        operations: BTreeMap::new(),
+    };
+    loader.load(&root, 0)?;
 
     let mut definitions = Vec::new();
-    for step in &manifest.migrations {
-        for (index, operation) in step.operations.iter().enumerate() {
+    for (from, operations) in &loader.operations {
+        for (index, operation) in operations.iter().enumerate() {
             definitions.push(OperationDefinition {
-                from: step.from,
+                from: *from,
                 index: index + 1,
                 op: operation.name(),
             });
@@ -571,9 +672,8 @@ pub(crate) fn load_manifest(path: &Path) -> Result<LoadedManifest, String> {
 
     let mut migrator = ConfigMigrator::new();
     let mut next_operation = 0;
-    for step in manifest.migrations {
-        let from = step.from;
-        let operations = Arc::new(step.operations);
+    for (from, operations) in loader.operations {
+        let operations = Arc::new(operations);
         let operation_indices: Vec<usize> =
             (next_operation..next_operation + operations.len()).collect();
         next_operation += operations.len();

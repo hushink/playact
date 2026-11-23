@@ -145,6 +145,22 @@ TOML, YAML, and RON work:
 }
 ```
 
+A manifest may merge reusable fragments:
+
+```json
+{
+  "version": 1,
+  "include": ["migrations/shared.json", "migrations/combat.yaml"],
+  "migrations": [
+    {"from": 0, "operations": [{"op": "set_field", "at": "/root", "field": "name", "value": "migrated"}]}
+  ]
+}
+```
+
+Fragments use the same shape and may include further fragments. Paths are
+relative to the containing manifest and select JSON, TOML, YAML, or RON by
+extension.
+
 Generate the manifest schema and a starter manifest:
 
 ```text
@@ -166,6 +182,15 @@ for example in VS Code:
 ```
 
 - `version` is the manifest format version (`1`), not the configuration version.
+- `include` is an optional array of fragment manifests. Paths must be relative,
+  stay inside the root manifest's directory, and resolve to files. Fragments are
+  loaded depth-first and each canonical file is merged once, so shared and
+  diamond-shaped fragments are safe. Absolute paths, escapes, cycles, and nesting
+  deeper than `MAX_INCLUDE_DEPTH` are errors.
+- Fragments contribute operations to the same version steps. Operations for a
+  `from` version merge in load order, with fragment operations before the
+  including manifest's own operations; a manifest can therefore extend a shared
+  step with local rules. Report `index` values refer to this merged step.
 - `from` is the source configuration version. Rules use the same chain and
   stamping semantics as `ConfigMigrator`: versions run until `CURRENT_VERSION`.
 - `rename_field` is a no-op when `from` is absent and fails if `to` already
@@ -199,13 +224,13 @@ for example in VS Code:
   `changes` array whose entries carry `file`, JSON Pointer `path`, `kind`
   (`added`, `removed`, or `changed`), and optional `from` / `to` values. Reports
   also include an `operations` array with each executed operation's `from`,
-  one-based `index`, `op`, `matched`, and `changed` counts. `matched` counts the
-  objects selected by `at`, `where`, or the default scope across the root graph;
-  `changed` counts selected objects the operation actually modified. `--strict`
-  fails before writing when an executed operation matched no objects or changed
-  none; without it, those operations produce warnings in human output. Custom
-  Rust transformations still require a `ConfigMigrator` closure in the
-  application.
+  one-based `index` in the merged version step, `op`, `matched`, and `changed`
+  counts. `matched` counts the objects selected by `at`, `where`, or the default
+  scope across the root graph; `changed` counts selected objects the operation
+  actually modified. `--strict` fails before writing when an executed operation
+  matched no objects or changed none; without it, those operations produce
+  warnings in human output. Custom Rust transformations still require a
+  `ConfigMigrator` closure in the application.
 - `--output DIR` requires exactly one root, cannot be combined with `--check`,
   and stages the complete include graph into a new or empty directory instead of
   modifying sources. Include strings are preserved and must stay lexically

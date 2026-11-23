@@ -206,7 +206,9 @@ DIR` 暂存完整 include 图。`--check` 只报告不写文件，`--diff` 输�
 计数的逐根报告。`--strict` 在写入前要求每条已执行操作至少匹配并修改一个对象，
 否则失败；不加该选项时，这类操作只在人类可读输出中产生警告。`--manifest-schema`
 输出供编辑器补全的清单 JSON Schema，`--init PATH` 按扩展名生成 starter 清单。
-声明式规则无法表达任意 Rust 迁移；这类逻辑仍应使用应用内的 `ConfigMigrator`。`diff` 先校验
+清单可通过 `include` 复用片段；片段按版本合并操作、每个文件只加载一次，且必须位于
+根清单所在目录内。声明式规则无法表达任意 Rust 迁移；这类逻辑仍应使用应用内的
+`ConfigMigrator`。`diff` 先校验
 两个配置，再按路径报告节点、参数与 include 文件集合变化；子节点按 type 与
 name/kind/key 匹配，插入与重排会报告为 moved，而不是后续索引全部变化。相对路径相同
 的 include 文件会递归比较，其变化带有 `file` 字段。存在差异时非零退出，并支持

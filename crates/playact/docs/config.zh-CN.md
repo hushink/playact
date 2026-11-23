@@ -138,6 +138,21 @@ include，然后构建并 tick。
 }
 ```
 
+清单可以复用片段：
+
+```json
+{
+  "version": 1,
+  "include": ["migrations/shared.json", "migrations/combat.yaml"],
+  "migrations": [
+    {"from": 0, "operations": [{"op": "set_field", "at": "/root", "field": "name", "value": "migrated"}]}
+  ]
+}
+```
+
+片段使用相同结构，并可继续 include 其他片段。路径相对于包含它的清单文件，并按扩展名
+选择 JSON、TOML、YAML 或 RON。
+
 生成清单 schema 与 starter 清单：
 
 ```text
@@ -158,6 +173,12 @@ cargo run -p playact-cli -- migrate --init migrations.json
 ```
 
 - `version` 是清单格式版本（`1`），不是配置版本。
+- `include` 是可选的片段清单数组。路径必须为相对路径、位于根清单所在目录内，并解析到
+  文件。片段按深度优先加载，每个规范路径只合并一次，因此共享与菱形引用是安全的。
+  绝对路径、越界路径、循环以及超过 `MAX_INCLUDE_DEPTH` 的嵌套都会报错。
+- 片段向相同版本的步骤贡献操作。同一 `from` 的操作按加载顺序合并：片段操作位于包含它们
+  的清单自身操作之前，因此清单可在共享步骤上追加本地规则。报告中的 `index` 指合并后的
+  步骤位置。
 - `from` 是源配置版本。规则使用与 `ConfigMigrator` 相同的链式执行与版本写入语义，
   直到 `CURRENT_VERSION`。
 - `rename_field` 在源字段不存在时无操作，目标字段已存在时报错；`remove_field` 在字段
@@ -180,10 +201,11 @@ cargo run -p playact-cli -- migrate --init migrations.json
   修改，包含写入的 `version`）；`--patch` 对有效的待写入/已写入变更输出 unified diff，
   不能与 `--json` 组合；`--json` 输出带 `changes` 数组的逐根报告，条目包含 `file`、
   JSON Pointer `path`、`kind`（`added`、`removed`、`changed`）与可选 `from` / `to`。
-  报告还包含 `operations` 数组，按已执行操作给出 `from`、从 1 开始的 `index`、`op`、
-  `matched` 与 `changed`。`matched` 统计 `at`、`where` 或默认作用域在整个根配置图中
-  选中的对象数；`changed` 统计操作实际修改的对象数。`--strict` 在写入前拒绝未匹配
-  任何对象或未修改任何对象的已执行操作；未启用时这类操作只在人类可读输出中产生警告。
+  报告还包含 `operations` 数组，按已执行操作给出 `from`、合并后步骤中从 1 开始的
+  `index`、`op`、`matched` 与 `changed`。`matched` 统计 `at`、`where` 或默认作用域
+  在整个根配置图中选中的对象数；`changed` 统计操作实际修改的对象数。`--strict` 在写入前
+  拒绝未匹配任何对象或未修改任何对象的已执行操作；未启用时这类操作只在人类可读输出中产生
+  警告。
   任意 Rust 变换仍需应用中的 `ConfigMigrator` 闭包。
 - `--output DIR` 只接受一个根配置，不能与 `--check` 组合，并把完整 include 图写入
   新的或空的目录而不修改源文件。include 字符串保持不变，且必须像 `bundle` 一样在

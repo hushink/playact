@@ -130,9 +130,13 @@ usage: playact migrate --manifest PATH [--schema PATH] [--include-base PATH] [--
 Applies versioned declarative operations from a manifest to each configuration
 and its include graph, then validates every result. Operations are
 rename_field, remove_field, set_field, rename_value, map_values, and scale,
-targeted by `at` (JSON Pointer) or `where` (recursive object match). Files are
-written in place only when the whole graph is valid, or into a new/empty
---output directory with include strings preserved. --output requires exactly one
+targeted by `at` (JSON Pointer) or `where` (recursive object match). Manifests
+may include fragments through an `include` array; fragments use any supported
+format, resolve relative to the containing manifest, must stay inside the root
+manifest's directory, and are loaded once depth-first. Operations for the same
+version merge before the including manifest's own operations. Files are written
+in place only when the whole graph is valid, or into a new/empty --output
+directory with include strings preserved. --output requires exactly one
 root, cannot be combined with --check, and stages the complete include graph.
 --check reports files that would change without writing; --diff prints
 field-level changes; --patch prints unified diffs; --json prints per-root reports

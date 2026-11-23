@@ -230,12 +230,15 @@ objects or changes none; without it, such operations are warnings in human
 output.
 `--manifest-schema` prints the manifest JSON Schema for editor completion, and
 `--init PATH` writes a starter manifest in the format selected by the extension.
-Declarative rules cannot express arbitrary Rust migrations; use `ConfigMigrator`
-in the application for those. `diff` validates two configurations, then reports
-path-based node, parameter, and include-file set changes; child nodes are matched by type and
-name/kind/key, so insertions and reorders report moves rather than changing every
-later index. Included files with matching relative paths are compared
-recursively, and their findings carry a `file` field. It exits nonzero when
+Manifests can include reusable fragments through an `include` array; fragments
+merge operations by version, are loaded once, and must stay inside the root
+manifest's directory. Declarative rules cannot express arbitrary Rust
+migrations; use `ConfigMigrator` in the application for those. `diff` validates
+two configurations, then reports path-based node, parameter, and include-file set
+changes; child nodes are matched by type and name/kind/key, so insertions and
+reorders report moves rather than changing every later index. Included files with
+matching relative paths are compared recursively, and their findings carry a
+`file` field. It exits nonzero when
 differences exist and supports `--json` for review tooling.
 
 ## Feature flags

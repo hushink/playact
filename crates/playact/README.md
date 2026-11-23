@@ -804,8 +804,11 @@ let watcher =
   no objects or changes none; otherwise those operations are warnings in human
   output.
   `--manifest-schema` prints the manifest JSON Schema for editor completion, and
-  `--init PATH` writes a starter manifest. Arbitrary migrations still belong in
-  a `ConfigMigrator` closure inside the application.
+  `--init PATH` writes a starter manifest. Manifests can include reusable
+  fragments through `include`; operations for the same version merge from
+  fragments before local operations, and fragment paths stay inside the root
+  manifest's directory. Arbitrary migrations still belong in a `ConfigMigrator`
+  closure inside the application.
 - See [`examples/config_migration.rs`](examples/config_migration.rs) for a v0
   root and include that are migrated, built, and ticked.
 
