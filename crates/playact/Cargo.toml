@@ -16,6 +16,7 @@ default = ["std"]
 std = []
 trace-record = ["std"]
 test-util = ["std", "trace-record"]
+inspector = ["std"]
 config = ["std", "dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
 blackboard-serde = ["std", "dep:serde", "dep:serde_json"]
 toml = ["config", "dep:toml"]
@@ -31,6 +32,7 @@ full = [
     "std",
     "trace-record",
     "test-util",
+    "inspector",
     "config",
     "blackboard-serde",
     "toml",
@@ -68,6 +70,10 @@ name = "battle_ai"
 [[example]]
 name = "battle_ai_config"
 required-features = ["config"]
+
+[[example]]
+name = "live_inspector"
+required-features = ["inspector"]
 
 [[bench]]
 name = "engine"

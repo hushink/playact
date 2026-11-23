@@ -32,7 +32,8 @@ commands, and configuration parameter types stay on your side of the boundary.
 - **Interruptible.** A preempted `Running` subtree receives `abort` for external
   cleanup, then `reset` for internal state.
 - **Batteries included, optionally.** Typed config, hot reload, remote config,
-  Tokio tasks, tracing, snapshots, and a proc-macro DSL are opt-in features.
+  Tokio tasks, tracing, snapshots, an HTML inspector, and a proc-macro DSL are
+  opt-in features.
 - **Small core.** The default build is pure `std` with zero third-party
   dependencies; the default-features-off core builds with `no_std + alloc`.
 
@@ -451,6 +452,30 @@ tree.last_status(); // Option<Status>
   builder/app-config IDs appear in `TreeDescription::id` and diagram labels.
 - `StatsTracer::render_tree(&tree)` renders an ASCII tree with each node's last status.
 
+### HTML inspector
+
+Enable the `inspector` feature to render a self-contained HTML report and serve it
+over a local HTTP endpoint:
+
+```rust
+use playact::inspector::{Inspector, InspectorServer};
+
+// Static report
+Inspector::new(&tree)
+    .with_stats(&stats)
+    .write_to("tree.html")?;
+
+// Live report: poll once per frame, then open http://127.0.0.1:7878/
+let mut server = InspectorServer::bind("127.0.0.1:7878")?;
+server.poll(&tree, Some(&stats))?;
+```
+
+The page shows the tree with last statuses, per-node counters and timings, services,
+IDs, and Mermaid source, using inline CSS only. `/metrics`, `/tree`, and `/health`
+serve Prometheus text, the ASCII status tree, and a readiness probe. The server has
+no authentication and exposes tree metadata; bind it to loopback and use it only in
+debug builds.
+
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
 
@@ -815,6 +840,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
 | `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std` + `trace-record`) |
+| `inspector` | HTML report with live statuses/timings and a zero-dependency debug HTTP server (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |
@@ -843,6 +869,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 ```text
 cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
+cargo run -p playact --example live_inspector --features inspector
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Shows
@@ -850,6 +877,8 @@ cargo run -p playact --example battle_ai_config --features config
   and CommandBuffer/Executor separation.
 - `battle_ai_config`: the same ideas driven by JSON configuration, typed parameters,
   and custom node factories.
+- `live_inspector`: a demo tree served at `http://127.0.0.1:7878/` with live
+  statuses, timings, `/metrics`, and `/tree` endpoints.
 
 ## Testing and benchmarks
 

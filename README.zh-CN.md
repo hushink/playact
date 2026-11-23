@@ -31,7 +31,7 @@ English guide: **[crates/playact/README.md](crates/playact/README.md)**。
   返回 `Running`，下一帧继续。
 - **可中断。** Running 子树被抢占时先 `abort` 清理，再 `reset`。
 - **可选集成。** 配置格式、热重载、远程配置、Tokio 任务、tracing、快照、共享
-  黑板与 proc-macro DSL。
+  黑板、HTML inspector 与 proc-macro DSL。
 - **可移植核心。** 默认 `std` 构建零第三方依赖；关闭默认 feature 后使用
   `no_std + alloc`。
 
@@ -99,7 +99,7 @@ fn main() -> Result<(), BuildError> {
 | 装饰节点 | `Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`While`、`Probability`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard` |
 | 叶子节点 | `Action`、`Condition`、`Wait`、`WaitUntil`、`WaitForEvent`、`SetValue`、`TryAction`、`AsyncAction` |
 | 组合复用 | typestate 构建器、`SubtreeFactory`、`SubtreeSlot`、`SubtreeContract`、`ScopedSubtree`、嵌套 `BehaviorTree`、服务 |
-| 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe` |
+| 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、Prometheus 文本导出、带状态树、错误事件、`last_status`、ASCII/DOT/Mermaid `describe`、HTML inspector |
 | 持久化 | 带版本的结构快照与按 `NodeId` 的快照，以及可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
 | 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、JSON Schema、校验、热重载、远程加载 |
@@ -115,12 +115,15 @@ fn main() -> Result<(), BuildError> {
 ```text
 cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
+cargo run -p playact --example live_inspector --features inspector
 ```
 
 - `battle_ai`：确定性的 1D 玩家 vs 三只哥布林战斗，展示 ReactiveSelector 打断、
   Cooldown、Timeout、Inverter、Tracer、abort 清理与 CommandBuffer/Executor 分离。
 - `battle_ai_config`：同一套思路的 JSON 配置驱动版本，展示 typed 参数与 custom
   节点工厂。
+- `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
+  与 `/tree` 端点的演示树。
 
 ## Feature 矩阵
 
@@ -133,6 +136,7 @@ cargo run -p playact --example battle_ai_config --features config
 | `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
 | `trace-record` | 结构化 trace 录制与 replay 对比（依赖 `std`） |
 | `test-util` | 确定性虚拟时间 `TestDriver`（依赖 `std` 与 `trace-record`） |
+| `inspector` | 自包含 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

@@ -35,7 +35,8 @@ Detailed API guide: **[crates/playact/README.md](crates/playact/README.md)**.
 - **Interruptible.** Preempted `Running` subtrees receive `abort` for cleanup and
   then `reset`.
 - **Optional integrations.** Config formats, hot reload, remote config, Tokio
-  tasks, tracing, snapshots, shared blackboards, and a proc-macro DSL.
+  tasks, tracing, snapshots, shared blackboards, an HTML inspector, and a
+  proc-macro DSL.
 - **Portable core.** Default `std` build with zero third-party dependencies;
   `no_std + alloc` with default features disabled.
 
@@ -103,7 +104,7 @@ fn main() -> Result<(), BuildError> {
 | Decorators | `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`, `UntilFailure`, `While`, `Probability`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard` |
 | Leaves | `Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`, `AsyncAction` |
 | Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, `SubtreeContract`, `ScopedSubtree`, nested `BehaviorTree`, services |
-| Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, live status tree, error events, `last_status`, ASCII/DOT/Mermaid `describe` |
+| Observability | `Tracer`, `MultiTracer`, `StatsTracer`, Prometheus text export, live status tree, error events, `last_status`, ASCII/DOT/Mermaid `describe`, HTML inspector |
 | Persistence | Versioned structural and ID-keyed node snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |
 | Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, JSON Schema, validation, hot reload, remote loading |
@@ -119,6 +120,7 @@ Detailed semantics, caveats, and API examples live in the
 ```text
 cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
+cargo run -p playact --example live_inspector --features inspector
 ```
 
 - `battle_ai`: deterministic 1D duel between a player and three goblins. Demonstrates
@@ -126,6 +128,8 @@ cargo run -p playact --example battle_ai_config --features config
   and CommandBuffer/Executor separation.
 - `battle_ai_config`: the same ideas driven by JSON configuration, typed parameters,
   and custom node factories.
+- `live_inspector`: a small demo tree served at `http://127.0.0.1:7878/` with live
+  statuses, timings, `/metrics`, and `/tree` endpoints.
 
 ## Feature flags
 
@@ -138,6 +142,7 @@ cargo run -p playact --example battle_ai_config --features config
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |
 | `test-util` | Deterministic `TestDriver` with virtual time (requires `std` and `trace-record`) |
+| `inspector` | Self-contained HTML report and zero-dependency debug HTTP server (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

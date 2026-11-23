@@ -7,6 +7,9 @@
 //!
 //! Statistics distinguish nodes by event path; use one `StatsTracer` per tree,
 //! otherwise identical paths from different trees get merged.
+//!
+//! For a self-contained HTML view, enable the `inspector` feature and use
+//! `playact::inspector::Inspector`.
 
 use alloc::string::String;
 use alloc::vec::Vec;

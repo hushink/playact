@@ -112,6 +112,8 @@ pub mod error;
 pub mod event;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
+#[cfg(feature = "inspector")]
+pub mod inspector;
 pub mod leaf;
 pub mod node;
 #[cfg(feature = "blackboard-serde")]
@@ -158,6 +160,8 @@ pub use error::BuildError;
 pub use event::{EventKey, EventQueue};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{HotReloadError, TreeWatcher};
+#[cfg(feature = "inspector")]
+pub use inspector::{Inspector, InspectorServer};
 pub use leaf::{Action, Condition, SetValue, TryAction, Wait, WaitForEvent, WaitUntil};
 pub use node::{BoxedNode, IdentifiedNode, Kind, Node, NodeId};
 #[cfg(feature = "blackboard-serde")]

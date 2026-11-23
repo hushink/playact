@@ -28,8 +28,8 @@
 - **可预测的 tick。** tick 内不 sleep、不引入 async runtime、不隐藏线程；长动作
   返回 `Running`，下一帧继续。
 - **可中断。** Running 子树被抢占时先 `abort` 做外部清理，再 `reset` 清内部状态。
-- **可选能力齐全。** 类型化配置、热重载、远程配置、Tokio 任务、tracing、快照与
-  proc-macro DSL 都按 feature 提供。
+- **可选能力齐全。** 类型化配置、热重载、远程配置、Tokio 任务、tracing、快照、
+  HTML inspector 与 proc-macro DSL 都按 feature 提供。
 - **核心足够小。** 默认构建是纯 `std`、零第三方依赖；关闭默认 feature 后以
   `no_std + alloc` 编译。
 
@@ -439,6 +439,28 @@ tree.last_status(); // Option<Status>
   `NodeId` 会出现在 `TreeDescription::id` 和图中。
 - `StatsTracer::render_tree(&tree)` 输出带每个节点最后状态的 ASCII 树。
 
+### HTML inspector
+
+启用 `inspector` feature 后，可以生成自包含 HTML 报告，并通过本地 HTTP 端点实时查看：
+
+```rust
+use playact::inspector::{Inspector, InspectorServer};
+
+// 静态报告
+Inspector::new(&tree)
+    .with_stats(&stats)
+    .write_to("tree.html")?;
+
+// 实时报告：每帧 poll 一次，然后打开 http://127.0.0.1:7878/
+let mut server = InspectorServer::bind("127.0.0.1:7878")?;
+server.poll(&tree, Some(&stats))?;
+```
+
+页面展示树结构、各节点最后状态、计数与耗时、服务节点、ID 与 Mermaid 源码，仅使用
+内联 CSS。`/metrics`、`/tree`、`/health` 分别提供 Prometheus 文本、ASCII 状态树与
+就绪探针。服务器没有鉴权，并会暴露树元数据；请只绑定 loopback，并仅在 debug 构建中
+使用。
+
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。
 
@@ -787,6 +809,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
 | `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |
 | `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std` + `trace-record`） |
+| `inspector` | 带实时状态/耗时的 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |
@@ -813,12 +836,15 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 ```text
 cargo run -p playact --example battle_ai
 cargo run -p playact --example battle_ai_config --features config
+cargo run -p playact --example live_inspector --features inspector
 ```
 
 - `battle_ai`：确定性的 1D 玩家 vs 三只哥布林战斗，展示 ReactiveSelector 打断、
   Cooldown、Timeout、Inverter、Tracer、abort 清理与 CommandBuffer/Executor 分离。
 - `battle_ai_config`：同一套思路的 JSON 配置驱动版本，展示 typed 参数与 custom
   节点工厂。
+- `live_inspector`：在 `http://127.0.0.1:7878/` 提供实时状态、耗时、`/metrics`
+  与 `/tree` 端点的演示树。
 
 ## 测试与基准
 
