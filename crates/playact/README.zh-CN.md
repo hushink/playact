@@ -462,7 +462,8 @@ server.poll(&tree, Some(&stats))?;
 页面展示树结构、各节点最后状态、计数与耗时、服务节点、带结构路径的 `NodeId` 审计
 表、可选重载差异与 Mermaid 源码，仅使用内联 CSS。搭配 `poll_with_history` /
 `with_diff_history` 时，页面会以可折叠的 `Reload history` 列表展示全部保留的差异，
-最新一条默认展开；条目使用永不复用的单调 revision 编号。`/metrics`、`/tree`、
+最新一条默认展开；条目使用永不复用的单调 revision 编号，并在记录了时间戳时显示
+UTC 时间。`/metrics`、`/tree`、
 `/health` 分别提供 Prometheus 文本、ASCII 状态树与就绪探针；启用 `diff-serde` 后，
 `/diff.json` 返回最近一次差异的 JSON，`/diffs.json` 返回整个 `DiffHistory`
 的 `{"revision", "diff"}` 条目数组（由旧到新）；追加 `?since=N` 可只取 revision
@@ -499,8 +500,10 @@ let parsed = TreeDiff::from_json(&json)?;
 热重载与远程刷新通过 `last_diff()` 暴露最近一次差异，并可通过
 `with_diff_history(n)` 保留有界 `DiffHistory`。每个存储的差异都会获得从 1 开始的
 单调 revision；即使因上限淘汰、`pop_latest` 或 `clear` 也不会复用，可通过
-`latest_entry()` / `entries()` 读取。历史序列化为由旧到新的 `{"revision", "diff"}`
-条目数组，配合 `InspectorServer::poll_with_history` 提供给 `/diffs.json`。增量轮询
+`latest_entry()` / `entries()` 读取。`push_at(diff, unix_ms)` 可记录墙钟时间戳，
+`push_now` 使用系统时钟，热重载与远程刷新会自动使用它。历史序列化为由旧到新的
+`{"revision", "diff"}` 条目数组（有时间戳时增加 `"timestamp"`），配合
+`InspectorServer::poll_with_history` 提供给 `/diffs.json`。增量轮询
 可使用 `entries_since(rev)` / `to_json_since(rev)` 只取 revision 大于 `rev` 的条目，
 HTTP 侧对应 `/diffs.json?since=rev`。
 

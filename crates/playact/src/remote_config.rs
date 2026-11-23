@@ -457,7 +457,7 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.tree = new_tree;
         self.etag = etag;
         self.last_modified = last_modified;
-        self.diff_history.push(diff);
+        self.diff_history.push_now(diff);
 
         Ok(true)
     }

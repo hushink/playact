@@ -447,7 +447,7 @@ impl<W: 'static> TreeWatcher<W> {
 
         let diff = TreeDiff::between(&self.tree, &new_tree);
         self.tree = new_tree;
-        self.diff_history.push(diff);
+        self.diff_history.push_now(diff);
 
         Ok(())
     }

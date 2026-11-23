@@ -178,6 +178,9 @@ impl TreeDiff {
 pub struct DiffEntry<'a> {
     /// Monotonic revision, starting at 1 and never reused.
     pub revision: u64,
+    /// Caller-supplied wall-clock time in Unix milliseconds, when available.
+    #[cfg_attr(feature = "diff-serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub timestamp: Option<u64>,
     /// The structural diff.
     pub diff: &'a TreeDiff,
 }
@@ -188,7 +191,9 @@ pub struct DiffEntry<'a> {
 /// Every stored diff gets a monotonic revision so external logs can identify a
 /// reload precisely; revisions are never reused, even after entries are evicted
 /// by the limit, [`pop_latest`](DiffHistory::pop_latest), or
-/// [`clear`](DiffHistory::clear).
+/// [`clear`](DiffHistory::clear). Entries may also carry a caller-supplied
+/// Unix-millisecond timestamp via [`push_at`](DiffHistory::push_at), or the
+/// current system time via [`push_now`](DiffHistory::push_now).
 #[derive(Debug, Clone)]
 pub struct DiffHistory {
     limit: usize,
@@ -199,6 +204,7 @@ pub struct DiffHistory {
 #[derive(Debug, Clone)]
 struct StoredDiff {
     revision: u64,
+    timestamp: Option<u64>,
     diff: TreeDiff,
 }
 
@@ -250,6 +256,7 @@ impl DiffHistory {
     pub fn latest_entry(&self) -> Option<DiffEntry<'_>> {
         self.diffs.back().map(|stored| DiffEntry {
             revision: stored.revision,
+            timestamp: stored.timestamp,
             diff: &stored.diff,
         })
     }
@@ -269,6 +276,7 @@ impl DiffHistory {
     pub fn entries(&self) -> impl Iterator<Item = DiffEntry<'_>> {
         self.diffs.iter().map(|stored| DiffEntry {
             revision: stored.revision,
+            timestamp: stored.timestamp,
             diff: &stored.diff,
         })
     }
@@ -282,11 +290,33 @@ impl DiffHistory {
             .filter(move |entry| entry.revision > revision)
     }
 
-    /// Appends a diff, dropping the oldest entry when the limit is reached.
+    /// Appends a diff without a timestamp, dropping the oldest entry when the
+    /// limit is reached.
     ///
     /// Returns the assigned revision, or `None` when the limit is `0` and
     /// nothing is stored.
     pub fn push(&mut self, diff: TreeDiff) -> Option<u64> {
+        self.push_entry(diff, None)
+    }
+
+    /// Appends a diff with a caller-supplied Unix-millisecond timestamp.
+    ///
+    /// Returns the assigned revision, or `None` when the limit is `0` and
+    /// nothing is stored.
+    pub fn push_at(&mut self, diff: TreeDiff, unix_ms: u64) -> Option<u64> {
+        self.push_entry(diff, Some(unix_ms))
+    }
+
+    /// Appends a diff stamped with the current system time in Unix milliseconds.
+    ///
+    /// Requires the `std` feature. Returns the assigned revision, or `None` when
+    /// the limit is `0` and nothing is stored.
+    #[cfg(feature = "std")]
+    pub fn push_now(&mut self, diff: TreeDiff) -> Option<u64> {
+        self.push_at(diff, unix_millis_now())
+    }
+
+    fn push_entry(&mut self, diff: TreeDiff, timestamp: Option<u64>) -> Option<u64> {
         if self.limit == 0 {
             return None;
         }
@@ -295,7 +325,11 @@ impl DiffHistory {
         }
         let revision = self.next_revision;
         self.next_revision += 1;
-        self.diffs.push_back(StoredDiff { revision, diff });
+        self.diffs.push_back(StoredDiff {
+            revision,
+            timestamp,
+            diff,
+        });
         Some(revision)
     }
 
@@ -310,7 +344,7 @@ impl DiffHistory {
     }
 
     /// Serializes the history as a JSON array of `{"revision", "diff"}` entries,
-    /// oldest first.
+    /// oldest first; entries with a timestamp also include `"timestamp"`.
     ///
     /// Requires the `diff-serde` feature.
     #[cfg(feature = "diff-serde")]
@@ -340,6 +374,8 @@ impl DiffHistory {
         #[derive(serde::Deserialize)]
         struct JsonEntry {
             revision: u64,
+            #[serde(default)]
+            timestamp: Option<u64>,
             diff: TreeDiff,
         }
 
@@ -349,11 +385,20 @@ impl DiffHistory {
             history.next_revision = history.next_revision.max(entry.revision.saturating_add(1));
             history.diffs.push_back(StoredDiff {
                 revision: entry.revision,
+                timestamp: entry.timestamp,
                 diff: entry.diff,
             });
         }
         Ok(history)
     }
+}
+
+#[cfg(feature = "std")]
+fn unix_millis_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 impl Default for DiffHistory {
@@ -540,6 +585,7 @@ mod tests {
             history.latest_entry().expect("latest entry"),
             DiffEntry {
                 revision: 3,
+                timestamp: None,
                 diff: history.latest().expect("latest"),
             }
         );
@@ -603,13 +649,15 @@ mod tests {
         let mut history = DiffHistory::new(2);
         history.push(TreeDiff::between(&empty, &one));
         history.push(TreeDiff::between(&one, &two));
-        history.push(TreeDiff::between(&two, &three));
+        history.push_at(TreeDiff::between(&two, &three), 1_700_000_000_000);
 
         let value: serde_json::Value = serde_json::from_str(&history.to_json()).expect("json");
         assert_eq!(value.as_array().expect("array").len(), 2);
         assert_eq!(value[0]["revision"], 2);
         assert_eq!(value[0]["diff"]["added"][0]["id"], "b");
+        assert!(value[0].get("timestamp").is_none());
         assert_eq!(value[1]["revision"], 3);
+        assert_eq!(value[1]["timestamp"], 1_700_000_000_000_u64);
         assert_eq!(value[1]["diff"]["added"][0]["id"], "c");
     }
 
@@ -712,14 +760,25 @@ mod tests {
 
         let mut history = DiffHistory::new(4);
         history.push(TreeDiff::between(&empty, &one));
-        history.push(TreeDiff::between(&one, &two));
+        history.push_at(TreeDiff::between(&one, &two), 1_600_000_000_000);
         history.push(TreeDiff::between(&two, &three));
 
         let mut parsed = DiffHistory::from_json(&history.to_json()).expect("parse history");
         let expected: Vec<_> = history.entries().collect();
         let actual: Vec<_> = parsed.entries().collect();
         assert_eq!(actual, expected);
+        assert_eq!(actual[1].timestamp, Some(1_600_000_000_000));
         assert_eq!(parsed.limit(), 3);
         assert_eq!(parsed.push(TreeDiff::default()), Some(4));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn push_now_records_a_system_timestamp() {
+        let empty = tree(Vec::new());
+        let one = tree(vec![leaf("a", "a")]);
+        let mut history = DiffHistory::new(1);
+        assert_eq!(history.push_now(TreeDiff::between(&empty, &one)), Some(1));
+        assert!(history.latest_entry().expect("entry").timestamp.is_some());
     }
 }

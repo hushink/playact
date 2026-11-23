@@ -710,6 +710,33 @@ fn collect_id_entries(
     }
 }
 
+/// Formats Unix milliseconds as `YYYY-MM-DD HH:MM:SSZ` (UTC).
+fn format_unix_ms(unix_ms: u64) -> String {
+    let seconds = unix_ms / 1_000;
+    let days = i64::try_from(seconds / 86_400).unwrap_or(i64::MAX);
+    let time = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = time / 3_600;
+    let minute = (time % 3_600) / 60;
+    let second = time % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Converts days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, u64, u64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month as u64, day as u64)
+}
+
 fn render_diff_history(out: &mut String, history: &DiffHistory) {
     out.push_str("<section>\n<h2>Reload history</h2>\n<div class=\"panel\">\n");
     if history.is_empty() {
@@ -720,10 +747,13 @@ fn render_diff_history(out: &mut String, history: &DiffHistory) {
             let is_latest = Some(entry.revision) == latest;
             let open = if is_latest { " open" } else { "" };
             let marker = if is_latest { " · latest" } else { "" };
+            let timestamp = entry.timestamp.map_or_else(String::new, |unix_ms| {
+                format!(" · {}", format_unix_ms(unix_ms))
+            });
             let diff = entry.diff;
             let _ = writeln!(
                 out,
-                "<details class=\"history-entry\"{open}><summary>#{} · added {} · \
+                "<details class=\"history-entry\"{open}><summary>#{}{timestamp} · added {} · \
                  removed {} · moved {} · renamed {}{marker}</summary>",
                 entry.revision,
                 diff.added.len(),
@@ -1284,18 +1314,27 @@ mod tests {
 
         let mut history = DiffHistory::new(4);
         history.push(TreeDiff::between(&first, &first));
-        history.push(TreeDiff::between(&first, &second));
+        history.push_at(TreeDiff::between(&first, &second), 1_700_000_000_000);
 
         let html = Inspector::new(&second).with_diff_history(&history).render();
         assert!(html.contains("Reload history"));
         assert!(html.contains("#1 · added 0"));
-        assert!(html.contains("#2 · added 1"));
+        assert!(html.contains("#2 · 2023-11-14 22:13:20Z · added 1"));
         assert!(html.contains("latest"));
         assert!(html.contains("<details class=\"history-entry\" open>"));
         assert!(html.contains("diff-badge added"));
         assert!(html.contains("second"));
         // The single-diff section is replaced rather than duplicated.
         assert!(!html.contains("<h2>Reload diff</h2>"));
+    }
+
+    #[test]
+    fn formats_unix_milliseconds_as_utc() {
+        assert_eq!(format_unix_ms(0), "1970-01-01 00:00:00Z");
+        assert_eq!(format_unix_ms(1_700_000_000_000), "2023-11-14 22:13:20Z");
+        assert_eq!(format_unix_ms(1_700_000_000_999), "2023-11-14 22:13:20Z");
+        assert_eq!(format_unix_ms(951_782_400_000), "2000-02-29 00:00:00Z");
+        assert_eq!(format_unix_ms(1_000), "1970-01-01 00:00:01Z");
     }
 
     #[test]
@@ -1505,7 +1544,7 @@ mod tests {
 
         let mut history = DiffHistory::new(4);
         history.push(TreeDiff::between(&first, &first));
-        history.push(TreeDiff::between(&first, &second));
+        history.push_at(TreeDiff::between(&first, &second), 1_600_000_000_000);
 
         let mut server = InspectorServer::bind("127.0.0.1:0").expect("bind");
         let addr = server.local_addr().expect("addr");
@@ -1532,7 +1571,9 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(entries[1]["revision"], 2);
+        assert_eq!(entries[1]["timestamp"], 1_600_000_000_000_u64);
         assert_eq!(entries[1]["diff"]["added"][0]["id"], "second");
+        assert!(entries[0].get("timestamp").is_none());
 
         let response = request_with_history(
             &mut server,
