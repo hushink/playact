@@ -401,6 +401,7 @@ cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/co
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
 cargo run -p playact-cli -- fmt --check --schema schema.json config/*.toml
+cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
 `schema` writes the base `TreeSpec` schema. `catalog`, `lint`, and `convert`
@@ -427,4 +428,7 @@ canonical form; included files are validated but not rewritten unless passed
 explicitly. `--check` writes nothing and exits nonzero when files would change.
 RON formatting serializes the parsed spec because RON's generic map syntax does
 not deserialize as a `TreeSpec`; other formats preserve the original field
-presence.
+presence. `diff` validates both inputs, then reports path-based node, parameter,
+and include-file set changes. It exits nonzero when differences exist and
+supports `--json`; include file sets use `--include-base`, or each input's parent
+when omitted.

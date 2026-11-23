@@ -121,3 +121,4 @@ jobs:
           cargo run -p playact-cli --quiet -- fmt "$fmt_copy"
           cargo run -p playact-cli --quiet -- fmt --check "$fmt_copy"
           rm -rf "$fmt_dir"
+          cargo run -p playact-cli --quiet -- diff crates/playact/examples/battle_ai.json crates/playact/examples/battle_ai.json

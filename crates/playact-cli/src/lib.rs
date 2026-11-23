@@ -10,13 +10,16 @@
 //! - `bundle`: validate a configuration and copy its include graph into an
 //!   empty output directory;
 //! - `graph`: render node structure and include relationships as Mermaid or DOT;
-//! - `fmt`: validate and rewrite configurations in canonical form.
+//! - `fmt`: validate and rewrite configurations in canonical form;
+//! - `diff`: compare node structure, parameters, and include file sets.
 //!
 //! Registry-aware schemas produced by `NodeRegistry::json_schema()` can be
-//! passed to `catalog`, `lint`, `convert`, `bundle`, and `fmt` with `--schema`.
+//! passed to `catalog`, `lint`, `convert`, `bundle`, `fmt`, and `diff` with
+//! `--schema`.
 
 mod bundle;
 mod catalog;
+mod diff;
 mod format;
 mod graph;
 mod lint;
@@ -47,6 +50,7 @@ Commands:
   bundle   Copy a configuration and its includes into one directory
   graph    Render node structure and includes as Mermaid or DOT
   fmt      Validate and rewrite configurations in canonical form
+  diff     Compare two configurations and their include file sets
 
 Run `playact <COMMAND> --help` for command options.";
 
@@ -93,6 +97,13 @@ usage: playact fmt [--schema PATH] [--include-base PATH] [--check] CONFIG...
 Validates configurations and rewrites each input in canonical form. Includes are
 validated but not rewritten unless passed explicitly. --check reports files that
 would change without writing them and exits nonzero.";
+const DIFF_USAGE: &str = "\
+usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
+
+Validates both configurations, then compares node structure, parameters, and
+include file sets. Include file sets are resolved against --include-base, or each
+input's parent when the option is omitted. Exits nonzero when differences are
+found. --json prints a machine-readable report.";
 
 enum Outcome {
     Success,
@@ -117,6 +128,7 @@ pub fn main_entry() -> ExitCode {
         Some("bundle") => run_bundle(arguments),
         Some("graph") => run_graph(arguments),
         Some("fmt") => run_fmt(arguments),
+        Some("diff") => run_diff(arguments),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -538,6 +550,71 @@ fn format_file(path: &Path, check: bool) -> Result<bool, String> {
             .map_err(|error| format!("write `{}`: {error}", path.display()))?;
     }
     Ok(true)
+}
+
+fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
+    let mut schema_path = None;
+    let mut include_base = None;
+    let mut json_output = false;
+    let mut options_done = false;
+    let mut paths = Vec::new();
+    let mut arguments = arguments.into_iter();
+
+    while let Some(argument) = arguments.next() {
+        if !options_done {
+            match argument.to_str() {
+                Some("-h" | "--help") => {
+                    println!("{DIFF_USAGE}");
+                    return Ok(Outcome::Success);
+                }
+                Some("--json") => {
+                    json_output = true;
+                    continue;
+                }
+                Some("-s" | "--schema") => {
+                    schema_path = Some(next_path(&mut arguments, "--schema")?);
+                    continue;
+                }
+                Some("-b" | "--include-base") => {
+                    include_base = Some(next_path(&mut arguments, "--include-base")?);
+                    continue;
+                }
+                Some("--") => {
+                    options_done = true;
+                    continue;
+                }
+                Some(option) if option.starts_with('-') => {
+                    return Err(format!("unknown option `{option}`").into());
+                }
+                _ => {}
+            }
+        }
+        paths.push(PathBuf::from(argument));
+    }
+    if paths.len() != 2 {
+        return Err(String::from("diff requires OLD and NEW paths").into());
+    }
+
+    let schema = load_schema(schema_path.as_deref())?;
+    jsonschema::validator_for(&schema).map_err(|error| format!("invalid schema: {error}"))?;
+    let old_report = lint::lint_file(&schema, &paths[0], include_base.as_deref());
+    let new_report = lint::lint_file(&schema, &paths[1], include_base.as_deref());
+    if !old_report.valid || !new_report.valid {
+        print_human_reports(&[old_report, new_report]);
+        return Ok(Outcome::Invalid);
+    }
+
+    let result = diff::diff(&paths[0], &paths[1], include_base.as_deref())?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print!("{}", diff::render_human(&result));
+    }
+    Ok(if result.is_empty() {
+        Outcome::Success
+    } else {
+        Outcome::Invalid
+    })
 }
 
 fn print_human_reports(reports: &[LintReport]) {

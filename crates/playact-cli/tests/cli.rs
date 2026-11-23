@@ -618,6 +618,103 @@ fn fmt_supports_toml_and_ron() {
 }
 
 #[test]
+fn diff_reports_no_changes_for_identical_configs() {
+    let config = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+
+    let output = run(&["diff", config.as_str(), config.as_str()]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no changes"), "{stdout}");
+}
+
+#[test]
+fn diff_reports_node_and_parameter_changes() {
+    let old = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"sequence","children":[{"type":"action","name":"heal","params":{"amount":10}}]}}"#,
+    );
+    let new = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"sequence","children":[{"type":"action","name":"heal","params":{"amount":20}},{"type":"action","name":"wait"}]}}"#,
+    );
+
+    let output = run(&["diff", old.as_str(), new.as_str()]);
+    assert!(!output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("root.children[0].params.amount"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("10 -> 20"), "{stdout}");
+    assert!(
+        stdout.contains("+ root.children[1]: action: wait"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_json_report_is_machine_readable() {
+    let old = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let new = TempFile::new(
+        "json",
+        r#"{"version":1,"name":"new","root":{"type":"action","name":"anything"}}"#,
+    );
+
+    let output = run(&["diff", "--json", old.as_str(), new.as_str()]);
+    assert!(!output.status.success(), "{output:?}");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid JSON diff");
+    assert_eq!(report["changes"][0]["kind"], "added");
+    assert_eq!(report["changes"][0]["path"], "name");
+    assert_eq!(report["changes"][0]["new"], "\"new\"");
+    assert_eq!(report["includes"].as_array().map(Vec::len), Some(0));
+}
+
+#[test]
+fn diff_reports_include_file_changes() {
+    let directory = TempDir::new();
+    directory.write(
+        "a.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    directory.write(
+        "b.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let old = directory.write("old.json", r#"{"root":{"type":"include","path":"a.json"}}"#);
+    let new = directory.write("new.json", r#"{"root":{"type":"include","path":"b.json"}}"#);
+
+    let output = run(&[
+        "diff",
+        old.to_str().expect("old path"),
+        new.to_str().expect("new path"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("- include a.json"), "{stdout}");
+    assert!(stdout.contains("+ include b.json"), "{stdout}");
+}
+
+#[test]
+fn diff_rejects_invalid_configurations() {
+    let old = TempFile::new(
+        "json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let new = TempFile::new("json", r#"{"root":{"type":"no_such_node"}}"#);
+
+    let output = run(&["diff", old.as_str(), new.as_str()]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no_such_node"), "{stderr}");
+}
+
+#[test]
 fn lint_uses_registry_names_from_the_schema() {
     let schema = TempFile::new("json", &registry_schema());
     let bad = TempFile::new("json", r#"{"root":{"type":"action","name":"missing"}}"#);

@@ -162,6 +162,8 @@ cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- graph --format dot config/root.json
 cargo run -p playact-cli -- fmt config/*.toml
 cargo run -p playact-cli -- fmt --check config/*.toml
+cargo run -p playact-cli -- diff config/old.json config/new.json
+cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
 
 `schema` 输出基础 `TreeSpec` schema。把 `NodeRegistry::json_schema()` 生成的
@@ -176,7 +178,8 @@ TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可�
 以该输出目录作为 include 基准目录。`graph` 把节点结构与 include 关系渲染为 Mermaid
 （默认）或 DOT；缺失或无效的 include 会显示为错误节点。`fmt` 校验输入后按规范格式
 重写；被包含文件只做校验，除非显式传入。`fmt --check` 不写文件，存在需要格式化的
-文件时非零退出。
+文件时非零退出。`diff` 先校验两个配置，再按路径报告节点、参数与 include 文件集合
+变化；存在差异时非零退出，并支持 `--json` 供审阅工具使用。
 
 ## Feature 矩阵
 

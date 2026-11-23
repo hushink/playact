@@ -378,6 +378,7 @@ cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/co
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
 cargo run -p playact-cli -- fmt --check --schema schema.json config/*.toml
+cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
 `schema` 输出基础 `TreeSpec` schema。`catalog`、`lint` 与 `convert` 接受
@@ -396,4 +397,6 @@ include 路径会被保留而不会复制文件，转换后应保持在相同 in
 （默认）或 DOT；缺失或无效的 include 会显示为错误节点。`fmt` 校验输入后按规范格式
 重写；被包含文件只做校验，除非显式传入。`--check` 不写文件，存在需要格式化的文件时
 非零退出。RON 格式化使用解析后的 spec 序列化，因为 RON 的通用 map 语法无法反序列化为
-`TreeSpec`；其他格式保留原始字段存在性。
+`TreeSpec`；其他格式保留原始字段存在性。`diff` 先校验两个输入，再按路径报告节点、
+参数与 include 文件集合变化。存在差异时非零退出并支持 `--json`；include 文件集合使用
+`--include-base`，未指定时使用各自输入文件的父目录。
