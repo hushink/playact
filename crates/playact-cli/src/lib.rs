@@ -10,7 +10,8 @@
 //! - `bundle`: validate a configuration and copy its include graph into an
 //!   empty output directory;
 //! - `graph`: render node structure and include relationships as Mermaid or DOT;
-//! - `fmt`: validate and rewrite configurations in canonical form;
+//! - `fmt`: validate and rewrite configurations in canonical form, optionally
+//!   across the entire include graph;
 //! - `diff`: compare node structure, parameters, and include file sets.
 //!
 //! Registry-aware schemas produced by `NodeRegistry::json_schema()` can be
@@ -24,6 +25,7 @@ mod format;
 mod graph;
 mod lint;
 
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
@@ -49,7 +51,7 @@ Commands:
   convert  Convert a validated configuration between formats
   bundle   Copy a configuration and its includes into one directory
   graph    Render node structure and includes as Mermaid or DOT
-  fmt      Validate and rewrite configurations in canonical form
+  fmt      Validate and rewrite configurations (and includes) in canonical form
   diff     Compare two configurations and their include file sets
 
 Run `playact <COMMAND> --help` for command options.";
@@ -92,11 +94,12 @@ usage: playact graph [--include-base PATH] [--format mermaid|dot] [--output PATH
 Renders node structure and include relationships. Missing or invalid includes are
 shown as error nodes. Without --output the graph is written to stdout.";
 const FMT_USAGE: &str = "\
-usage: playact fmt [--schema PATH] [--include-base PATH] [--check] CONFIG...
+usage: playact fmt [--schema PATH] [--include-base PATH] [--check] [--recursive] CONFIG...
 
-Validates configurations and rewrites each input in canonical form. Includes are
-validated but not rewritten unless passed explicitly. --check reports files that
-would change without writing them and exits nonzero.";
+Validates configurations and rewrites each input in canonical form. --recursive
+also formats every included file. All targets are validated and formatted in
+memory before writing; a write failure restores files already written. --check
+reports files that would change without writing them and exits nonzero.";
 const DIFF_USAGE: &str = "\
 usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
@@ -454,6 +457,7 @@ fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
     let mut schema_path = None;
     let mut include_base = None;
     let mut check = false;
+    let mut recursive = false;
     let mut options_done = false;
     let mut files = Vec::new();
     let mut arguments = arguments.into_iter();
@@ -467,6 +471,10 @@ fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
                 }
                 Some("--check") => {
                     check = true;
+                    continue;
+                }
+                Some("-r" | "--recursive") => {
+                    recursive = true;
                     continue;
                 }
                 Some("-s" | "--schema") => {
@@ -495,48 +503,78 @@ fn run_fmt(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
 
     let schema = load_schema(schema_path.as_deref())?;
     jsonschema::validator_for(&schema).map_err(|error| format!("invalid schema: {error}"))?;
-    let mut changed = 0;
+    let mut targets: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
     let mut failed = false;
 
     for path in &files {
+        add_target(&mut targets, path);
         let report = lint::lint_file(&schema, path, include_base.as_deref());
         if !report.valid {
             print_human_reports(std::slice::from_ref(&report));
             failed = true;
-            continue;
         }
-        match format_file(path, check) {
-            Ok(false) => {}
-            Ok(true) => {
-                changed += 1;
-                if check {
-                    eprintln!("would reformat {}", path.display());
-                } else {
-                    println!("formatted {}", path.display());
-                }
+        if recursive {
+            for included in &report.included {
+                add_target(&mut targets, included);
             }
+        }
+    }
+    if failed {
+        return Ok(Outcome::Invalid);
+    }
+
+    let mut pending = Vec::new();
+    for path in targets.values() {
+        match pending_format(path) {
+            Ok(Some(item)) => pending.push(item),
+            Ok(None) => {}
             Err(error) => {
                 eprintln!("playact: {}: {error}", path.display());
                 failed = true;
             }
         }
     }
-
-    if check && changed > 0 {
-        eprintln!("{changed} of {} file(s) would be reformatted", files.len());
-        failed = true;
-    } else if !check && changed > 0 {
-        println!("formatted {changed} file(s)");
+    if failed {
+        return Ok(Outcome::Invalid);
     }
 
-    Ok(if failed {
-        Outcome::Invalid
-    } else {
-        Outcome::Success
-    })
+    if check {
+        for item in &pending {
+            eprintln!("would reformat {}", item.display);
+        }
+        if !pending.is_empty() {
+            eprintln!("{} file(s) would be reformatted", pending.len());
+            return Ok(Outcome::Invalid);
+        }
+        return Ok(Outcome::Success);
+    }
+    if pending.is_empty() {
+        return Ok(Outcome::Success);
+    }
+
+    apply_formats(&pending)?;
+    for item in &pending {
+        println!("formatted {}", item.display);
+    }
+    if pending.len() > 1 {
+        println!("formatted {} file(s)", pending.len());
+    }
+    Ok(Outcome::Success)
 }
 
-fn format_file(path: &Path, check: bool) -> Result<bool, String> {
+struct PendingFormat {
+    path: PathBuf,
+    display: String,
+    original: Vec<u8>,
+    formatted: Vec<u8>,
+}
+
+fn add_target(targets: &mut BTreeMap<PathBuf, PathBuf>, path: &Path) {
+    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    targets.entry(key).or_insert_with(|| path.to_path_buf());
+}
+
+fn pending_format(path: &Path) -> Result<Option<PendingFormat>, String> {
     let text =
         fs::read_to_string(path).map_err(|error| format!("read `{}`: {error}", path.display()))?;
     let format = format::Format::from_path(path)?;
@@ -545,14 +583,41 @@ fn format_file(path: &Path, check: bool) -> Result<bool, String> {
         .parse_spec(&text)
         .map_err(|error| error.to_string())?;
     let formatted = format.format_config(&document, &spec)?;
-    if formatted.as_slice() == text.as_bytes() {
-        return Ok(false);
+    let original = text.into_bytes();
+    if formatted == original {
+        return Ok(None);
     }
-    if !check {
-        fs::write(path, formatted)
-            .map_err(|error| format!("write `{}`: {error}", path.display()))?;
+    Ok(Some(PendingFormat {
+        path: path.to_path_buf(),
+        display: lint::display_path(path),
+        original,
+        formatted,
+    }))
+}
+
+fn apply_formats(pending: &[PendingFormat]) -> Result<(), String> {
+    let mut written: Vec<&PendingFormat> = Vec::new();
+    for item in pending {
+        if let Err(error) = fs::write(&item.path, &item.formatted) {
+            let mut rollback_errors = Vec::new();
+            if let Err(rollback) = fs::write(&item.path, &item.original) {
+                rollback_errors.push(format!("{}: {rollback}", item.display));
+            }
+            for done in written.iter().rev() {
+                if let Err(rollback) = fs::write(&done.path, &done.original) {
+                    rollback_errors.push(format!("{}: {rollback}", done.display));
+                }
+            }
+            let mut message = format!("write `{}`: {error}", item.display);
+            if !rollback_errors.is_empty() {
+                message.push_str("; rollback failed for ");
+                message.push_str(&rollback_errors.join(", "));
+            }
+            return Err(message);
+        }
+        written.push(item);
     }
-    Ok(true)
+    Ok(())
 }
 
 fn run_diff(arguments: Vec<OsString>) -> Result<Outcome, Box<dyn Error>> {
@@ -754,4 +819,43 @@ fn write_output(path: Option<&Path>, contents: &[u8]) -> Result<(), Box<dyn Erro
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PendingFormat, apply_formats};
+    use std::fs;
+
+    #[test]
+    fn apply_formats_restores_files_after_a_write_failure() {
+        let root =
+            std::env::temp_dir().join(format!("playact-cli-fmt-rollback-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create test directory");
+        let first = root.join("first.json");
+        let blocked = root.join("blocked");
+        fs::write(&first, b"old").expect("write first file");
+        fs::create_dir(&blocked).expect("create blocking directory");
+
+        let pending = vec![
+            PendingFormat {
+                path: first.clone(),
+                display: String::from("first.json"),
+                original: b"old".to_vec(),
+                formatted: b"new".to_vec(),
+            },
+            PendingFormat {
+                path: blocked,
+                display: String::from("blocked"),
+                original: b"old".to_vec(),
+                formatted: b"new".to_vec(),
+            },
+        ];
+        let error = apply_formats(&pending).expect_err("writing a directory fails");
+        assert!(error.contains("write `blocked`"), "{error}");
+        assert!(error.contains("rollback failed for"), "{error}");
+        assert_eq!(fs::read(&first).expect("read restored file"), b"old");
+
+        fs::remove_dir_all(&root).expect("remove test directory");
+    }
 }

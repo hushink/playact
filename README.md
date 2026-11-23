@@ -173,6 +173,8 @@ cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- graph --format dot config/root.json
 cargo run -p playact-cli -- fmt config/*.toml
 cargo run -p playact-cli -- fmt --check config/*.toml
+cargo run -p playact-cli -- fmt --recursive config/root.json
+cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
@@ -193,8 +195,11 @@ The output directory must be outside the include base; load the bundled root wit
 that directory as the include base. `graph` renders node structure and include
 relationships as Mermaid (default) or DOT; missing or invalid includes appear as
 error nodes. `fmt` validates each input and rewrites it in canonical form;
-included files are validated but not rewritten unless passed explicitly.
-`fmt --check` writes nothing and exits nonzero when files would change. `diff`
+included files are validated but not rewritten unless passed explicitly or
+`--recursive` is set, which formats the entire include graph. Every target is
+validated and formatted in memory before the first write, and a write failure
+restores files already written. `fmt --check` writes nothing and exits nonzero
+when files would change. `diff`
 validates two configurations, then reports path-based node, parameter, and
 include-file set changes; child nodes are matched by type and name/kind/key, so
 insertions and reorders report moves rather than changing every later index.

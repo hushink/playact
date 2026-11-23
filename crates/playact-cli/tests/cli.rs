@@ -601,6 +601,118 @@ fn fmt_validates_includes_before_writing() {
 }
 
 #[test]
+fn fmt_recursive_formats_included_files() {
+    let directory = TempDir::new();
+    let include = directory.write(
+        "shared/child.json",
+        r#"{"version":1,"root":{"type":"action","name":"child"}}"#,
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"shared/child.json"}}"#,
+    );
+
+    let formatted = run(&["fmt", "--recursive", root.to_str().expect("root path")]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    for path in [&root, &include] {
+        let text = fs::read_to_string(path).expect("formatted file");
+        assert!(text.contains("\n  \"version\": 1"), "{text}");
+        assert!(text.ends_with('\n'), "{text}");
+    }
+
+    let checked = run(&[
+        "fmt",
+        "--check",
+        "--recursive",
+        root.to_str().expect("root path"),
+    ]);
+    assert!(checked.status.success(), "{checked:?}");
+}
+
+#[test]
+fn fmt_recursive_check_writes_nothing() {
+    let directory = TempDir::new();
+    let include = directory.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"child"}}"#,
+    );
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"child.json"}}"#,
+    );
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_include = fs::read_to_string(&include).expect("original include");
+
+    let checked = run(&[
+        "fmt",
+        "--check",
+        "--recursive",
+        root.to_str().expect("root path"),
+    ]);
+    assert!(!checked.status.success(), "{checked:?}");
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("would reformat"), "{stderr}");
+    assert!(
+        stderr.contains("2 file(s) would be reformatted"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&include).expect("include"),
+        original_include
+    );
+}
+
+#[test]
+fn fmt_recursive_aborts_before_writing_when_an_include_is_invalid() {
+    let directory = TempDir::new();
+    let include = directory.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = directory.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"include","path":"bad.json"}}"#,
+    );
+    let original_root = fs::read_to_string(&root).expect("original root");
+    let original_include = fs::read_to_string(&include).expect("original include");
+
+    let formatted = run(&["fmt", "-r", root.to_str().expect("root path")]);
+    assert!(!formatted.status.success(), "{formatted:?}");
+    assert_eq!(fs::read_to_string(&root).expect("root"), original_root);
+    assert_eq!(
+        fs::read_to_string(&include).expect("include"),
+        original_include
+    );
+}
+
+#[test]
+fn fmt_recursive_deduplicates_shared_includes() {
+    let directory = TempDir::new();
+    let shared = directory.write(
+        "shared.json",
+        r#"{"version":1,"root":{"type":"action","name":"shared"}}"#,
+    );
+    let first = directory.write(
+        "first.json",
+        r#"{"version":1,"root":{"type":"include","path":"shared.json"}}"#,
+    );
+    let second = directory.write(
+        "second.json",
+        r#"{"version":1,"root":{"type":"include","path":"shared.json"}}"#,
+    );
+
+    let formatted = run(&[
+        "fmt",
+        "--recursive",
+        first.to_str().expect("first path"),
+        second.to_str().expect("second path"),
+    ]);
+    assert!(formatted.status.success(), "{formatted:?}");
+    let stdout = String::from_utf8_lossy(&formatted.stdout);
+    assert!(stdout.contains("formatted 3 file(s)"), "{stdout}");
+    let text = fs::read_to_string(&shared).expect("shared file");
+    assert!(text.contains("\n  \"version\": 1"), "{text}");
+}
+
+#[test]
 fn fmt_supports_toml_and_ron() {
     let toml = TempFile::new(
         "toml",

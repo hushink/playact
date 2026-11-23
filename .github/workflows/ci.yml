@@ -120,5 +120,10 @@ jobs:
           cp crates/playact/examples/battle_ai.json "$fmt_copy"
           cargo run -p playact-cli --quiet -- fmt "$fmt_copy"
           cargo run -p playact-cli --quiet -- fmt --check "$fmt_copy"
+          mkdir -p "$fmt_dir/shared"
+          printf '%s\n' '{"version":1,"root":{"type":"include","path":"shared/child.json"}}' > "$fmt_copy"
+          printf '%s\n' '{"version":1,"root":{"type":"action","name":"anything"}}' > "$fmt_dir/shared/child.json"
+          cargo run -p playact-cli --quiet -- fmt --recursive "$fmt_copy"
+          cargo run -p playact-cli --quiet -- fmt --check --recursive "$fmt_copy"
           rm -rf "$fmt_dir"
           cargo run -p playact-cli --quiet -- diff crates/playact/examples/battle_ai.json crates/playact/examples/battle_ai.json

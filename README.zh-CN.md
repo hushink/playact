@@ -162,6 +162,8 @@ cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- graph --format dot config/root.json
 cargo run -p playact-cli -- fmt config/*.toml
 cargo run -p playact-cli -- fmt --check config/*.toml
+cargo run -p playact-cli -- fmt --recursive config/root.json
+cargo run -p playact-cli -- fmt --check --recursive config/root.json
 cargo run -p playact-cli -- diff config/old.json config/new.json
 cargo run -p playact-cli -- diff --json config/old.toml config/new.toml
 ```
@@ -177,8 +179,10 @@ TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可�
 不重写 include 字符串。输出目录必须位于 include 基准目录之外；加载 bundle 根文件时
 以该输出目录作为 include 基准目录。`graph` 把节点结构与 include 关系渲染为 Mermaid
 （默认）或 DOT；缺失或无效的 include 会显示为错误节点。`fmt` 校验输入后按规范格式
-重写；被包含文件只做校验，除非显式传入。`fmt --check` 不写文件，存在需要格式化的
-文件时非零退出。`diff` 先校验两个配置，再按路径报告节点、参数与 include 文件集合
+重写；被包含文件只做校验，除非显式传入或使用 `--recursive` 格式化整个 include 图。
+所有目标都会先在内存中完成校验与格式化，再开始写入；写入失败时会恢复已写入的文件。
+`fmt --check` 不写文件，存在需要格式化的文件时非零退出。`diff` 先校验两个配置，再按
+路径报告节点、参数与 include 文件集合
 变化；子节点按 type 与 name/kind/key 匹配，插入与重排会报告为 moved，而不是后续索引
 全部变化。相对路径相同的 include 文件会递归比较，其变化带有 `file` 字段。存在差异时
 非零退出，并支持 `--json` 供审阅工具使用。

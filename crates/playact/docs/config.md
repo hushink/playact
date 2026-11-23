@@ -401,6 +401,8 @@ cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/co
 cargo run -p playact-cli -- graph --output graph.mmd config/root.json
 cargo run -p playact-cli -- fmt --schema schema.json config/*.toml
 cargo run -p playact-cli -- fmt --check --schema schema.json config/*.toml
+cargo run -p playact-cli -- fmt --recursive --schema schema.json config/root.json
+cargo run -p playact-cli -- fmt --check --recursive --schema schema.json config/root.json
 cargo run -p playact-cli -- diff --schema schema.json config/old.json config/new.json
 ```
 
@@ -425,10 +427,12 @@ the include base when loading the bundled root. `graph` renders node structure
 and include relationships as Mermaid (default) or DOT; missing or invalid
 includes appear as error nodes. `fmt` validates each input and rewrites it in
 canonical form; included files are validated but not rewritten unless passed
-explicitly. `--check` writes nothing and exits nonzero when files would change.
-RON formatting serializes the parsed spec because RON's generic map syntax does
-not deserialize as a `TreeSpec`; other formats preserve the original field
-presence. `diff` validates both inputs, then reports path-based node, parameter,
+explicitly or `--recursive` is set, which formats the entire include graph.
+Every target is validated and formatted in memory before the first write, and a
+write failure restores files already written. `--check` writes nothing and exits
+nonzero when files would change. RON formatting serializes the parsed spec
+because RON's generic map syntax does not deserialize as a `TreeSpec`; other
+formats preserve the original field presence. `diff` validates both inputs, then reports path-based node, parameter,
 and include-file set changes. Child nodes are matched by type and
 name/kind/key, so insertions and reorders report moves instead of shifting every
 later index. Included files with matching relative paths are compared
