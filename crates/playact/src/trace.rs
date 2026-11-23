@@ -80,6 +80,19 @@ pub enum TraceEvent<'a> {
         /// Current time.
         time: Time,
     },
+    /// A node reported a recoverable error.
+    Error {
+        /// Node name.
+        name: &'a str,
+        /// Node type.
+        kind: Kind,
+        /// Child-index path.
+        path: &'a [usize],
+        /// User-facing error message.
+        message: &'a str,
+        /// Current time.
+        time: Time,
+    },
 }
 
 /// Optional observer of node events.
@@ -194,6 +207,21 @@ impl Tracer for TracingTracer {
                 %reason,
                 ?time,
                 "abort"
+            ),
+            TraceEvent::Error {
+                name,
+                kind,
+                path,
+                message,
+                time,
+            } => tracing::error!(
+                target: "playact",
+                node = name,
+                kind = kind.as_str(),
+                ?path,
+                error = message,
+                ?time,
+                "node error"
             ),
         }
     }

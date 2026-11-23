@@ -103,10 +103,13 @@ pub mod config;
 pub mod context;
 pub mod decorator;
 pub mod error;
+pub mod event;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
 pub mod leaf;
 pub mod node;
+#[cfg(feature = "blackboard-serde")]
+pub mod persistence;
 #[cfg(feature = "remote-config")]
 pub mod remote_config;
 #[cfg(feature = "std")]
@@ -140,10 +143,13 @@ pub use decorator::{
     Repeat, Retry, Throttle, Timeout, UntilFailure, UntilSuccess,
 };
 pub use error::BuildError;
+pub use event::{EventKey, EventQueue};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{HotReloadError, TreeWatcher};
-pub use leaf::{Action, Condition, SetValue, Wait};
+pub use leaf::{Action, Condition, SetValue, TryAction, Wait, WaitForEvent, WaitUntil};
 pub use node::{BoxedNode, IdentifiedNode, Kind, Node, NodeId};
+#[cfg(feature = "blackboard-serde")]
+pub use persistence::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
 #[cfg(feature = "remote-config")]
 pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
 #[cfg(feature = "std")]
@@ -169,23 +175,26 @@ pub mod prelude {
     pub use crate::TokioTask;
     #[cfg(feature = "macros")]
     pub use crate::bt;
+    pub use crate::event_key;
     pub use crate::key;
     pub use crate::{
         AbortReason, Action, AlwaysFail, AlwaysSucceed, BehaviorTree, BehaviorTreeBuilder,
         Blackboard, BoxedNode, BranchBuilder, BuildError, CommandBuffer, Condition, Context,
-        Cooldown, Guard, IdentifiedNode, IfThenElse, Inverter, Key, Kind, Limiter,
-        MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer, Node, NodeId, Parallel, Race,
+        Cooldown, EventKey, EventQueue, Guard, IdentifiedNode, IfThenElse, Inverter, Key, Kind,
+        Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MultiTracer, Node, NodeId, Parallel, Race,
         RandomSelector, ReactiveSelector, ReactiveSequence, Repeat, RestoreError, Retry,
         SNAPSHOT_VERSION, Selector, Sequence, SetValue, Status, SubtreeFactory, SubtreeSlot,
         Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeSnapshot,
-        UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WeightedChild,
-        WeightedRandomSelector,
+        TryAction, UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent,
+        WaitUntil, WeightedChild, WeightedRandomSelector,
     };
     #[cfg(feature = "std")]
     pub use crate::{
         AsyncAction, AsyncTask, CancellationToken, NodeStats, SharedBlackboard, StatsTracer,
         ThreadTask,
     };
+    #[cfg(feature = "blackboard-serde")]
+    pub use crate::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]

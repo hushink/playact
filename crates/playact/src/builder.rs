@@ -24,7 +24,8 @@ use crate::decorator::{
     Timeout, UntilFailure, UntilSuccess,
 };
 use crate::error::BuildError;
-use crate::leaf::{Action, Condition, SetValue, Wait};
+use crate::event::EventKey;
+use crate::leaf::{Action, Condition, SetValue, TryAction, Wait, WaitForEvent, WaitUntil};
 use crate::node::{BoxedNode, IdentifiedNode, NodeId};
 use crate::status::Status;
 use crate::subtree::SubtreeFactory;
@@ -191,6 +192,18 @@ where
         self.push_node(Box::new(Action::new(name, f)))
     }
 
+    /// Appends a fallible action.
+    ///
+    /// On `Err`, the error is reported through the installed tracer and the
+    /// node returns `Failure`.
+    pub fn try_action<F, E>(self, name: impl Into<String>, f: F) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        F: for<'a> FnMut(&mut Context<'a, W>) -> Result<Status, E> + Send + 'static,
+        E: core::fmt::Display + Send + 'static,
+    {
+        self.push_node(Box::new(TryAction::new(name, f)))
+    }
+
     /// Appends an async/remote action.
     #[cfg(feature = "std")]
     pub fn async_action<F>(
@@ -215,6 +228,26 @@ where
     /// Appends a wait leaf.
     pub fn wait(self, duration: Duration) -> BehaviorTreeBuilder<W, S::Next> {
         self.push_node(Box::new(Wait::new(duration)))
+    }
+
+    /// Appends a leaf that returns `Running` until the predicate becomes true.
+    pub fn wait_until<F>(
+        self,
+        name: impl Into<String>,
+        predicate: F,
+    ) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        self.push_node(Box::new(WaitUntil::new(name, predicate)))
+    }
+
+    /// Appends a leaf that waits for the next event of a typed event queue.
+    pub fn wait_for_event<T>(self, key: EventKey<T>) -> BehaviorTreeBuilder<W, S::Next>
+    where
+        T: Send + 'static,
+    {
+        self.push_node(Box::new(WaitForEvent::new(key)))
     }
 
     /// Appends a leaf that writes a fixed value to the blackboard on every

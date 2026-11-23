@@ -67,8 +67,14 @@ pub enum Kind {
     Throttle,
     /// Waits for a duration.
     Wait,
+    /// Waits until a predicate holds.
+    WaitUntil,
+    /// Waits for a typed event.
+    WaitForEvent,
     /// Closure action.
     Action,
+    /// Fallible closure action.
+    TryAction,
     /// Async/remote action.
     AsyncAction,
     /// Closure condition.
@@ -112,7 +118,10 @@ impl Kind {
             Self::Limiter => "limiter",
             Self::Throttle => "throttle",
             Self::Wait => "wait",
+            Self::WaitUntil => "wait_until",
+            Self::WaitForEvent => "wait_for_event",
             Self::Action => "action",
+            Self::TryAction => "try_action",
             Self::AsyncAction => "async_action",
             Self::Condition => "condition",
             Self::SetValue => "set_value",

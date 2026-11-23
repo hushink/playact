@@ -15,6 +15,7 @@ readme = "README.md"
 default = ["std"]
 std = []
 config = ["std", "dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
+blackboard-serde = ["std", "dep:serde", "dep:serde_json"]
 toml = ["config", "dep:toml"]
 yaml = ["config", "dep:serde_yaml_ng"]
 ron = ["config", "dep:ron"]
@@ -27,6 +28,7 @@ macros = ["dep:playact-macros"]
 full = [
     "std",
     "config",
+    "blackboard-serde",
     "toml",
     "yaml",
     "ron",

@@ -1,9 +1,10 @@
 //! The tick context.
 
 use alloc::vec::Vec;
+use core::fmt;
 
 use crate::blackboard::Blackboard;
-use crate::node::BoxedNode;
+use crate::node::{BoxedNode, Kind};
 use crate::status::Status;
 use crate::time::Time;
 use crate::trace::{AbortReason, TraceEvent, Tracer};
@@ -88,6 +89,30 @@ impl<'a, W> Context<'a, W> {
     #[must_use]
     pub fn time(&self) -> Time {
         self.time
+    }
+
+    /// Reports a recoverable node error through the installed [`Tracer`].
+    ///
+    /// The message is formatted only when a tracer is installed. Use this from
+    /// fallible actions or custom nodes that return `Failure` but want to
+    /// preserve the underlying error for diagnostics.
+    pub fn report_error(&mut self, name: &str, kind: Kind, error: impl fmt::Display) {
+        if self.trace.tracer.is_none() {
+            return;
+        }
+
+        let message = alloc::format!("{error}");
+        let path = &self.trace.path;
+        let time = self.time;
+        if let Some(tracer) = self.trace.tracer.as_mut() {
+            tracer.event(TraceEvent::Error {
+                name,
+                kind,
+                path,
+                message: &message,
+                time,
+            });
+        }
     }
 
     /// Tick the child at child index `index`, emitting Enter/Exit events

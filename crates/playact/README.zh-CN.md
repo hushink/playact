@@ -222,12 +222,38 @@ let tree = BehaviorTreeBuilder::<World>::new("player")
 
 ### 叶子节点
 
-`Action`、`Condition`、`Wait`、`SetValue`、`AsyncAction`。
+`Action`、`Condition`、`Wait`、`WaitUntil`、`WaitForEvent`、`SetValue`、`TryAction`、
+`AsyncAction`。
 
 ```rust
 let action = Action::new("hold_key", |_| Status::Running)
     .with_abort(|_ctx| { /* 释放按键 */ })
     .with_reset(|| { /* 清理内部状态 */ });
+```
+
+- `WaitUntil` 在谓词为真前返回 `Running`。
+- `WaitForEvent` 从 `EventKey` 对应的 `EventQueue` 消费 typed 事件。
+- `TryAction` 返回 `Result<Status, E>`；失败时通过 Tracer 记录 `Error` 事件并返回
+  `Failure`。
+
+```rust
+static DAMAGE: EventKey<u32> = playact::event_key!("damage");
+
+let tree = BehaviorTreeBuilder::<World>::new("react")
+    .sequence(|b| {
+        b.action("emit", |ctx| {
+            DAMAGE.push(ctx, 10);
+            Status::Success
+        })
+        .wait_for_event(DAMAGE)
+    })
+    .build()?;
+
+let fallible = BehaviorTreeBuilder::<World>::new("fallible")
+    .try_action("fetch", |_ctx| {
+        Err::<Status, &str>("network unavailable")
+    })
+    .build()?;
 ```
 
 `SetValue<T>` 每次 tick 写入 typed key 并返回 `Success`：
@@ -334,11 +360,12 @@ for (path, node) in stats.nodes() {
 tree.last_status(); // Option<Status>
 ```
 
-- `Tracer` 接收 `Enter` / `Exit` / `Abort` 事件，路径是子索引路径。
+- `Tracer` 接收 `Enter` / `Exit` / `Abort` / `Error` 事件，路径是子索引路径。
 - `MultiTracer` 将事件按注册顺序广播。
-- `StatsTracer` 按路径统计 tick、终态、abort 与 wall-clock 耗时，需要 `std`。
+- `StatsTracer` 按路径统计 tick、终态、abort、错误与 wall-clock 耗时，需要 `std`。
 - `last_status()` / `is_running()` 暴露上一次顶层结果。
-- `describe()` 输出 ASCII 树或 Graphviz DOT。
+- `describe()` 输出 ASCII 树或 Graphviz DOT；builder/配置中的 `NodeId` 会出现在
+  `TreeDescription::id` 和 DOT 标签中。
 
 `AbortReason` 取值为 `Preempted`、`Timeout`、`ParallelDone`、`RaceDone`、
 `TreeAbort`；它只出现在 trace 事件中，不进入 `Node::abort` 签名。
@@ -363,9 +390,27 @@ rebuilt.restore(&snapshot)?;
 子树状态。
 
 > [!WARNING]
-> 快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot` 动态
-> 子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，
+> 节点快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot`
+> 动态子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，
 > 应在同一时间轴上恢复，或 reset 后重新建立。
+
+可选 `blackboard-serde` feature 提供 `BlackboardCodec`，只序列化显式注册的 typed
+key：
+
+```rust
+use playact::BlackboardCodec;
+
+let mut codec = BlackboardCodec::new();
+codec.register(&TARGET)?;
+codec.register(&COMMANDS)?;
+
+let node_state = tree.snapshot();
+let board_state = codec.encode(tree.blackboard())?;
+// 之后：tree.restore(&node_state)?; codec.decode(tree.blackboard_mut(), &board_state)?;
+```
+
+未知 key、重复注册、版本不支持和值类型错误都会返回错误；codec 不会做字符串 key
+查找或公开 `Any`。
 
 ## 配置驱动
 
@@ -392,6 +437,9 @@ let mut tree = spec.build(&registry)?;
   （含 throttle）、wait、action、condition 与 custom 工厂。
 - `Guard`、`IfThenElse`、`UtilitySelector` 的谓词/评分属于业务逻辑，保留在代码或
   `custom` 工厂中。
+- `TreeSpec::validate(&ValidationLimits)` 可在构建前校验版本、最大深度与节点数，
+  适合远程配置或用户提交的配置。
+- 可选 `schema` feature 提供 `TreeSpec::json_schema()`，用于编辑器补全与外部校验。
 - 完整树示例见 [`examples/battle_ai.json`](examples/battle_ai.json)。
 
 ### Include
@@ -526,10 +574,11 @@ playact = { version = "0.1", default-features = false }
 
 核心可用：节点、`BehaviorTree`（含 services 与快照）、builder、`Blackboard`
 （内部 `BTreeMap`）、组合/装饰/叶子、`CommandBuffer`、`SubtreeFactory`、
-`SubtreeSlot`、`MultiTracer` 与 `describe`。
+`SubtreeSlot`、`EventQueue` / `EventKey`、`WaitUntil` / `WaitForEvent` /
+`TryAction`、`MultiTracer` 与 `describe`。
 
 需要 `std`：`SharedBlackboard`、`AsyncAction` / `ThreadTask` / `TokioTask`、
-`StatsTracer`、配置层、热重载、远程配置、`TracingTracer`。
+`StatsTracer`、配置层、黑板序列化、热重载、远程配置、`TracingTracer`。
 
 `SubtreeFactory` 使用 `alloc::sync::Arc`，no_std 目标需支持原子指针；`macros`
 feature 可在 no_std 中使用。
@@ -545,6 +594,8 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
+| `schema` | `TreeSpec::json_schema()` JSON Schema 生成（依赖 `config`） |
+| `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

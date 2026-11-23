@@ -228,12 +228,38 @@ Key details:
 
 ### Leaves
 
-`Action`, `Condition`, `Wait`, `SetValue`, `AsyncAction`.
+`Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`,
+`AsyncAction`.
 
 ```rust
 let action = Action::new("hold_key", |_| Status::Running)
     .with_abort(|_ctx| { /* release key */ })
     .with_reset(|| { /* clear internal state */ });
+```
+
+- `WaitUntil` returns `Running` until a predicate becomes true.
+- `WaitForEvent` consumes typed events from an `EventQueue`, created with an `EventKey`.
+- `TryAction` returns `Result<Status, E>`; on error it reports an `Error` trace event and
+  returns `Failure`.
+
+```rust
+static DAMAGE: EventKey<u32> = playact::event_key!("damage");
+
+let tree = BehaviorTreeBuilder::<World>::new("react")
+    .sequence(|b| {
+        b.action("emit", |ctx| {
+            DAMAGE.push(ctx, 10);
+            Status::Success
+        })
+        .wait_for_event(DAMAGE)
+    })
+    .build()?;
+
+let fallible = BehaviorTreeBuilder::<World>::new("fallible")
+    .try_action("fetch", |_ctx| {
+        Err::<Status, &str>("network unavailable")
+    })
+    .build()?;
 ```
 
 `SetValue<T>` writes a typed key every tick and returns `Success`:
@@ -342,12 +368,13 @@ for (path, node) in stats.nodes() {
 tree.last_status(); // Option<Status>
 ```
 
-- `Tracer` receives `Enter` / `Exit` / `Abort` events with a child-index path.
+- `Tracer` receives `Enter` / `Exit` / `Abort` / `Error` events with a child-index path.
 - `MultiTracer` fans events out to multiple tracers.
-- `StatsTracer` tracks per-path tick counts, status counts, aborts, and wall-clock time
-  (requires `std`).
+- `StatsTracer` tracks per-path tick counts, status counts, aborts, reported errors, and
+  wall-clock time (requires `std`).
 - `last_status()` and `is_running()` expose the last top-level result.
-- `describe()` renders an ASCII tree or Graphviz DOT.
+- `describe()` renders an ASCII tree or Graphviz DOT; builder/app-config IDs appear in
+  `TreeDescription::id` and DOT labels.
 
 `AbortReason` values are `Preempted`, `Timeout`, `ParallelDone`, `RaceDone`, and
 `TreeAbort`; they live in trace events, not in `Node::abort`.
@@ -374,10 +401,28 @@ Custom nodes can opt in with `Node::save_state` / `Node::load_state`. Composite 
 nodes must encode their children recursively.
 
 > [!WARNING]
-> Snapshots do not include the world, blackboard values, closure captures, `AsyncAction`
-> tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those separately.
-> Time-based nodes store absolute `Time.now` values, so restore on the same time axis
-> or reset and rebuild.
+> Node snapshots do not include the world, blackboard values, closure captures,
+> `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those
+> separately. Time-based nodes store absolute `Time.now` values, so restore on the same
+> time axis or reset and rebuild.
+
+The optional `blackboard-serde` feature adds `BlackboardCodec`, which serializes only
+explicitly registered typed keys:
+
+```rust
+use playact::BlackboardCodec;
+
+let mut codec = BlackboardCodec::new();
+codec.register(&TARGET)?;
+codec.register(&COMMANDS)?;
+
+let node_state = tree.snapshot();
+let board_state = codec.encode(tree.blackboard())?;
+// later: tree.restore(&node_state)?; codec.decode(tree.blackboard_mut(), &board_state)?;
+```
+
+Unknown keys, duplicate registration, unsupported versions, and wrong value types are
+reported as errors; the codec never performs string-keyed or `Any` lookups.
 
 ## Configuration
 
@@ -405,6 +450,10 @@ let mut tree = spec.build(&registry)?;
   and custom factories.
 - Predicates and scores for `Guard`, `IfThenElse`, and `UtilitySelector` are business
   logic and stay in code or `custom` factories.
+- `TreeSpec::validate(&ValidationLimits)` checks version, maximum depth, and node count
+  before building. This is useful for remote or user-supplied configuration.
+- The optional `schema` feature exposes `TreeSpec::json_schema()` for editor completion
+  and external validation.
 - See [`examples/battle_ai.json`](examples/battle_ai.json) for a complete tree.
 
 ### Includes
@@ -542,10 +591,12 @@ playact = { version = "0.1", default-features = false }
 
 Available in the core: nodes, `BehaviorTree` (including services and snapshots),
 builder, `Blackboard` (backed by `BTreeMap`), composites, decorators, leaves,
-`CommandBuffer`, `SubtreeFactory`, `SubtreeSlot`, `MultiTracer`, and `describe`.
+`CommandBuffer`, `SubtreeFactory`, `SubtreeSlot`, `EventQueue` / `EventKey`,
+`WaitUntil` / `WaitForEvent` / `TryAction`, `MultiTracer`, and `describe`.
 
 Requires `std`: `SharedBlackboard`, `AsyncAction` / `ThreadTask` / `TokioTask`,
-`StatsTracer`, configuration, hot reload, remote config, and `TracingTracer`.
+`StatsTracer`, configuration, blackboard serialization, hot reload, remote config, and
+`TracingTracer`.
 
 `SubtreeFactory` uses `alloc::sync::Arc`, so no_std targets need atomic pointers.
 The `macros` feature is no_std-compatible.
@@ -561,6 +612,8 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
+| `schema` | `TreeSpec::json_schema()` JSON Schema generation (requires `config`) |
+| `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

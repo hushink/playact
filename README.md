@@ -98,15 +98,15 @@ fn main() -> Result<(), BuildError> {
 
 | Area | Included |
 |---|---|
-| Core | `Status`, `Node`, `Context`, typed `Blackboard`, `Time`, `Kind` |
+| Core | `Status`, `Node`, `NodeId`, `Context`, typed `Blackboard`, `Time`, `Kind` |
 | Composites | `Sequence`, `ReactiveSequence`, `Selector`, `ReactiveSelector`, `RandomSelector`, `WeightedRandomSelector`, `UtilitySelector`, `Parallel`, `MemParallel`, `Race`, `IfThenElse` |
 | Decorators | `Inverter`, `AlwaysSucceed`, `AlwaysFail`, `Repeat`, `Retry`, `UntilSuccess`, `UntilFailure`, `Cooldown`, `Timeout`, `Limiter`, `Throttle`, `Guard` |
-| Leaves | `Action`, `Condition`, `Wait`, `SetValue`, `AsyncAction` |
+| Leaves | `Action`, `Condition`, `Wait`, `WaitUntil`, `WaitForEvent`, `SetValue`, `TryAction`, `AsyncAction` |
 | Composition | Typestate builder, `SubtreeFactory`, `SubtreeSlot`, nested `BehaviorTree`, services |
-| Observability | `Tracer`, `MultiTracer`, `StatsTracer`, `last_status`, ASCII/DOT `describe` |
-| Persistence | Versioned node-state snapshots with `restore` |
+| Observability | `Tracer`, `MultiTracer`, `StatsTracer`, error events, `last_status`, ASCII/DOT `describe` |
+| Persistence | Versioned node-state snapshots plus opt-in typed blackboard serialization |
 | Shared state | `SharedBlackboard` across trees and threads |
-| Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, hot reload, remote loading |
+| Configuration | `TreeSpec` + `NodeRegistry`, JSON/TOML/YAML/RON, typed params, includes, JSON Schema, validation, hot reload, remote loading |
 | Async | Runtime-agnostic `AsyncTask`, `ThreadTask`, optional `TokioTask` |
 | Portability | `no_std + alloc` core; optional integrations gated by features |
 | Developer experience | `bt!` DSL, two complete battle AI examples, benchmarks, deterministic stress tests |
@@ -134,6 +134,8 @@ cargo run -p playact --example battle_ai_config --features config
 | default | `std`; pure standard library, zero third-party dependencies |
 | `std` | Standard-library integrations; disabling it switches the core to `no_std + alloc` |
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
+| `schema` | JSON Schema generation for `TreeSpec` (requires `config`) |
+| `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |

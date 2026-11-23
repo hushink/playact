@@ -94,15 +94,15 @@ fn main() -> Result<(), BuildError> {
 
 | 领域 | 内容 |
 |---|---|
-| 核心 | `Status`、`Node`、`Context`、类型安全 `Blackboard`、`Time`、`Kind` |
+| 核心 | `Status`、`Node`、`NodeId`、`Context`、类型安全 `Blackboard`、`Time`、`Kind` |
 | 组合节点 | `Sequence`、`ReactiveSequence`、`Selector`、`ReactiveSelector`、`RandomSelector`、`WeightedRandomSelector`、`UtilitySelector`、`Parallel`、`MemParallel`、`Race`、`IfThenElse` |
 | 装饰节点 | `Inverter`、`AlwaysSucceed`、`AlwaysFail`、`Repeat`、`Retry`、`UntilSuccess`、`UntilFailure`、`Cooldown`、`Timeout`、`Limiter`、`Throttle`、`Guard` |
-| 叶子节点 | `Action`、`Condition`、`Wait`、`SetValue`、`AsyncAction` |
+| 叶子节点 | `Action`、`Condition`、`Wait`、`WaitUntil`、`WaitForEvent`、`SetValue`、`TryAction`、`AsyncAction` |
 | 组合复用 | typestate 构建器、`SubtreeFactory`、`SubtreeSlot`、嵌套 `BehaviorTree`、服务 |
-| 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、`last_status`、ASCII/DOT `describe` |
-| 持久化 | 带版本的节点状态快照与恢复 |
+| 可观测性 | `Tracer`、`MultiTracer`、`StatsTracer`、错误事件、`last_status`、ASCII/DOT `describe` |
+| 持久化 | 带版本的节点状态快照与可选 typed 黑板序列化 |
 | 共享状态 | 跨树/线程 `SharedBlackboard` |
-| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、热重载、远程加载 |
+| 配置 | `TreeSpec` + `NodeRegistry`、JSON/TOML/YAML/RON、typed 参数、include、JSON Schema、校验、热重载、远程加载 |
 | 异步 | 运行时无关 `AsyncTask`、`ThreadTask`、可选 `TokioTask` |
 | 可移植性 | `no_std + alloc` 核心；可选集成按 feature 门控 |
 | 开发体验 | `bt!` DSL、两个完整战斗 AI 示例、基准与确定性压力测试 |
@@ -129,6 +129,8 @@ cargo run -p playact --example battle_ai_config --features config
 | 默认 | `std`；纯标准库，零第三方依赖 |
 | `std` | 标准库集成；关闭后核心切换为 `no_std + alloc` |
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
+| `schema` | `TreeSpec` 的 JSON Schema 生成（依赖 `config`） |
+| `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

@@ -35,6 +35,8 @@ pub struct NodeStats {
     pub running: u64,
     /// Number of aborts.
     pub aborts: u64,
+    /// Number of reported errors.
+    pub errors: u64,
     /// Total wall-clock time across all ticks.
     pub total_time: Duration,
     /// Longest wall-clock time of a single tick.
@@ -51,6 +53,7 @@ impl NodeStats {
             failures: 0,
             running: 0,
             aborts: 0,
+            errors: 0,
             total_time: Duration::ZERO,
             max_time: Duration::ZERO,
         }
@@ -205,6 +208,12 @@ impl Tracer for StatsTracer {
                 inner.active.remove(&path);
                 Self::entry(&mut inner, name, kind, &path).aborts += 1;
             }
+            TraceEvent::Error {
+                name, kind, path, ..
+            } => {
+                let path = path.to_vec();
+                Self::entry(&mut inner, name, kind, &path).errors += 1;
+            }
         }
     }
 }
@@ -260,6 +269,23 @@ mod tests {
         stats.clear();
         assert!(stats.is_empty());
         assert!(stats.node(&[]).is_none());
+    }
+
+    #[test]
+    fn counts_reported_errors() {
+        let stats = StatsTracer::new();
+        let mut tree = BehaviorTreeBuilder::<()>::new("errors")
+            .try_action("fail", |_| Err::<Status, &str>("boom"))
+            .build()
+            .expect("tree");
+        tree.set_tracer(Some(Box::new(stats.clone())));
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+
+        let root = stats.node(&[]).expect("root stats");
+        assert_eq!(root.errors, 1);
+        assert_eq!(root.failures, 1);
     }
 
     #[test]

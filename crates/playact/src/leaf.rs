@@ -3,16 +3,19 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt;
 use core::marker::PhantomData;
 use core::time::Duration;
 
 use crate::blackboard::Key;
 use crate::context::Context;
+use crate::event::EventKey;
 use crate::node::{Kind, Node};
 use crate::snapshot::state;
 use crate::status::Status;
 
 type TickFn<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Status + Send>;
+type TryTickFn<W, E> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Result<Status, E> + Send>;
 type AbortFn<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) + Send>;
 type ResetFn = Box<dyn FnMut() + Send>;
 type PredicateFn<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send>;
@@ -210,6 +213,156 @@ impl<W> Node<W> for Wait<W> {
     }
 }
 
+/// Wait until a predicate becomes true.
+///
+/// Returns `Running` while the predicate is false and `Success` once it becomes
+/// true. Unlike [`Condition`], a false predicate is not a failure.
+pub struct WaitUntil<W> {
+    name: String,
+    predicate: PredicateFn<W>,
+}
+
+impl<W> WaitUntil<W> {
+    /// Creates the node from a name and predicate.
+    pub fn new<F>(name: impl Into<String>, predicate: F) -> Self
+    where
+        F: for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static,
+    {
+        Self {
+            name: name.into(),
+            predicate: Box::new(predicate),
+        }
+    }
+
+    /// Overrides the display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W> Node<W> for WaitUntil<W> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if (self.predicate)(ctx) {
+            Status::Success
+        } else {
+            Status::Running
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::WaitUntil
+    }
+}
+
+/// Wait for the next event of a typed event queue.
+///
+/// The event is consumed in FIFO order. Use [`crate::EventKey::push`] from an
+/// action or service to publish events.
+pub struct WaitForEvent<W, T: Send + 'static> {
+    name: String,
+    key: EventKey<T>,
+    _marker: PhantomData<fn() -> W>,
+}
+
+impl<W, T: Send + 'static> WaitForEvent<W, T> {
+    /// Creates the node for the given event key.
+    #[must_use]
+    pub fn new(key: EventKey<T>) -> Self {
+        Self {
+            name: String::from("WaitForEvent"),
+            key,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Overrides the display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W, T: Send + 'static> Node<W> for WaitForEvent<W, T> {
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        if self.key.pop(ctx).is_some() {
+            Status::Success
+        } else {
+            Status::Running
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::WaitForEvent
+    }
+}
+
+/// An action whose failure carries a user-defined error.
+///
+/// On `Err`, the error is reported through the installed [`crate::Tracer`] and
+/// the node returns `Failure`. This keeps the core [`Node`] contract unchanged
+/// while making network, file, and automation errors observable.
+pub struct TryAction<W, E> {
+    name: String,
+    tick: TryTickFn<W, E>,
+}
+
+impl<W, E> TryAction<W, E>
+where
+    E: fmt::Display + Send + 'static,
+{
+    /// Creates the node from a name and fallible tick closure.
+    pub fn new<F>(name: impl Into<String>, tick: F) -> Self
+    where
+        F: for<'a> FnMut(&mut Context<'a, W>) -> Result<Status, E> + Send + 'static,
+    {
+        Self {
+            name: name.into(),
+            tick: Box::new(tick),
+        }
+    }
+
+    /// Overrides the display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+}
+
+impl<W, E> Node<W> for TryAction<W, E>
+where
+    E: fmt::Display + Send + 'static,
+{
+    fn tick(&mut self, ctx: &mut Context<'_, W>) -> Status {
+        match (self.tick)(ctx) {
+            Ok(status) => status,
+            Err(error) => {
+                ctx.report_error(&self.name, Kind::TryAction, &error);
+                Status::Failure
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::TryAction
+    }
+}
+
 /// Leaf node that writes a fixed value into the typed blackboard.
 ///
 /// It writes on every tick and returns `Success`, so it also keeps the value
@@ -261,6 +414,7 @@ impl<W, T: Clone + Send + 'static> Node<W> for SetValue<W, T> {
 mod tests {
     use crate::blackboard::Blackboard;
     use crate::time::Time;
+    use crate::trace::{TraceEvent, Tracer};
 
     use super::*;
 
@@ -290,6 +444,76 @@ mod tests {
 
         let mut ctx = Context::new(&mut world, &mut bb, Time::from_millis(100, 50));
         assert_eq!(node.tick(&mut ctx), Status::Success);
+    }
+
+    #[test]
+    fn wait_until_turns_success_when_predicate_holds() {
+        let mut node = WaitUntil::<bool>::new("ready", |ctx| *ctx.world_ref());
+        let mut world = false;
+        let mut bb = Blackboard::new();
+        let mut ctx = Context::new(&mut world, &mut bb, Time::ZERO);
+        assert_eq!(node.tick(&mut ctx), Status::Running);
+
+        *ctx.world() = true;
+        assert_eq!(node.tick(&mut ctx), Status::Success);
+        assert_eq!(node.kind(), Kind::WaitUntil);
+    }
+
+    #[test]
+    fn wait_for_event_consumes_typed_events_in_fifo_order() {
+        static EVENTS: EventKey<u32> = EventKey::new("test.events");
+
+        let mut producer = Action::<()>::new("emit", |ctx| {
+            EVENTS.push(ctx, 7);
+            EVENTS.push(ctx, 8);
+            Status::Success
+        });
+        let mut waiter = WaitForEvent::<(), u32>::new(EVENTS);
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut ctx = Context::new(&mut world, &mut bb, Time::ZERO);
+
+        assert_eq!(producer.tick(&mut ctx), Status::Success);
+        assert_eq!(EVENTS.len(&ctx), 2);
+        assert_eq!(waiter.tick(&mut ctx), Status::Success);
+        assert_eq!(waiter.tick(&mut ctx), Status::Success);
+        assert_eq!(waiter.tick(&mut ctx), Status::Running);
+        assert_eq!(waiter.kind(), Kind::WaitForEvent);
+    }
+
+    #[derive(Clone, Default)]
+    struct ErrorSink(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Tracer for ErrorSink {
+        fn event(&mut self, event: TraceEvent<'_>) {
+            if let TraceEvent::Error { message, .. } = event {
+                self.0
+                    .lock()
+                    .expect("error sink lock")
+                    .push(String::from(message));
+            }
+        }
+    }
+
+    #[test]
+    fn try_action_reports_the_error_and_fails() {
+        let sink = ErrorSink::default();
+        let mut tracer = sink.clone();
+        let mut node = TryAction::<(), &'static str>::new("fallible", |_| Err("boom"));
+        let mut world = ();
+        let mut bb = Blackboard::new();
+        let mut ctx = Context::with_tracer(&mut world, &mut bb, Time::ZERO, Some(&mut tracer));
+
+        assert_eq!(node.tick(&mut ctx), Status::Failure);
+        assert_eq!(node.kind(), Kind::TryAction);
+        assert_eq!(
+            sink.0
+                .lock()
+                .expect("error sink lock")
+                .first()
+                .map(String::as_str),
+            Some("boom")
+        );
     }
 
     #[test]
