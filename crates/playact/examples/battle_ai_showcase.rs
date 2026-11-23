@@ -257,18 +257,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 watcher.tree().name(),
                 service_names(watcher.tree())
             );
-            if let Some(entry) = watcher.diff_history().latest_entry() {
+            if let Some(report) = watcher.last_reload() {
                 println!(
                     "reload revision {} at {} ms (restored {} nodes)",
-                    entry.revision,
-                    entry
+                    report.revision,
+                    report
                         .timestamp
                         .map_or_else(|| String::from("unknown"), |ms| ms.to_string()),
-                    watcher.last_restored().unwrap_or(0)
+                    report.restored.unwrap_or(0)
                 );
-            }
-            if let Some(diff) = watcher.last_diff() {
-                println!("structural diff:\n{diff}");
+                if let Some(error) = report.restore_error {
+                    println!("restore error: {error}");
+                }
+                println!("structural diff:\n{}", report.diff);
             }
         }
 

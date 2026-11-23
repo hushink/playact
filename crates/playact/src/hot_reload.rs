@@ -38,6 +38,7 @@ use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
 };
 use crate::diff::{DiffHistory, TreeDiff};
+use crate::reload::ReloadReport;
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -390,6 +391,22 @@ impl<W: 'static> TreeWatcher<W> {
     #[must_use]
     pub fn last_restore_error(&self) -> Option<&str> {
         self.last_restore_error.as_deref()
+    }
+
+    /// A unified view of the most recent successful reload.
+    ///
+    /// Bundles the diff, revision, timestamp, restored node count, and restore
+    /// error. Returns `None` before the first successful reload.
+    #[must_use]
+    pub fn last_reload(&self) -> Option<ReloadReport<'_>> {
+        let entry = self.diff_history.latest_entry()?;
+        Some(ReloadReport {
+            revision: entry.revision,
+            timestamp: entry.timestamp,
+            restored: self.last_restored,
+            restore_error: self.last_restore_error.as_deref(),
+            diff: entry.diff,
+        })
     }
 
     /// Takes the structural changes from the most recent successful reload.
@@ -827,6 +844,12 @@ mod tests {
         write_limiter_config(&path, "new");
         watcher.reload_now().expect("reload");
         assert_eq!(watcher.last_restored(), Some(1));
+        let report = watcher.last_reload().expect("reload report");
+        assert_eq!(report.revision, 1);
+        assert_eq!(report.restored, Some(1));
+        assert!(report.timestamp.is_some());
+        assert!(report.restore_error.is_none());
+        assert_eq!(report.diff, watcher.last_diff().expect("diff"));
 
         // The limiter already consumed one of its two runs before the reload.
         assert_eq!(
@@ -869,8 +892,11 @@ mod tests {
         write_limiter_config_with_max(&path, 1, "new");
         watcher.reload_now().expect("reload");
         assert_eq!(watcher.last_restored(), Some(0));
-        let error = watcher.last_restore_error().expect("restore error");
+        let report = watcher.last_reload().expect("reload report");
+        assert_eq!(report.restored, Some(0));
+        let error = report.restore_error.expect("restore error");
         assert!(error.contains("limit"), "unexpected error: {error}");
+        assert_eq!(watcher.last_restore_error(), Some(error));
 
         // The rejected state was reset, so the new limiter starts from zero.
         assert_eq!(

@@ -185,19 +185,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_reload(watcher: &TreeWatcher<World>) {
-    let Some(entry) = watcher.diff_history().latest_entry() else {
+    let Some(report) = watcher.last_reload() else {
         return;
     };
-    let timestamp = entry
+    let timestamp = report
         .timestamp
         .map_or_else(|| String::from("unknown"), |unix_ms| unix_ms.to_string());
     println!(
         "reload revision {} (timestamp_ms={}, restored={}):",
-        entry.revision,
+        report.revision,
         timestamp,
-        watcher.last_restored().unwrap_or(0)
+        report.restored.unwrap_or(0)
     );
-    print!("{}", entry.diff);
+    if let Some(error) = report.restore_error {
+        println!("restore error: {error}");
+    }
+    print!("{}", report.diff);
 }
 
 fn request(

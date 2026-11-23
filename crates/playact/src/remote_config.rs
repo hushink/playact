@@ -37,6 +37,7 @@ use crate::config::{
     ValidationLimits,
 };
 use crate::diff::{DiffHistory, TreeDiff};
+use crate::reload::ReloadReport;
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
@@ -418,6 +419,22 @@ impl<W: 'static> RemoteTreeLoader<W> {
         self.last_restore_error.as_deref()
     }
 
+    /// A unified view of the most recent successful refresh.
+    ///
+    /// Bundles the diff, revision, timestamp, restored node count, and restore
+    /// error. Returns `None` before the first successful refresh.
+    #[must_use]
+    pub fn last_reload(&self) -> Option<ReloadReport<'_>> {
+        let entry = self.diff_history.latest_entry()?;
+        Some(ReloadReport {
+            revision: entry.revision,
+            timestamp: entry.timestamp,
+            restored: self.last_restored,
+            restore_error: self.last_restore_error.as_deref(),
+            diff: entry.diff,
+        })
+    }
+
     /// Takes the structural changes from the most recent successful refresh.
     pub fn take_last_diff(&mut self) -> Option<TreeDiff> {
         self.diff_history.pop_latest()
@@ -738,6 +755,12 @@ mod tests {
 
         assert!(loader.refresh_now().expect("refresh"));
         assert_eq!(loader.last_restored(), Some(1));
+        let report = loader.last_reload().expect("reload report");
+        assert_eq!(report.revision, 1);
+        assert_eq!(report.restored, Some(1));
+        assert!(report.timestamp.is_some());
+        assert!(report.restore_error.is_none());
+        assert_eq!(report.diff, loader.last_diff().expect("diff"));
         assert_eq!(
             loader.tree_mut().tick(&mut world, Time::ZERO),
             Status::Success
@@ -775,8 +798,11 @@ mod tests {
         // The old limiter has done=1, which the new max=1 limiter rejects.
         assert!(loader.refresh_now().expect("refresh"));
         assert_eq!(loader.last_restored(), Some(0));
-        let error = loader.last_restore_error().expect("restore error");
+        let report = loader.last_reload().expect("reload report");
+        assert_eq!(report.restored, Some(0));
+        let error = report.restore_error.expect("restore error");
         assert!(error.contains("limit"), "unexpected error: {error}");
+        assert_eq!(loader.last_restore_error(), Some(error));
 
         // The rejected state was reset, so the new limiter starts from zero.
         assert_eq!(

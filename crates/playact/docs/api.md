@@ -1057,6 +1057,8 @@ watcher.tree_mut().tick(&mut world, time);
   changes. `last_restored()` reports how many nodes loaded own state in the latest
   successful reload (`None` before the first one, `Some(0)` when none matched).
   `last_restore_error()` reports a rejected restore; the new tree is reset.
+  `last_reload()` bundles the diff, revision, timestamp, restored count, and
+  restore error into one `ReloadReport`.
 - Include files reported by the resolver are polled and trigger reloads too.
 - Parse/build failures keep the old tree and return an error.
 
@@ -1075,9 +1077,10 @@ loader.tree_mut().tick(&mut world, time);
 
 `RemoteTreeLoader` supports ETag / Last-Modified, bounded response size, UTF-8
 validation, includes, and an optional `ResponseVerifier` for signatures or
-allowlists. `last_restored()`, `last_restore_error()`, `last_revision()`, and
-`last_timestamp()` expose refresh metadata. Requests are synchronous on the
-calling thread.
+allowlists. `last_reload()` returns the same `ReloadReport` as hot reload;
+`last_restored()`, `last_restore_error()`, `last_revision()`, and
+`last_timestamp()` expose refresh metadata individually. Requests are
+synchronous on the calling thread.
 
 ## 14. Proc-macro DSL
 

@@ -717,7 +717,8 @@ if watcher.poll()? {
 `with_state_preservation(true)` 后，还会按稳定的 `NodeId` 为仍然存在的节点恢复
 自身状态；被改名或删除的 ID 从 reset 状态开始。`last_restored()` 报告最近一次成功
 重载实际恢复了多少节点状态；`last_restore_error()` 报告被拒绝的恢复（此时新树会被
-reset）。`last_diff()` 按 `NodeId` 与 `NodePath` 报告新增、
+reset）。`last_reload()` 用 `ReloadReport` 一次返回 diff、revision、时间戳、恢复
+节点数与恢复错误。`last_diff()` 按 `NodeId` 与 `NodePath` 报告新增、
 删除、移动和改名的节点；`with_diff_history(n)` 可通过 `diff_history()` 保留最近多次
 差异。解析/构建失败保留旧树并返回错误。默认 200ms
 去抖。include 使用 `json_with_resolver` / `with_parser_and_resolver`。
@@ -747,8 +748,8 @@ loader.tree_mut().tick(&mut world, time);
 `with_state_preservation(true)` 还会按稳定 `NodeId` 恢复仍存在节点的状态，与热重载
 行为一致。`last_diff()` 提供与热重载相同的 `TreeDiff`，列出新增、删除、移动和
 改名的节点；`last_restored()` 报告最近一次刷新恢复了多少节点状态；
-`last_restore_error()` 报告被拒绝的恢复；`with_diff_history(n)` 可保留有界历史。
-请求在调用线程同步执行；高延迟
+`last_restore_error()` 报告被拒绝的恢复；`last_reload()` 以 `ReloadReport` 返回
+同样的元数据；`with_diff_history(n)` 可保留有界历史。请求在调用线程同步执行；高延迟
 环境请放到工作线程或设置 Client 超时。include 使用 `json_with_resolver` /
 `with_client_and_resolver`。
 

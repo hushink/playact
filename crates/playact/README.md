@@ -753,7 +753,9 @@ blackboard data, and resets node state. Enable `with_state_preservation(true)` t
 restore own state by stable `NodeId` for nodes that still exist; renamed or removed IDs
 start from their reset state. `last_restored()` reports how many nodes actually loaded
 state in the most recent successful reload; `last_restore_error()` reports a rejected
-restore (the new tree is reset in that case). `last_diff()` reports added, removed, moved,
+restore (the new tree is reset in that case). `last_reload()` bundles the diff, revision,
+timestamp, restored count, and restore error into one `ReloadReport`.
+`last_diff()` reports added, removed, moved,
 and renamed nodes by `NodeId` and `NodePath`; `with_diff_history(n)` keeps recent diffs
 in `diff_history()`. Parse/build failures keep the old tree and return an error. Edits are
 debounced (200 ms by default). Use `json_with_resolver` / `with_parser_and_resolver`
@@ -786,8 +788,9 @@ services, preserves the blackboard, and resets node state; `with_state_preservat
 also restores node state by stable `NodeId`, matching the hot-reload behavior.
 `last_diff()` exposes the same added/removed/moved/renamed `TreeDiff` as hot reload;
 `last_restored()` reports how many nodes loaded state in the latest refresh;
-`last_restore_error()` reports a rejected restore;
-`with_diff_history(n)` keeps a bounded history. Requests happen on the calling thread;
+`last_restore_error()` reports a rejected restore; `last_reload()` bundles the same
+metadata as a `ReloadReport`; `with_diff_history(n)` keeps a bounded history. Requests
+happen on the calling thread;
 use a worker thread or a custom `Client` timeout in high-latency environments. Includes
 are available through `json_with_resolver` / `with_client_and_resolver`.
 

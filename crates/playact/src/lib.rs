@@ -119,6 +119,7 @@ pub mod leaf;
 pub mod node;
 #[cfg(feature = "blackboard-serde")]
 pub mod persistence;
+pub mod reload;
 #[cfg(feature = "remote-config")]
 pub mod remote_config;
 #[cfg(feature = "trace-record")]
@@ -168,6 +169,7 @@ pub use leaf::{Action, Condition, SetValue, TryAction, Wait, WaitForEvent, WaitU
 pub use node::{BoxedNode, IdentifiedNode, Kind, Node, NodeId};
 #[cfg(feature = "blackboard-serde")]
 pub use persistence::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
+pub use reload::ReloadReport;
 #[cfg(feature = "remote-config")]
 pub use remote_config::{
     MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader, ResponseVerifier,
@@ -212,7 +214,7 @@ pub mod prelude {
         IfThenElse, Inverter, Key, KeySpec, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel,
         MovedNode, MultiTracer, NODE_ID_SNAPSHOT_VERSION, Node, NodeId, NodeIdSnapshot,
         NodeIdSnapshotError, NodePath, Parallel, Probability, Race, RandomSelector,
-        ReactiveSelector, ReactiveSequence, RenamedNode, Repeat, RestoreError, Retry,
+        ReactiveSelector, ReactiveSequence, ReloadReport, RenamedNode, Repeat, RestoreError, Retry,
         SNAPSHOT_VERSION, ScopedKeySpec, ScopedSubtree, Selector, Sequence, SetValue, Status,
         SubtreeContract, SubtreeFactory, SubtreeSlot, Switch, Threshold, Throttle, Time, Timeout,
         TraceEvent, Tracer, TreeDescription, TreeDiff, TreeSnapshot, TryAction, UntilFailure,
