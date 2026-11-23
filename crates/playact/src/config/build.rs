@@ -3,12 +3,12 @@
 use core::time::Duration;
 
 use crate::composite::{
-    MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Selector,
-    Sequence, Threshold, WeightedChild, WeightedRandomSelector,
+    IfThenElse, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
+    Selector, Sequence, Threshold, WeightedChild, WeightedRandomSelector,
 };
 use crate::decorator::{
-    AlwaysFail, AlwaysSucceed, Cooldown, Inverter, Limiter, Probability, Repeat, Retry, Throttle,
-    Timeout, UntilFailure, UntilSuccess,
+    AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, Probability, Repeat, Retry,
+    Throttle, Timeout, UntilFailure, UntilSuccess, While,
 };
 use crate::leaf::Wait;
 use crate::node::{BoxedNode, IdentifiedNode};
@@ -22,9 +22,10 @@ impl TreeSpec {
     /// Builds a behavior tree using the registry; returns an error if the
     /// configuration contains `include`.
     ///
-    /// All leaf parameters are deserialized at build time. Unknown
-    /// action/condition/kind, invalid params, an unsupported version, or an
-    /// invalid threshold all return a [`ConfigBuildError`] carrying a path.
+    /// All parameters are deserialized at build time. Unknown
+    /// action/condition/predicate/switch key/kind, invalid params, an
+    /// unsupported version, or an invalid threshold all return a
+    /// [`ConfigBuildError`] carrying a path.
     pub fn build<W: 'static>(
         &self,
         registry: &NodeRegistry<W>,
@@ -172,6 +173,35 @@ fn build_node<W: 'static>(
             })?;
             Ok(Box::new(with_name(node, name)))
         }
+        SpecNode::Switch {
+            name,
+            key,
+            values,
+            children,
+        } => {
+            let children = build_children(children, ctx, path)?;
+            ctx.registry
+                .build_switch(key, name.as_deref(), values, children)
+                .map_err(|error| error.at(path))
+        }
+        SpecNode::IfThenElse {
+            name,
+            condition,
+            params,
+            then_branch,
+            else_branch,
+        } => {
+            let predicate = ctx
+                .registry
+                .build_predicate(condition, params)
+                .map_err(|error| error.at(path))?;
+            let then_branch = build_node(then_branch, ctx, &format!("{path}.then"))?;
+            let else_branch = build_node(else_branch, ctx, &format!("{path}.else"))?;
+            Ok(Box::new(with_name(
+                IfThenElse::new(predicate, then_branch, else_branch),
+                name,
+            )))
+        }
         SpecNode::Inverter { name, child } => {
             let child = build_node(child, ctx, &child_path(path))?;
             Ok(Box::new(with_name(Inverter::new(child), name)))
@@ -221,6 +251,32 @@ fn build_node<W: 'static>(
                 Probability::new(*chance, *seed, child),
                 name,
             )))
+        }
+        SpecNode::While {
+            name,
+            condition,
+            params,
+            child,
+        } => {
+            let predicate = ctx
+                .registry
+                .build_predicate(condition, params)
+                .map_err(|error| error.at(path))?;
+            let child = build_node(child, ctx, &child_path(path))?;
+            Ok(Box::new(with_name(While::new(predicate, child), name)))
+        }
+        SpecNode::Guard {
+            name,
+            condition,
+            params,
+            child,
+        } => {
+            let predicate = ctx
+                .registry
+                .build_predicate(condition, params)
+                .map_err(|error| error.at(path))?;
+            let child = build_node(child, ctx, &child_path(path))?;
+            Ok(Box::new(with_name(Guard::new(predicate, child), name)))
         }
         SpecNode::Cooldown {
             name,
@@ -410,6 +466,7 @@ impl_named_node!(
     Parallel,
     Race,
     MemParallel,
+    IfThenElse,
     Inverter,
     AlwaysSucceed,
     AlwaysFail,
@@ -418,6 +475,8 @@ impl_named_node!(
     UntilSuccess,
     UntilFailure,
     Probability,
+    While,
+    Guard,
     Cooldown,
     Timeout,
     Limiter,

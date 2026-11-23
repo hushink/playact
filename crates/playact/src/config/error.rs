@@ -110,6 +110,7 @@ impl std::error::Error for ConfigBuildError {
 
 /// Specific kinds of configuration build errors.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConfigBuildErrorKind {
     /// Unsupported spec version.
     UnsupportedVersion {
@@ -127,6 +128,16 @@ pub enum ConfigBuildErrorKind {
     UnknownCondition {
         /// Condition name.
         name: String,
+    },
+    /// Unregistered predicate name used by `guard`, `while`, or `if_then_else`.
+    UnknownPredicate {
+        /// Predicate name.
+        name: String,
+    },
+    /// Unregistered switch key name.
+    UnknownSwitchKey {
+        /// Switch key name.
+        key: String,
     },
     /// Unregistered custom kind.
     UnknownCustom {
@@ -168,6 +179,8 @@ impl fmt::Display for ConfigBuildErrorKind {
             ),
             Self::UnknownAction { name } => write!(f, "unknown action `{name}`"),
             Self::UnknownCondition { name } => write!(f, "unknown condition `{name}`"),
+            Self::UnknownPredicate { name } => write!(f, "unknown predicate `{name}`"),
+            Self::UnknownSwitchKey { key } => write!(f, "unknown switch key `{key}`"),
             Self::UnknownCustom { kind } => write!(f, "unknown custom kind `{kind}`"),
             Self::InvalidParams { message } => write!(f, "invalid params: {message}"),
             Self::InvalidThreshold(error) => error.fmt(f),
@@ -182,15 +195,16 @@ impl fmt::Display for ConfigBuildErrorKind {
 
 /// Error raised when registering node factories.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RegistryError {
     /// Name is empty or whitespace only.
     EmptyName {
-        /// `action` / `condition` / `custom`.
+        /// `action` / `condition` / `predicate` / `switch key` / `custom`.
         category: &'static str,
     },
     /// Duplicate name within the same category.
     Duplicate {
-        /// `action` / `condition` / `custom`.
+        /// `action` / `condition` / `predicate` / `switch key` / `custom`.
         category: &'static str,
         /// The duplicate name.
         name: String,

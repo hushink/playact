@@ -588,6 +588,9 @@ The optional `config` feature builds trees from data while keeping parameters ty
 
 ```rust
 use playact::config::{NodeRegistry, TreeSpec};
+use playact::Key;
+
+static PHASE: Key<u32> = playact::key!("phase");
 
 let mut registry = NodeRegistry::<World>::new();
 registry.condition::<HpBelow>("hp_below", |params: HpBelow| {
@@ -596,6 +599,7 @@ registry.condition::<HpBelow>("hp_below", |params: HpBelow| {
 registry.action::<()>("wait", |_params: ()| {
     move |_: &mut Context<'_, World>| Status::Running
 })?;
+registry.switch_key(PHASE)?;
 
 let spec = TreeSpec::from_json_str(JSON)?;
 let mut tree = spec.build(&registry)?;
@@ -604,10 +608,14 @@ let mut tree = spec.build(&registry)?;
 - JSON, TOML, YAML, and RON parsers are available behind format features.
 - Unknown fields are rejected; errors carry paths such as `root.children[0]`.
 - Supported node types include sequences, selectors, random/weighted selection, race,
-  parallel, mem-parallel, decorators (including throttle and probability), waits,
-  actions, conditions, and custom factories.
-- Predicates and scores for `Guard`, `IfThenElse`, and `UtilitySelector` are business
-  logic and stay in code or `custom` factories.
+  parallel, mem-parallel, `switch`, `if_then_else`, decorators (including `guard`,
+  `while`, throttle, and probability), waits, actions, conditions, and custom factories.
+- `condition` registrations also provide predicates for `guard`, `while`, and
+  `if_then_else`; use `registry.predicate` for predicates that are not condition
+  leaves. Predicate parameters are typed like action parameters.
+- `switch` configurations reference a key registered with `registry.switch_key`;
+  branch values deserialize into the key's value type at build time.
+- `UtilitySelector` scores are runtime closures and stay in code or `custom` factories.
 - `TreeSpec::validate(&ValidationLimits)` checks version, maximum depth, and node count
   before building. This is useful for remote or user-supplied configuration.
 - The optional `schema` feature exposes `TreeSpec::json_schema()` for editor completion

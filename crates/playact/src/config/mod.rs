@@ -1,9 +1,9 @@
 //! Optional configuration layer: a pure-data `TreeSpec` plus a build-time `NodeRegistry`.
 //!
 //! The configuration only describes tree structure and leaf parameters; business
-//! actions/conditions are registered by name at build time by the caller. Leaf
-//! parameters are deserialized into concrete types at build time, so ticks no
-//! longer involve `serde_json::Value` or `Any`.
+//! actions, conditions, guard predicates, and switch keys are registered by name
+//! at build time by the caller. Parameters are deserialized into concrete types
+//! at build time, so ticks no longer involve `serde_json::Value` or `Any`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -183,6 +183,37 @@ pub enum SpecNode {
         #[serde(default)]
         children: Vec<SpecNode>,
     },
+    /// Switches branches by a registered typed blackboard key.
+    Switch {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered switch key name.
+        key: String,
+        /// Branch values paired one-to-one with `children`.
+        #[serde(default)]
+        values: Vec<Value>,
+        /// Child nodes.
+        #[serde(default)]
+        children: Vec<SpecNode>,
+    },
+    /// Conditional branch selected by a registered predicate.
+    IfThenElse {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered predicate name.
+        condition: String,
+        /// Predicate parameters.
+        #[serde(default)]
+        params: Value,
+        /// Branch taken when the predicate is true.
+        #[serde(rename = "then")]
+        then_branch: Box<SpecNode>,
+        /// Branch taken when the predicate is false.
+        #[serde(rename = "else")]
+        else_branch: Box<SpecNode>,
+    },
     /// Inverts the result.
     Inverter {
         /// Display name.
@@ -252,6 +283,32 @@ pub enum SpecNode {
         chance: f64,
         /// Deterministic seed.
         seed: u64,
+        /// Child node.
+        child: Box<SpecNode>,
+    },
+    /// Repeats the child while a registered predicate holds.
+    While {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered predicate name.
+        condition: String,
+        /// Predicate parameters.
+        #[serde(default)]
+        params: Value,
+        /// Child node.
+        child: Box<SpecNode>,
+    },
+    /// Runs the child only while a registered predicate holds.
+    Guard {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered predicate name.
+        condition: String,
+        /// Predicate parameters.
+        #[serde(default)]
+        params: Value,
         /// Child node.
         child: Box<SpecNode>,
     },
@@ -376,7 +433,7 @@ impl From<ThresholdSpec> for Threshold {
 }
 
 impl SpecNode {
-    fn child_specs(&self) -> Vec<&SpecNode> {
+    fn child_entries(&self) -> Vec<(String, &SpecNode)> {
         match self {
             Self::Sequence { children, .. }
             | Self::ReactiveSequence { children, .. }
@@ -387,7 +444,20 @@ impl SpecNode {
             | Self::Parallel { children, .. }
             | Self::Race { children, .. }
             | Self::MemParallel { children, .. }
-            | Self::Custom { children, .. } => children.iter().collect(),
+            | Self::Switch { children, .. }
+            | Self::Custom { children, .. } => children
+                .iter()
+                .enumerate()
+                .map(|(index, child)| (format!("children[{index}]"), child))
+                .collect(),
+            Self::IfThenElse {
+                then_branch,
+                else_branch,
+                ..
+            } => vec![
+                (String::from("then"), then_branch.as_ref()),
+                (String::from("else"), else_branch.as_ref()),
+            ],
             Self::Inverter { child, .. }
             | Self::AlwaysSucceed { child, .. }
             | Self::AlwaysFail { child, .. }
@@ -395,33 +465,19 @@ impl SpecNode {
             | Self::Retry { child, .. }
             | Self::UntilSuccess { child, .. }
             | Self::UntilFailure { child, .. }
+            | Self::While { child, .. }
+            | Self::Guard { child, .. }
             | Self::Cooldown { child, .. }
             | Self::Timeout { child, .. }
             | Self::Limiter { child, .. }
             | Self::Throttle { child, .. }
             | Self::Probability { child, .. }
-            | Self::Identified { child, .. } => vec![child.as_ref()],
+            | Self::Identified { child, .. } => vec![(String::from("child"), child.as_ref())],
             Self::Wait { .. }
             | Self::Action { .. }
             | Self::Condition { .. }
             | Self::Include { .. } => Vec::new(),
         }
-    }
-
-    fn has_many_children(&self) -> bool {
-        matches!(
-            self,
-            Self::Sequence { .. }
-                | Self::ReactiveSequence { .. }
-                | Self::Selector { .. }
-                | Self::ReactiveSelector { .. }
-                | Self::RandomSelector { .. }
-                | Self::WeightedRandomSelector { .. }
-                | Self::Parallel { .. }
-                | Self::Race { .. }
-                | Self::MemParallel { .. }
-                | Self::Custom { .. }
-        )
     }
 }
 
@@ -459,8 +515,8 @@ impl TreeSpec {
     /// Returns the JSON Schema for the configuration format.
     ///
     /// The schema describes the structural `TreeSpec` shape and built-in node
-    /// parameters. Registered action/condition/custom names and their parameter
-    /// schemas are application-specific and are not included.
+    /// parameters. Registered action/condition/predicate/switch-key/custom names
+    /// and their parameter schemas are application-specific and are not included.
     #[cfg(feature = "schema")]
     #[must_use]
     pub fn json_schema() -> Value {
@@ -512,13 +568,8 @@ fn validate_node(
         ));
     }
 
-    let children = node.child_specs();
-    for (index, child) in children.iter().enumerate() {
-        let child_path = if children.len() == 1 && !node.has_many_children() {
-            format!("{path}.child")
-        } else {
-            format!("{path}.children[{index}]")
-        };
+    for (segment, child) in node.child_entries() {
+        let child_path = format!("{path}.{segment}");
         validate_node(child, &child_path, depth + 1, limits, nodes)?;
     }
 
@@ -683,6 +734,221 @@ mod tests {
         )
         .unwrap();
         assert!(invalid.build(&registry).is_err());
+    }
+
+    #[test]
+    fn builds_if_then_else_from_json() {
+        let mut registry = NodeRegistry::<bool>::new();
+        registry
+            .condition::<()>("flag", |_| |ctx: &Context<'_, bool>| *ctx.world_ref())
+            .unwrap();
+        registry
+            .action::<()>("then", |_| |_: &mut Context<'_, bool>| Status::Success)
+            .unwrap();
+        registry
+            .action::<()>("else", |_| |_: &mut Context<'_, bool>| Status::Failure)
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"if_then_else","condition":"flag","then":{"type":"action","name":"then"},"else":{"type":"action","name":"else"}}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::IfThenElse);
+
+        let mut world = true;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        world = false;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+    }
+
+    #[test]
+    fn builds_guard_from_json() {
+        let mut registry = NodeRegistry::<bool>::new();
+        registry
+            .condition::<()>("flag", |_| |ctx: &Context<'_, bool>| *ctx.world_ref())
+            .unwrap();
+        registry
+            .action::<()>("hit", |_| |_: &mut Context<'_, bool>| Status::Success)
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"guard","condition":"flag","child":{"type":"action","name":"hit"}}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+
+        let mut world = false;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+        world = true;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_while_from_json() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+        let mut registry = NodeRegistry::<bool>::new();
+        registry
+            .condition::<()>("flag", |_| |ctx: &Context<'_, bool>| *ctx.world_ref())
+            .unwrap();
+        registry
+            .action::<()>("hit", move |_| {
+                let counter = Arc::clone(&counter);
+                move |_: &mut Context<'_, bool>| {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    Status::Success
+                }
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"while","condition":"flag","child":{"type":"action","name":"hit"}}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+
+        let mut world = true;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Running);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        world = false;
+        assert_eq!(
+            tree.tick(&mut world, Time::from_millis(16, 16)),
+            Status::Success
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn builds_switch_from_registered_key() {
+        static PHASE: crate::blackboard::Key<u32> =
+            crate::blackboard::Key::new("test.config.phase");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.switch_key(PHASE).expect("register switch key");
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+        registry
+            .action::<()>("fail", |_| |_: &mut Context<'_, ()>| Status::Failure)
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"switch","key":"test.config.phase","values":[1,2],"children":[{"type":"action","name":"ok"},{"type":"action","name":"fail"}]}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::Switch);
+
+        let mut world = ();
+        tree.blackboard_mut().set(&PHASE, 1_u32);
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        tree.blackboard_mut().set(&PHASE, 2_u32);
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+        tree.blackboard_mut().clear_key(&PHASE);
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+    }
+
+    #[test]
+    fn switch_config_rejects_unknown_key_and_bad_values() {
+        static PHASE: crate::blackboard::Key<u32> =
+            crate::blackboard::Key::new("test.config.phase.bad");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.switch_key(PHASE).expect("register switch key");
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+
+        let unknown = TreeSpec::from_json_str(
+            r#"{"root":{"type":"switch","key":"missing","values":[],"children":[]}}"#,
+        )
+        .expect("valid spec");
+        let error = unknown.build(&registry).err().expect("unknown key");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownSwitchKey { key } if key == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+
+        let mismatch = TreeSpec::from_json_str(
+            r#"{"root":{"type":"switch","key":"test.config.phase.bad","values":[1],"children":[{"type":"action","name":"ok"},{"type":"action","name":"ok"}]}}"#,
+        )
+        .expect("valid spec");
+        let error = mismatch.build(&registry).err().expect("length mismatch");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::InvalidTree { .. }
+        ));
+
+        let bad_value = TreeSpec::from_json_str(
+            r#"{"root":{"type":"switch","key":"test.config.phase.bad","values":["x"],"children":[{"type":"action","name":"ok"}]}}"#,
+        )
+        .expect("valid spec");
+        let error = bad_value.build(&registry).err().expect("bad value");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::InvalidParams { .. }
+        ));
+    }
+
+    #[test]
+    fn predicate_registration_and_typed_params() {
+        #[derive(serde::Deserialize)]
+        struct Above {
+            value: u32,
+        }
+
+        let mut registry = NodeRegistry::<u32>::new();
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, u32>| Status::Success)
+            .unwrap();
+        registry
+            .predicate::<Above>("above", |params: Above| {
+                move |ctx: &Context<'_, u32>| *ctx.world_ref() > params.value
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"guard","condition":"above","params":{"value":5},"child":{"type":"action","name":"ok"}}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+
+        let mut world = 10;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        world = 1;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+
+        let unknown = TreeSpec::from_json_str(
+            r#"{"root":{"type":"guard","condition":"missing","child":{"type":"action","name":"ok"}}}"#,
+        )
+        .expect("valid spec");
+        let error = unknown.build(&registry).err().expect("unknown predicate");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownPredicate { name } if name == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+    }
+
+    #[test]
+    fn validate_uses_named_branch_paths() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"if_then_else","condition":"unused","then":{"type":"wait","duration_ms":1},"else":{"type":"wait","duration_ms":1}}}"#,
+        )
+        .expect("valid spec");
+
+        let error = spec
+            .validate(&ValidationLimits {
+                max_depth: 1,
+                max_nodes: 10,
+            })
+            .expect_err("depth limit");
+        assert_eq!(error.path(), Some("root.then"));
     }
 
     #[test]
@@ -896,6 +1162,12 @@ mod tests {
         assert!(text.contains("\"sequence\""));
         assert!(text.contains("\"wait\""));
         assert!(text.contains("\"identified\""));
+        assert!(text.contains("\"if_then_else\""));
+        assert!(text.contains("\"then\""));
+        assert!(text.contains("\"else\""));
+        assert!(text.contains("\"guard\""));
+        assert!(text.contains("\"while\""));
+        assert!(text.contains("\"switch\""));
     }
 
     #[test]
@@ -1020,6 +1292,41 @@ mod tests {
                 assert_eq!(category, "condition");
             }
             other => panic!("unexpected empty-name result: {other:?}"),
+        }
+
+        registry
+            .predicate::<()>("yes", |_| |_: &Context<'_, ()>| true)
+            .expect("register predicate");
+        match registry.predicate::<()>("yes", |_| |_: &Context<'_, ()>| true) {
+            Err(RegistryError::Duplicate { category, name }) => {
+                assert_eq!(category, "predicate");
+                assert_eq!(name, "yes");
+            }
+            other => panic!("unexpected predicate duplicate result: {other:?}"),
+        }
+        match registry.condition::<()>("yes", |_| |_: &Context<'_, ()>| true) {
+            Err(RegistryError::Duplicate { category, name }) => {
+                assert_eq!(category, "predicate");
+                assert_eq!(name, "yes");
+            }
+            other => panic!("unexpected condition/predicate conflict: {other:?}"),
+        }
+        match registry.predicate::<()>("  ", |_| |_: &Context<'_, ()>| true) {
+            Err(RegistryError::EmptyName { category }) => {
+                assert_eq!(category, "predicate");
+            }
+            other => panic!("unexpected predicate empty-name result: {other:?}"),
+        }
+
+        static SWITCH: crate::blackboard::Key<u32> =
+            crate::blackboard::Key::new("test.registry.switch");
+        registry.switch_key(SWITCH).expect("register switch key");
+        match registry.switch_key(SWITCH) {
+            Err(RegistryError::Duplicate { category, name }) => {
+                assert_eq!(category, "switch key");
+                assert_eq!(name, "test.registry.switch");
+            }
+            other => panic!("unexpected switch-key duplicate result: {other:?}"),
         }
     }
 
