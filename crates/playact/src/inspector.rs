@@ -490,10 +490,11 @@ fn render_report(
         } else {
             let _ = writeln!(
                 out,
-                "<p class=\"muted\">added {} · removed {} · moved {}</p>",
+                "<p class=\"muted\">added {} · removed {} · moved {} · renamed {}</p>",
                 diff.added.len(),
                 diff.removed.len(),
-                diff.moved.len()
+                diff.moved.len(),
+                diff.renamed.len()
             );
             out.push_str("<ul class=\"diff-list\">\n");
             for node in &diff.added {
@@ -530,6 +531,20 @@ fn render_report(
                     node.kind,
                     &node.from.to_string(),
                     Some(&node.to.to_string()),
+                );
+            }
+            for node in &diff.renamed {
+                let _ = writeln!(
+                    out,
+                    "<li><span class=\"diff-badge renamed\">*</span>\
+                     <code>{}</code> <span class=\"kind\">{}</span> {} &rarr; \
+                     <span class=\"kind\">{}</span> {} at <code>{}</code></li>",
+                    escape_html(node.id.as_str()),
+                    escape_html(node.old_kind.as_str()),
+                    escape_html(&node.old_name),
+                    escape_html(node.new_kind.as_str()),
+                    escape_html(&node.new_name),
+                    escape_html(&node.path.to_string()),
                 );
             }
             out.push_str("</ul>\n");
@@ -961,6 +976,7 @@ details > summary::-webkit-details-marker { display: none; }
 .diff-badge.added { color: var(--success); }
 .diff-badge.removed { color: var(--failure); }
 .diff-badge.moved { color: var(--running); }
+.diff-badge.renamed { color: var(--accent); }
 .table-wrap { overflow-x: auto; padding: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td {
@@ -1059,6 +1075,28 @@ mod tests {
         assert!(html.contains("Reload diff"));
         assert!(html.contains("diff-badge added"));
         assert!(html.contains("diff-badge removed"));
+        assert!(html.contains("root.children[0]"));
+    }
+
+    #[test]
+    fn renders_renamed_entries() {
+        let old = BehaviorTreeBuilder::<()>::new("old")
+            .sequence(|b| b.action("old", |_| Status::Success).id("same"))
+            .build()
+            .expect("old tree");
+        let new = BehaviorTreeBuilder::<()>::new("new")
+            .sequence(|b| b.condition("new", |_| true).id("same"))
+            .build()
+            .expect("new tree");
+        let diff = TreeDiff::between(&old, &new);
+        assert_eq!(diff.renamed.len(), 1);
+
+        let html = Inspector::new(&new).with_diff(&diff).render();
+        assert!(html.contains("diff-badge renamed"));
+        assert!(html.contains("old"));
+        assert!(html.contains("new"));
+        assert!(html.contains("action"));
+        assert!(html.contains("condition"));
         assert!(html.contains("root.children[0]"));
     }
 

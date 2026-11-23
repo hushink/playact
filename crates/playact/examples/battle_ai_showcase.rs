@@ -305,6 +305,7 @@ mod tests {
         assert_eq!(diff.added[0].path.to_string(), "services[1]");
         assert!(diff.removed.is_empty());
         assert!(diff.moved.is_empty());
+        assert!(diff.renamed.is_empty());
     }
 
     #[test]

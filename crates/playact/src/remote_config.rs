@@ -712,6 +712,7 @@ mod tests {
         assert_eq!(diff.moved[0].id.as_str(), "b");
         assert_eq!(diff.moved[0].from.to_string(), "root.children[1]");
         assert_eq!(diff.moved[0].to.to_string(), "root.children[0]");
+        assert!(diff.renamed.is_empty());
 
         assert!(loader.take_last_diff().is_some());
         assert!(loader.last_diff().is_none());

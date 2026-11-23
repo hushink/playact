@@ -157,7 +157,7 @@ pub use decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, MAX_REPEAT_STEPS_PER_TICK,
     Probability, Repeat, Retry, Throttle, Timeout, UntilFailure, UntilSuccess, While,
 };
-pub use diff::{DiffNode, MovedNode, TreeDiff};
+pub use diff::{DiffNode, MovedNode, RenamedNode, TreeDiff};
 pub use error::BuildError;
 pub use event::{EventKey, EventQueue};
 #[cfg(feature = "hot-reload")]
@@ -211,12 +211,12 @@ pub mod prelude {
         Cooldown, DiffNode, EventKey, EventQueue, Guard, IdentifiedNode, IfThenElse, Inverter, Key,
         KeySpec, Kind, Limiter, MAX_REPEAT_STEPS_PER_TICK, MemParallel, MovedNode, MultiTracer,
         NODE_ID_SNAPSHOT_VERSION, Node, NodeId, NodeIdSnapshot, NodeIdSnapshotError, NodePath,
-        Parallel, Probability, Race, RandomSelector, ReactiveSelector, ReactiveSequence, Repeat,
-        RestoreError, Retry, SNAPSHOT_VERSION, ScopedKeySpec, ScopedSubtree, Selector, Sequence,
-        SetValue, Status, SubtreeContract, SubtreeFactory, SubtreeSlot, Switch, Threshold,
-        Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeDiff, TreeSnapshot,
-        TryAction, UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait, WaitForEvent,
-        WaitUntil, WeightedChild, WeightedRandomSelector, While,
+        Parallel, Probability, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
+        RenamedNode, Repeat, RestoreError, Retry, SNAPSHOT_VERSION, ScopedKeySpec, ScopedSubtree,
+        Selector, Sequence, SetValue, Status, SubtreeContract, SubtreeFactory, SubtreeSlot, Switch,
+        Threshold, Throttle, Time, Timeout, TraceEvent, Tracer, TreeDescription, TreeDiff,
+        TreeSnapshot, TryAction, UntilFailure, UntilSuccess, UtilityChild, UtilitySelector, Wait,
+        WaitForEvent, WaitUntil, WeightedChild, WeightedRandomSelector, While,
     };
     #[cfg(feature = "std")]
     pub use crate::{

@@ -44,12 +44,34 @@ pub struct MovedNode {
     pub to: NodePath,
 }
 
+/// A node whose name or kind changed without moving.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
+pub struct RenamedNode {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Unchanged structural path.
+    pub path: NodePath,
+    /// Display name in the old tree.
+    pub old_name: String,
+    /// Display name in the new tree.
+    pub new_name: String,
+    /// Node type in the old tree.
+    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
+    pub old_kind: Kind,
+    /// Node type in the new tree.
+    #[cfg_attr(feature = "diff-serde", serde(serialize_with = "serialize_kind"))]
+    pub new_kind: Kind,
+}
+
 /// Structural changes between two behavior trees.
 ///
-/// `added` and `removed` are sorted by [`NodeId`]; `moved` is also sorted by ID.
-/// Duplicate IDs are rejected by builder and configuration builds, so a
-/// well-formed tree contributes at most one entry per ID. A name or kind change
-/// at the same ID and path is not reported.
+/// `added` and `removed` are sorted by [`NodeId`]; `moved` and `renamed` are
+/// also sorted by ID. Duplicate IDs are rejected by builder and configuration
+/// builds, so a well-formed tree contributes at most one entry per ID.
+///
+/// A path change is reported as `moved` even when the name or kind changed too;
+/// `renamed` covers nodes that stayed at the same path.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "diff-serde", derive(serde::Serialize))]
 pub struct TreeDiff {
@@ -59,6 +81,8 @@ pub struct TreeDiff {
     pub removed: Vec<DiffNode>,
     /// IDs present in both trees whose structural path changed.
     pub moved: Vec<MovedNode>,
+    /// IDs present at the same path whose name or kind changed.
+    pub renamed: Vec<RenamedNode>,
 }
 
 impl TreeDiff {
@@ -95,18 +119,40 @@ impl TreeDiff {
                     })
             })
             .collect();
+        let renamed = new
+            .iter()
+            .filter_map(|(id, node)| {
+                old.get(id)
+                    .filter(|previous| {
+                        previous.path == node.path
+                            && (previous.name != node.name || previous.kind != node.kind)
+                    })
+                    .map(|previous| RenamedNode {
+                        id: id.clone(),
+                        path: node.path.clone(),
+                        old_name: previous.name.clone(),
+                        new_name: node.name.clone(),
+                        old_kind: previous.kind,
+                        new_kind: node.kind,
+                    })
+            })
+            .collect();
 
         Self {
             added,
             removed,
             moved,
+            renamed,
         }
     }
 
     /// Whether the structures are identical for every node with an ID.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.moved.is_empty()
+        self.added.is_empty()
+            && self.removed.is_empty()
+            && self.moved.is_empty()
+            && self.renamed.is_empty()
     }
 
     /// Serializes the diff as compact JSON.
@@ -134,10 +180,11 @@ impl fmt::Display for TreeDiff {
         }
         writeln!(
             f,
-            "added {}, removed {}, moved {}",
+            "added {}, removed {}, moved {}, renamed {}",
             self.added.len(),
             self.removed.len(),
-            self.moved.len()
+            self.moved.len(),
+            self.renamed.len()
         )?;
         for node in &self.added {
             writeln!(f, "+ {} {} at {}", node.id, node.name, node.path)?;
@@ -150,6 +197,13 @@ impl fmt::Display for TreeDiff {
                 f,
                 "~ {} {}: {} -> {}",
                 node.id, node.name, node.from, node.to
+            )?;
+        }
+        for node in &self.renamed {
+            writeln!(
+                f,
+                "* {} at {}: {} ({}) -> {} ({})",
+                node.id, node.path, node.old_name, node.old_kind, node.new_name, node.new_kind
             )?;
         }
         Ok(())
@@ -187,7 +241,7 @@ fn collect_description(
 mod tests {
     use alloc::string::ToString;
 
-    use crate::leaf::Action;
+    use crate::leaf::{Action, Condition};
     use crate::node::{BoxedNode, IdentifiedNode};
     use crate::status::Status;
 
@@ -220,6 +274,34 @@ mod tests {
         assert_eq!(diff.moved[0].id, NodeId::new("b"));
         assert_eq!(diff.moved[0].from, NodePath::root().with_child(1));
         assert_eq!(diff.moved[0].to, NodePath::root().with_child(0));
+        assert!(diff.renamed.is_empty());
+    }
+
+    #[test]
+    fn reports_renamed_nodes() {
+        let old = tree(vec![leaf("old", "same")]);
+        let new = tree(vec![Box::new(IdentifiedNode::new(
+            "same",
+            Box::new(Condition::<()>::new("new", |_| true)),
+        ))]);
+
+        let diff = TreeDiff::between(&old, &new);
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert!(diff.moved.is_empty());
+        assert_eq!(diff.renamed.len(), 1);
+
+        let renamed = &diff.renamed[0];
+        assert_eq!(renamed.id, NodeId::new("same"));
+        assert_eq!(renamed.path, NodePath::root().with_child(0));
+        assert_eq!(renamed.old_name, "old");
+        assert_eq!(renamed.new_name, "new");
+        assert_eq!(renamed.old_kind, Kind::Action);
+        assert_eq!(renamed.new_kind, Kind::Condition);
+
+        let text = diff.to_string();
+        assert!(text.contains("renamed 1"));
+        assert!(text.contains("* same at root.children[0]: old (action) -> new (condition)"));
     }
 
     #[test]
@@ -237,6 +319,7 @@ mod tests {
         assert_eq!(diff.added[0].path, NodePath::service(0));
         assert!(diff.removed.is_empty());
         assert!(diff.moved.is_empty());
+        assert!(diff.renamed.is_empty());
     }
 
     #[test]
@@ -252,7 +335,7 @@ mod tests {
         let old = tree(vec![leaf("a", "a"), leaf("b", "b")]);
         let new = tree(vec![leaf("b", "b"), leaf("c", "c")]);
         let text = TreeDiff::between(&old, &new).to_string();
-        assert!(text.contains("added 1, removed 1, moved 1"));
+        assert!(text.contains("added 1, removed 1, moved 1, renamed 0"));
         assert!(text.contains("+ c c at root.children[1]"));
         assert!(text.contains("- a a at root.children[0]"));
         assert!(text.contains("~ b b: root.children[1] -> root.children[0]"));
@@ -272,5 +355,20 @@ mod tests {
         assert_eq!(value["removed"][0]["id"], "a");
         assert_eq!(value["moved"][0]["from"], "root.children[1]");
         assert_eq!(value["moved"][0]["to"], "root.children[0]");
+        assert!(value["renamed"].as_array().expect("renamed").is_empty());
+
+        let old_renamed = tree(vec![leaf("old", "same")]);
+        let new_renamed = tree(vec![Box::new(IdentifiedNode::new(
+            "same",
+            Box::new(Condition::<()>::new("new", |_| true)),
+        ))]);
+        let value: serde_json::Value =
+            serde_json::from_str(&TreeDiff::between(&old_renamed, &new_renamed).to_json())
+                .expect("json");
+        assert_eq!(value["renamed"][0]["path"], "root.children[0]");
+        assert_eq!(value["renamed"][0]["old_name"], "old");
+        assert_eq!(value["renamed"][0]["new_name"], "new");
+        assert_eq!(value["renamed"][0]["old_kind"], "action");
+        assert_eq!(value["renamed"][0]["new_kind"], "condition");
     }
 }
