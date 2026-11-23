@@ -157,6 +157,7 @@ cargo run -p playact-cli -- catalog --schema schema.json
 cargo run -p playact-cli -- lint --schema schema.json --json config/*.toml
 cargo run -p playact-cli -- lint --watch config/*.toml
 cargo run -p playact-cli -- convert config/a.json config/b.yaml
+cargo run -p playact-cli -- bundle config/root.json dist/config
 ```
 
 `schema` 输出基础 `TreeSpec` schema。把 `NodeRegistry::json_schema()` 生成的
@@ -166,6 +167,9 @@ cargo run -p playact-cli -- convert config/a.json config/b.yaml
 watch，任一文件无效时非零退出。`convert` 在写入目标格式前先校验输入及其 include；
 TOML 无法表示 null，因此转换为 TOML 时会省略取值为 null 的可选字段。include 路径
 会被保留而不会复制文件，转换后应保持在相同 include 基准目录内或自行调整路径。
+`bundle` 在验证根配置及 include 图后，把根文件与所有被包含文件复制到空输出目录，
+不重写 include 字符串。输出目录必须位于 include 基准目录之外；加载 bundle 根文件时
+以该输出目录作为 include 基准目录。
 
 ## Feature 矩阵
 

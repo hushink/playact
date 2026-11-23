@@ -393,6 +393,7 @@ cargo run -p playact-cli -- catalog --schema schema.json
 cargo run -p playact-cli -- lint --schema schema.json config/a.toml config/b.yaml
 cargo run -p playact-cli -- lint --watch --schema schema.json config/*.toml
 cargo run -p playact-cli -- convert --schema schema.json config/a.json config/b.yaml
+cargo run -p playact-cli -- bundle --schema schema.json config/root.json dist/config
 ```
 
 `schema` writes the base `TreeSpec` schema. `catalog`, `lint`, and `convert`
@@ -409,4 +410,7 @@ or the schema changes. `convert` validates the input and its includes before
 writing JSON, TOML, YAML, or RON. TOML has no null representation, so converting
 to TOML omits optional fields whose value is null. Include paths are preserved
 rather than copied, so keep the output within the same include base or adjust
-them afterwards.
+them afterwards. `bundle` validates the root and its includes, then copies the
+root and every included file into an empty output directory without rewriting
+include strings. The output directory must be outside the include base; use it as
+the include base when loading the bundled root.

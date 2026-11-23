@@ -348,6 +348,121 @@ fn convert_validates_includes_before_writing() {
 }
 
 #[test]
+fn bundle_copies_root_and_includes() {
+    let source = TempDir::new();
+    let destination = TempDir::new().path.join("bundle");
+    source.write(
+        "child.toml",
+        "version = 1\n[root]\ntype = \"action\"\nname = \"anything\"\n",
+    );
+    let root = source.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"child.toml"}}"#,
+    );
+
+    let output = run(&[
+        "bundle",
+        root.to_str().expect("root path"),
+        destination.to_str().expect("destination path"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(destination.join("root.json").is_file());
+    assert!(destination.join("child.toml").is_file());
+
+    let bundled = destination.join("root.json");
+    let linted = run(&["lint", bundled.to_str().expect("bundled root")]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn bundle_preserves_parent_segments_in_include_paths() {
+    let source = TempDir::new();
+    let destination = TempDir::new().path.join("bundle");
+    source.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let root = source.write(
+        "config/root.json",
+        r#"{"root":{"type":"include","path":"config/../child.json"}}"#,
+    );
+
+    let output = run(&[
+        "bundle",
+        "--include-base",
+        source.path.to_str().expect("source path"),
+        root.to_str().expect("root path"),
+        destination.to_str().expect("destination path"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(destination.join("config").is_dir());
+    assert!(destination.join("child.json").is_file());
+
+    let bundled = destination.join("root.json");
+    let linted = run(&["lint", bundled.to_str().expect("bundled root")]);
+    assert!(linted.status.success(), "{linted:?}");
+}
+
+#[test]
+fn bundle_rejects_invalid_includes_without_creating_output() {
+    let source = TempDir::new();
+    let destination = TempDir::new().path.join("bundle");
+    source.write("bad.json", r#"{"root":{"type":"no_such_node"}}"#);
+    let root = source.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"bad.json"}}"#,
+    );
+
+    let output = run(&[
+        "bundle",
+        root.to_str().expect("root path"),
+        destination.to_str().expect("destination path"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    assert!(!destination.exists());
+}
+
+#[test]
+fn bundle_requires_an_empty_output_directory() {
+    let source = TempDir::new();
+    let destination = TempDir::new();
+    let existing = destination.write("existing.txt", "keep me");
+    let root = source.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+
+    let output = run(&[
+        "bundle",
+        root.to_str().expect("root path"),
+        destination.path.to_str().expect("destination path"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(existing).expect("existing file"),
+        "keep me"
+    );
+}
+
+#[test]
+fn bundle_rejects_output_inside_the_include_base() {
+    let source = TempDir::new();
+    let root = source.write(
+        "root.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything"}}"#,
+    );
+    let destination = source.path.join("bundle");
+
+    let output = run(&[
+        "bundle",
+        root.to_str().expect("root path"),
+        destination.to_str().expect("destination path"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    assert!(!destination.exists());
+}
+
+#[test]
 fn lint_uses_registry_names_from_the_schema() {
     let schema = TempFile::new("json", &registry_schema());
     let bad = TempFile::new("json", r#"{"root":{"type":"action","name":"missing"}}"#);

@@ -216,7 +216,7 @@ impl IncludeState<'_> {
                 );
                 continue;
             }
-            let (path, format) = match self.resolve(&include, current_format) {
+            let (path, format) = match resolve_include(&self.base, &include, current_format) {
                 Ok(resolved) => resolved,
                 Err(message) => {
                     issues.push(LintIssue::new("include", location, message).in_file(current_file));
@@ -281,24 +281,28 @@ impl IncludeState<'_> {
             self.stack.pop();
         }
     }
-
-    fn resolve(&self, include: &str, fallback: Format) -> Result<(PathBuf, Format), String> {
-        let candidate = self.base.join(include);
-        let canonical = candidate
-            .canonicalize()
-            .map_err(|error| format!("cannot resolve include `{include}`: {error}"))?;
-        if !canonical.starts_with(&self.base) {
-            return Err(format!("include `{include}` escapes the include base"));
-        }
-        if !canonical.is_file() {
-            return Err(format!("include `{include}` is not a file"));
-        }
-        let format = Format::from_path(&canonical).unwrap_or(fallback);
-        Ok((canonical, format))
-    }
 }
 
-fn display_path(path: &Path) -> String {
+pub(crate) fn resolve_include(
+    base: &Path,
+    include: &str,
+    fallback: Format,
+) -> Result<(PathBuf, Format), String> {
+    let candidate = base.join(include);
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve include `{include}`: {error}"))?;
+    if !canonical.starts_with(base) {
+        return Err(format!("include `{include}` escapes the include base"));
+    }
+    if !canonical.is_file() {
+        return Err(format!("include `{include}` is not a file"));
+    }
+    let format = Format::from_path(&canonical).unwrap_or(fallback);
+    Ok((canonical, format))
+}
+
+pub(crate) fn display_path(path: &Path) -> String {
     let text = path.display().to_string();
     #[cfg(windows)]
     {
@@ -312,7 +316,7 @@ fn display_path(path: &Path) -> String {
     text
 }
 
-fn resolve_base(root: &Path, include_base: Option<&Path>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_base(root: &Path, include_base: Option<&Path>) -> Result<PathBuf, String> {
     let base = include_base.unwrap_or_else(|| {
         root.parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -334,7 +338,7 @@ fn root_path_label(root: &Path) -> &str {
     root.to_str().unwrap_or("<non-UTF-8 path>")
 }
 
-fn collect_includes(document: &Value) -> Vec<(String, String)> {
+pub(crate) fn collect_includes(document: &Value) -> Vec<(String, String)> {
     let mut includes = Vec::new();
     if let Some(root) = document.get("root") {
         collect_node_includes(root, "/root", &mut includes);
