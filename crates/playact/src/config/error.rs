@@ -139,6 +139,21 @@ pub enum ConfigBuildErrorKind {
         /// Switch key name.
         key: String,
     },
+    /// Unregistered set-value key name.
+    UnknownSetValueKey {
+        /// Set-value key name.
+        key: String,
+    },
+    /// Unregistered event key name.
+    UnknownEventKey {
+        /// Event key name.
+        key: String,
+    },
+    /// Unregistered utility score name.
+    UnknownScore {
+        /// Score name.
+        name: String,
+    },
     /// Unregistered custom kind.
     UnknownCustom {
         /// Custom kind.
@@ -181,6 +196,9 @@ impl fmt::Display for ConfigBuildErrorKind {
             Self::UnknownCondition { name } => write!(f, "unknown condition `{name}`"),
             Self::UnknownPredicate { name } => write!(f, "unknown predicate `{name}`"),
             Self::UnknownSwitchKey { key } => write!(f, "unknown switch key `{key}`"),
+            Self::UnknownSetValueKey { key } => write!(f, "unknown set-value key `{key}`"),
+            Self::UnknownEventKey { key } => write!(f, "unknown event key `{key}`"),
+            Self::UnknownScore { name } => write!(f, "unknown utility score `{name}`"),
             Self::UnknownCustom { kind } => write!(f, "unknown custom kind `{kind}`"),
             Self::InvalidParams { message } => write!(f, "invalid params: {message}"),
             Self::InvalidThreshold(error) => error.fmt(f),
@@ -199,12 +217,12 @@ impl fmt::Display for ConfigBuildErrorKind {
 pub enum RegistryError {
     /// Name is empty or whitespace only.
     EmptyName {
-        /// `action` / `condition` / `predicate` / `switch key` / `custom`.
+        /// Registration category, such as `action` or `score`.
         category: &'static str,
     },
     /// Duplicate name within the same category.
     Duplicate {
-        /// `action` / `condition` / `predicate` / `switch key` / `custom`.
+        /// Registration category, such as `action` or `score`.
         category: &'static str,
         /// The duplicate name.
         name: String,

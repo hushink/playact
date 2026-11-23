@@ -585,15 +585,18 @@ let mut tree = spec.build(&registry)?;
 
 - JSON、TOML、YAML、RON 解析器随对应 feature 提供。
 - 配置拒绝未知字段；错误路径形如 `root.children[0]`。
-- 支持 sequence、selector、随机/加权选择、race、parallel、mem_parallel、`switch`、
-  `if_then_else`、装饰器（含 `guard`、`while`、throttle 与 probability）、wait、
-  action、condition 与 custom 工厂。
-- `condition` 注册同时提供 `guard`、`while`、`if_then_else` 可用的谓词；如果谓词
-  不需要作为 condition 叶子出现，可用 `registry.predicate` 注册。谓词参数与 action
-  参数一样在构建期反序列化为具体类型。
-- `switch` 配置引用 `registry.switch_key` 注册的 key；分支值在构建期反序列化为
-  key 的 value 类型。
-- `UtilitySelector` 的评分是运行时闭包，仍保留在代码或 `custom` 工厂中。
+- 支持 sequence、selector、随机/加权/效用选择、race、parallel、mem_parallel、
+  `switch`、`if_then_else`、装饰器（含 `guard`、`while`、throttle 与 probability）、
+  wait、`wait_until`、`wait_for_event`、`set_value`、action、condition 与 custom
+  工厂。
+- `condition` 注册同时提供 `guard`、`while`、`if_then_else`、`wait_until` 可用的
+  谓词；如果谓词不需要作为 condition 叶子出现，可用 `registry.predicate` 注册。
+  谓词参数与 action 参数一样在构建期反序列化为具体类型。
+- `switch`、`set_value`、`wait_for_event` 配置引用
+  `registry.switch_key` / `set_value_key` / `event_key` 注册的 typed key；配置值在
+  构建期反序列化为 key 的 value 或 event 类型。
+- `utility_selector` 的分支引用 `registry.score` 注册的评分函数；评分函数接收
+  类型化参数，并在每个 tick 重新计算。
 - `TreeSpec::validate(&ValidationLimits)` 可在构建前校验版本、最大深度与节点数，
   适合远程配置或用户提交的配置。
 - 可选 `schema` feature 提供 `TreeSpec::json_schema()`，用于编辑器补全与外部校验。

@@ -1,9 +1,10 @@
 //! Optional configuration layer: a pure-data `TreeSpec` plus a build-time `NodeRegistry`.
 //!
 //! The configuration only describes tree structure and leaf parameters; business
-//! actions, conditions, guard predicates, and switch keys are registered by name
-//! at build time by the caller. Parameters are deserialized into concrete types
-//! at build time, so ticks no longer involve `serde_json::Value` or `Any`.
+//! actions, conditions, predicates, utility scores, and typed key references are
+//! registered by name at build time by the caller. Parameters are deserialized
+//! into concrete types at build time, so ticks no longer involve
+//! `serde_json::Value` or `Any`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -197,6 +198,18 @@ pub enum SpecNode {
         #[serde(default)]
         children: Vec<SpecNode>,
     },
+    /// Utility selector driven by registered score functions.
+    UtilitySelector {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Score advantage required to switch branches; defaults to 0.
+        #[serde(default)]
+        hysteresis: f32,
+        /// Branches with a score name and child.
+        #[serde(default)]
+        branches: Vec<UtilityBranchSpec>,
+    },
     /// Conditional branch selected by a registered predicate.
     IfThenElse {
         /// Display name.
@@ -362,6 +375,35 @@ pub enum SpecNode {
         /// Wait duration (milliseconds).
         duration_ms: u64,
     },
+    /// Waits until a registered predicate becomes true.
+    WaitUntil {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered predicate name.
+        condition: String,
+        /// Predicate parameters.
+        #[serde(default)]
+        params: Value,
+    },
+    /// Waits for the next event from a registered event key.
+    WaitForEvent {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered event key name.
+        event: String,
+    },
+    /// Writes a fixed value to a registered typed key.
+    SetValue {
+        /// Display name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Registered set-value key name.
+        key: String,
+        /// Value deserialized into the key's value type.
+        value: Value,
+    },
     /// A registered action.
     Action {
         /// Action name in the registry, also used as the display name.
@@ -409,6 +451,20 @@ pub enum SpecNode {
     },
 }
 
+/// One branch of a configured `utility_selector`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UtilityBranchSpec {
+    /// Registered score name.
+    pub score: String,
+    /// Score parameters.
+    #[serde(default)]
+    pub params: Value,
+    /// Child node.
+    pub child: Box<SpecNode>,
+}
+
 /// Parallel threshold in a configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -450,6 +506,11 @@ impl SpecNode {
                 .enumerate()
                 .map(|(index, child)| (format!("children[{index}]"), child))
                 .collect(),
+            Self::UtilitySelector { branches, .. } => branches
+                .iter()
+                .enumerate()
+                .map(|(index, branch)| (format!("branches[{index}].child"), branch.child.as_ref()))
+                .collect(),
             Self::IfThenElse {
                 then_branch,
                 else_branch,
@@ -474,6 +535,9 @@ impl SpecNode {
             | Self::Probability { child, .. }
             | Self::Identified { child, .. } => vec![(String::from("child"), child.as_ref())],
             Self::Wait { .. }
+            | Self::WaitUntil { .. }
+            | Self::WaitForEvent { .. }
+            | Self::SetValue { .. }
             | Self::Action { .. }
             | Self::Condition { .. }
             | Self::Include { .. } => Vec::new(),
@@ -515,7 +579,7 @@ impl TreeSpec {
     /// Returns the JSON Schema for the configuration format.
     ///
     /// The schema describes the structural `TreeSpec` shape and built-in node
-    /// parameters. Registered action/condition/predicate/switch-key/custom names
+    /// parameters. Registered action/condition/predicate/score/key/custom names
     /// and their parameter schemas are application-specific and are not included.
     #[cfg(feature = "schema")]
     #[must_use]
@@ -896,6 +960,195 @@ mod tests {
     }
 
     #[test]
+    fn builds_utility_selector_from_json() {
+        let mut registry = NodeRegistry::<f32>::new();
+        registry
+            .score::<()>("world", |_| |ctx: &Context<'_, f32>| *ctx.world_ref())
+            .unwrap();
+        registry
+            .score::<()>("fixed", |_| |_: &Context<'_, f32>| 5.0)
+            .unwrap();
+        registry
+            .action::<()>("high", |_| |_: &mut Context<'_, f32>| Status::Success)
+            .unwrap();
+        registry
+            .action::<()>("low", |_| |_: &mut Context<'_, f32>| Status::Failure)
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"utility_selector","branches":[
+                {"score":"world","child":{"type":"action","name":"high"}},
+                {"score":"fixed","child":{"type":"action","name":"low"}}
+            ]}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::UtilitySelector);
+
+        let mut world = 10.0;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        world = 1.0;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Failure);
+    }
+
+    #[test]
+    fn utility_config_rejects_unknown_score() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"utility_selector","branches":[
+                {"score":"missing","child":{"type":"action","name":"ok"}}
+            ]}}"#,
+        )
+        .expect("valid spec");
+        let error = spec.build(&registry).err().expect("unknown score");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownScore { name } if name == "missing"
+        ));
+        assert_eq!(error.path(), Some("root.branches[0].score"));
+    }
+
+    #[test]
+    fn builds_set_value_from_json() {
+        static HP: crate::blackboard::Key<u32> = crate::blackboard::Key::new("test.config.hp");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.set_value_key(HP).expect("register set-value key");
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"set_value","key":"test.config.hp","value":42}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::SetValue);
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.blackboard().get(&HP), Some(&42));
+        spec.validate(&ValidationLimits::default())
+            .expect("valid spec");
+    }
+
+    #[test]
+    fn set_value_config_rejects_unknown_key_and_bad_value() {
+        static HP: crate::blackboard::Key<u32> = crate::blackboard::Key::new("test.config.hp.bad");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.set_value_key(HP).expect("register set-value key");
+
+        let unknown =
+            TreeSpec::from_json_str(r#"{"root":{"type":"set_value","key":"missing","value":1}}"#)
+                .expect("valid spec");
+        let error = unknown.build(&registry).err().expect("unknown key");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownSetValueKey { key } if key == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+
+        let bad_value = TreeSpec::from_json_str(
+            r#"{"root":{"type":"set_value","key":"test.config.hp.bad","value":"x"}}"#,
+        )
+        .expect("valid spec");
+        let error = bad_value.build(&registry).err().expect("bad value");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::InvalidParams { .. }
+        ));
+    }
+
+    #[test]
+    fn builds_wait_until_from_json() {
+        let mut registry = NodeRegistry::<bool>::new();
+        registry
+            .condition::<()>("flag", |_| |ctx: &Context<'_, bool>| *ctx.world_ref())
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(r#"{"root":{"type":"wait_until","condition":"flag"}}"#)
+            .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+
+        let mut world = false;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Running);
+        world = true;
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_wait_for_event_from_json() {
+        static SIGNAL: crate::event::EventKey<u32> =
+            crate::event::EventKey::new("test.config.signal");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry.event_key(SIGNAL).expect("register event key");
+        registry
+            .action::<()>("emit", |_| {
+                move |ctx: &mut Context<'_, ()>| {
+                    SIGNAL.push(ctx, 7);
+                    Status::Success
+                }
+            })
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"sequence","children":[
+                {"type":"action","name":"emit"},
+                {"type":"wait_for_event","event":"test.config.signal"}
+            ]}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        assert_eq!(tree.describe().kind, Kind::Sequence);
+
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+
+        let wait_only = TreeSpec::from_json_str(
+            r#"{"root":{"type":"wait_for_event","event":"test.config.signal"}}"#,
+        )
+        .expect("valid spec");
+        let mut waiting = wait_only.build(&registry).expect("build tree");
+        assert_eq!(waiting.tick(&mut world, Time::ZERO), Status::Running);
+    }
+
+    #[test]
+    fn wait_for_event_config_rejects_unknown_key() {
+        let spec =
+            TreeSpec::from_json_str(r#"{"root":{"type":"wait_for_event","event":"missing"}}"#)
+                .expect("valid spec");
+        let error = spec
+            .build(&NodeRegistry::<()>::new())
+            .err()
+            .expect("unknown event key");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::UnknownEventKey { key } if key == "missing"
+        ));
+        assert_eq!(error.path(), Some("root"));
+    }
+
+    #[test]
+    fn validate_uses_utility_branch_paths() {
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"utility_selector","branches":[
+                {"score":"unused","child":{"type":"wait","duration_ms":1}}
+            ]}}"#,
+        )
+        .expect("valid spec");
+        let error = spec
+            .validate(&ValidationLimits {
+                max_depth: 1,
+                max_nodes: 10,
+            })
+            .expect_err("depth limit");
+        assert_eq!(error.path(), Some("root.branches[0].child"));
+    }
+
+    #[test]
     fn predicate_registration_and_typed_params() {
         #[derive(serde::Deserialize)]
         struct Above {
@@ -1168,6 +1421,10 @@ mod tests {
         assert!(text.contains("\"guard\""));
         assert!(text.contains("\"while\""));
         assert!(text.contains("\"switch\""));
+        assert!(text.contains("\"utility_selector\""));
+        assert!(text.contains("\"set_value\""));
+        assert!(text.contains("\"wait_until\""));
+        assert!(text.contains("\"wait_for_event\""));
     }
 
     #[test]
@@ -1327,6 +1584,41 @@ mod tests {
                 assert_eq!(name, "test.registry.switch");
             }
             other => panic!("unexpected switch-key duplicate result: {other:?}"),
+        }
+
+        static SET_VALUE: crate::blackboard::Key<u32> =
+            crate::blackboard::Key::new("test.registry.set_value");
+        registry
+            .set_value_key(SET_VALUE)
+            .expect("register set-value key");
+        match registry.set_value_key(SET_VALUE) {
+            Err(RegistryError::Duplicate { category, name }) => {
+                assert_eq!(category, "set value key");
+                assert_eq!(name, "test.registry.set_value");
+            }
+            other => panic!("unexpected set-value-key duplicate result: {other:?}"),
+        }
+
+        static EVENT: crate::event::EventKey<u32> =
+            crate::event::EventKey::new("test.registry.event");
+        registry.event_key(EVENT).expect("register event key");
+        match registry.event_key(EVENT) {
+            Err(RegistryError::Duplicate { category, name }) => {
+                assert_eq!(category, "event key");
+                assert_eq!(name, "test.registry.event");
+            }
+            other => panic!("unexpected event-key duplicate result: {other:?}"),
+        }
+
+        registry
+            .score::<()>("total", |_| |_: &Context<'_, ()>| 1.0)
+            .expect("register score");
+        match registry.score::<()>("total", |_| |_: &Context<'_, ()>| 1.0) {
+            Err(RegistryError::Duplicate { category, name }) => {
+                assert_eq!(category, "score");
+                assert_eq!(name, "total");
+            }
+            other => panic!("unexpected score duplicate result: {other:?}"),
         }
     }
 

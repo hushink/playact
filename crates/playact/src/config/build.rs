@@ -4,13 +4,14 @@ use core::time::Duration;
 
 use crate::composite::{
     IfThenElse, MemParallel, Parallel, Race, RandomSelector, ReactiveSelector, ReactiveSequence,
-    Selector, Sequence, Threshold, WeightedChild, WeightedRandomSelector,
+    Selector, Sequence, Threshold, UtilityChild, UtilitySelector, WeightedChild,
+    WeightedRandomSelector,
 };
 use crate::decorator::{
     AlwaysFail, AlwaysSucceed, Cooldown, Guard, Inverter, Limiter, Probability, Repeat, Retry,
     Throttle, Timeout, UntilFailure, UntilSuccess, While,
 };
-use crate::leaf::Wait;
+use crate::leaf::{Wait, WaitUntil};
 use crate::node::{BoxedNode, IdentifiedNode};
 use crate::tree::{BehaviorTree, Named};
 
@@ -22,10 +23,9 @@ impl TreeSpec {
     /// Builds a behavior tree using the registry; returns an error if the
     /// configuration contains `include`.
     ///
-    /// All parameters are deserialized at build time. Unknown
-    /// action/condition/predicate/switch key/kind, invalid params, an
-    /// unsupported version, or an invalid threshold all return a
-    /// [`ConfigBuildError`] carrying a path.
+    /// All parameters are deserialized at build time. Unknown registered names,
+    /// invalid params, an unsupported version, or an invalid threshold all
+    /// return a [`ConfigBuildError`] carrying a path.
     pub fn build<W: 'static>(
         &self,
         registry: &NodeRegistry<W>,
@@ -184,6 +184,27 @@ fn build_node<W: 'static>(
                 .build_switch(key, name.as_deref(), values, children)
                 .map_err(|error| error.at(path))
         }
+        SpecNode::UtilitySelector {
+            name,
+            hysteresis,
+            branches,
+        } => {
+            let mut children = Vec::with_capacity(branches.len());
+            for (index, branch) in branches.iter().enumerate() {
+                let score = ctx
+                    .registry
+                    .build_score(&branch.score, &branch.params)
+                    .map_err(|error| error.at(format!("{path}.branches[{index}].score")))?;
+                let child = build_node(
+                    &branch.child,
+                    ctx,
+                    &format!("{path}.branches[{index}].child"),
+                )?;
+                children.push(UtilityChild::new(score, child));
+            }
+            let node = UtilitySelector::new(children).with_hysteresis(*hysteresis);
+            Ok(Box::new(with_name(node, name)))
+        }
         SpecNode::IfThenElse {
             name,
             condition,
@@ -320,6 +341,26 @@ fn build_node<W: 'static>(
             let node = Wait::new(Duration::from_millis(*duration_ms));
             Ok(Box::new(with_name(node, name)))
         }
+        SpecNode::WaitUntil {
+            name,
+            condition,
+            params,
+        } => {
+            let predicate = ctx
+                .registry
+                .build_predicate(condition, params)
+                .map_err(|error| error.at(path))?;
+            let node = WaitUntil::new("WaitUntil", predicate);
+            Ok(Box::new(with_name(node, name)))
+        }
+        SpecNode::WaitForEvent { name, event } => ctx
+            .registry
+            .build_event(event, name.as_deref())
+            .map_err(|error| error.at(path)),
+        SpecNode::SetValue { name, key, value } => ctx
+            .registry
+            .build_set_value(key, name.as_deref(), value)
+            .map_err(|error| error.at(path)),
         SpecNode::Action { name, params } => ctx
             .registry
             .build_action(name, params, Vec::new())
@@ -466,6 +507,7 @@ impl_named_node!(
     Parallel,
     Race,
     MemParallel,
+    UtilitySelector,
     IfThenElse,
     Inverter,
     AlwaysSucceed,
@@ -482,4 +524,5 @@ impl_named_node!(
     Limiter,
     Throttle,
     Wait,
+    WaitUntil,
 );

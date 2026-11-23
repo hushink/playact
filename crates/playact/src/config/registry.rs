@@ -9,7 +9,8 @@ use serde_json::Value;
 use crate::blackboard::Key;
 use crate::composite::Switch;
 use crate::context::Context;
-use crate::leaf::{Action, Condition};
+use crate::event::EventKey;
+use crate::leaf::{Action, Condition, SetValue, WaitForEvent};
 use crate::node::BoxedNode;
 use crate::status::Status;
 
@@ -24,6 +25,11 @@ type SwitchFactory<W> = Box<
         + Send
         + Sync,
 >;
+type SetValueFactory<W> =
+    Box<dyn Fn(Option<&str>, &Value) -> Result<BoxedNode<W>, ConfigBuildError> + Send + Sync>;
+type EventFactory<W> = Box<dyn Fn(Option<&str>) -> BoxedNode<W> + Send + Sync>;
+type BoxedScore<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> f32 + Send + 'static>;
+type ScoreFactory<W> = Box<dyn Fn(&Value) -> Result<BoxedScore<W>, ConfigBuildError> + Send + Sync>;
 type BoxedTick<W> = Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Status + Send + 'static>;
 type BoxedPredicate<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static>;
 
@@ -65,8 +71,27 @@ where
     }
 }
 
-/// Build-time registry that maps names to action / condition / predicate /
-/// switch-key / custom factories.
+/// Factory that turns typed params into an independent utility score closure.
+///
+/// Callers usually pass a closure directly and never implement this trait manually.
+#[doc(hidden)]
+pub trait UtilityScoreFactory<W, P>: Send + Sync + 'static {
+    /// Creates an independent score closure for one branch.
+    fn make(&self, params: P) -> BoxedScore<W>;
+}
+
+impl<W, P, F, S> UtilityScoreFactory<W, P> for F
+where
+    F: Fn(P) -> S + Send + Sync + 'static,
+    S: for<'a> Fn(&Context<'a, W>) -> f32 + Send + 'static,
+{
+    fn make(&self, params: P) -> BoxedScore<W> {
+        Box::new(self(params))
+    }
+}
+
+/// Build-time registry for actions, conditions, predicates, utility scores,
+/// typed key references, and custom node factories.
 ///
 /// The registry is used only at build time and is not held by the tree; each
 /// node is created separately by its factory, so closure state is naturally
@@ -76,6 +101,9 @@ pub struct NodeRegistry<W: 'static> {
     conditions: HashMap<String, Factory<W>>,
     predicates: HashMap<String, PredicateFactory<W>>,
     switch_keys: HashMap<String, SwitchFactory<W>>,
+    set_value_keys: HashMap<String, SetValueFactory<W>>,
+    event_keys: HashMap<String, EventFactory<W>>,
+    scores: HashMap<String, ScoreFactory<W>>,
     custom: HashMap<String, Factory<W>>,
 }
 
@@ -88,6 +116,9 @@ impl<W: 'static> NodeRegistry<W> {
             conditions: HashMap::new(),
             predicates: HashMap::new(),
             switch_keys: HashMap::new(),
+            set_value_keys: HashMap::new(),
+            event_keys: HashMap::new(),
+            scores: HashMap::new(),
             custom: HashMap::new(),
         }
     }
@@ -230,6 +261,72 @@ impl<W: 'static> NodeRegistry<W> {
         Ok(())
     }
 
+    /// Registers a typed blackboard key for `set_value` configurations.
+    ///
+    /// The configuration refers to the key by its `Key::name()`; the configured
+    /// value is deserialized into `T` at build time.
+    pub fn set_value_key<T>(&mut self, key: Key<T>) -> Result<(), RegistryError>
+    where
+        T: DeserializeOwned + Clone + Send + 'static,
+    {
+        let name = String::from(key.name());
+        ensure_name_available(&self.set_value_keys, "set value key", &name)?;
+        let factory: SetValueFactory<W> = Box::new(move |display_name, value| {
+            let value: T = serde_json::from_value(value.clone()).map_err(|error| {
+                ConfigBuildError::new(ConfigBuildErrorKind::InvalidParams {
+                    message: format!("set_value value: {error}"),
+                })
+            })?;
+            let node_name = display_name.unwrap_or("SetValue");
+            Ok(Box::new(SetValue::<W, T>::new(node_name, &key, value)))
+        });
+        self.set_value_keys.insert(name, factory);
+        Ok(())
+    }
+
+    /// Registers a typed event key for `wait_for_event` configurations.
+    ///
+    /// The configuration refers to the key by its `EventKey::name()`.
+    pub fn event_key<T>(&mut self, key: EventKey<T>) -> Result<(), RegistryError>
+    where
+        T: Send + 'static,
+    {
+        let name = String::from(key.name());
+        ensure_name_available(&self.event_keys, "event key", &name)?;
+        let factory: EventFactory<W> = Box::new(move |display_name| {
+            let node = WaitForEvent::<W, T>::new(key);
+            let node = match display_name {
+                Some(display_name) => node.with_name(String::from(display_name)),
+                None => node,
+            };
+            Box::new(node)
+        });
+        self.event_keys.insert(name, factory);
+        Ok(())
+    }
+
+    /// Registers a utility scoring function.
+    ///
+    /// The outer factory receives typed parameters once per `utility_selector`
+    /// branch and returns that branch's score closure.
+    pub fn score<P>(
+        &mut self,
+        name: impl Into<String>,
+        factory: impl UtilityScoreFactory<W, P>,
+    ) -> Result<(), RegistryError>
+    where
+        P: DeserializeOwned + Send + 'static,
+    {
+        let name = name.into();
+        ensure_name_available(&self.scores, "score", &name)?;
+        let erased: ScoreFactory<W> = Box::new(move |params| {
+            let params: P = parse_params(params)?;
+            Ok(factory.make(params))
+        });
+        self.scores.insert(name, erased);
+        Ok(())
+    }
+
     /// Registers a custom node factory.
     ///
     /// The factory receives typed params and the already recursively built
@@ -315,6 +412,50 @@ impl<W: 'static> NodeRegistry<W> {
                     key: key.to_string(),
                 },
             )),
+        }
+    }
+
+    pub(crate) fn build_set_value(
+        &self,
+        key: &str,
+        name: Option<&str>,
+        value: &Value,
+    ) -> Result<BoxedNode<W>, ConfigBuildError> {
+        match self.set_value_keys.get(key) {
+            Some(factory) => factory(name, value),
+            None => Err(ConfigBuildError::new(
+                ConfigBuildErrorKind::UnknownSetValueKey {
+                    key: key.to_string(),
+                },
+            )),
+        }
+    }
+
+    pub(crate) fn build_event(
+        &self,
+        key: &str,
+        name: Option<&str>,
+    ) -> Result<BoxedNode<W>, ConfigBuildError> {
+        match self.event_keys.get(key) {
+            Some(factory) => Ok(factory(name)),
+            None => Err(ConfigBuildError::new(
+                ConfigBuildErrorKind::UnknownEventKey {
+                    key: key.to_string(),
+                },
+            )),
+        }
+    }
+
+    pub(crate) fn build_score(
+        &self,
+        name: &str,
+        params: &Value,
+    ) -> Result<BoxedScore<W>, ConfigBuildError> {
+        match self.scores.get(name) {
+            Some(factory) => factory(params),
+            None => Err(ConfigBuildError::new(ConfigBuildErrorKind::UnknownScore {
+                name: name.to_string(),
+            })),
         }
     }
 

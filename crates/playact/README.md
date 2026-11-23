@@ -607,15 +607,18 @@ let mut tree = spec.build(&registry)?;
 
 - JSON, TOML, YAML, and RON parsers are available behind format features.
 - Unknown fields are rejected; errors carry paths such as `root.children[0]`.
-- Supported node types include sequences, selectors, random/weighted selection, race,
-  parallel, mem-parallel, `switch`, `if_then_else`, decorators (including `guard`,
-  `while`, throttle, and probability), waits, actions, conditions, and custom factories.
-- `condition` registrations also provide predicates for `guard`, `while`, and
-  `if_then_else`; use `registry.predicate` for predicates that are not condition
-  leaves. Predicate parameters are typed like action parameters.
-- `switch` configurations reference a key registered with `registry.switch_key`;
-  branch values deserialize into the key's value type at build time.
-- `UtilitySelector` scores are runtime closures and stay in code or `custom` factories.
+- Supported node types include sequences, selectors, random/weighted/utility selection,
+  race, parallel, mem-parallel, `switch`, `if_then_else`, decorators (including
+  `guard`, `while`, throttle, and probability), waits, `wait_until`,
+  `wait_for_event`, `set_value`, actions, conditions, and custom factories.
+- `condition` registrations also provide predicates for `guard`, `while`,
+  `if_then_else`, and `wait_until`; use `registry.predicate` for predicates that are
+  not condition leaves. Predicate parameters are typed like action parameters.
+- `switch`, `set_value`, and `wait_for_event` configurations reference typed keys
+  registered with `registry.switch_key` / `set_value_key` / `event_key`; configured
+  values deserialize into the key's value or event type at build time.
+- `utility_selector` branches reference score functions registered with
+  `registry.score`; scores receive typed parameters and are re-evaluated every tick.
 - `TreeSpec::validate(&ValidationLimits)` checks version, maximum depth, and node count
   before building. This is useful for remote or user-supplied configuration.
 - The optional `schema` feature exposes `TreeSpec::json_schema()` for editor completion
