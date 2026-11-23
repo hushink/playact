@@ -431,5 +431,7 @@ not deserialize as a `TreeSpec`; other formats preserve the original field
 presence. `diff` validates both inputs, then reports path-based node, parameter,
 and include-file set changes. Child nodes are matched by type and
 name/kind/key, so insertions and reorders report moves instead of shifting every
-later index. It exits nonzero when differences exist and supports `--json`;
-include file sets use `--include-base`, or each input's parent when omitted.
+later index. Included files with matching relative paths are compared
+recursively, and their findings include a `file` field. It exits nonzero when
+differences exist and supports `--json`; include file sets use `--include-base`,
+or each input's parent when omitted.

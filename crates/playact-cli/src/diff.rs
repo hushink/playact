@@ -1,6 +1,6 @@
 //! Structural and include diffs between two configurations.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -35,6 +35,26 @@ pub(crate) struct NodeChange {
     pub old: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new: Option<String>,
+    /// Included file containing the change, if it is not the root file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+}
+
+impl NodeChange {
+    fn new(
+        kind: &'static str,
+        path: impl Into<String>,
+        old: Option<String>,
+        new: Option<String>,
+    ) -> Self {
+        Self {
+            kind,
+            path: path.into(),
+            old,
+            new,
+            file: None,
+        }
+    }
 }
 
 /// One include-file set change.
@@ -66,20 +86,32 @@ pub(crate) fn diff(
     let mut changes = Vec::new();
     diff_value(&old_document, &new_document, "", &mut changes);
 
-    let old_includes = include_files(old_path, old_format, &old_document, include_base)?;
-    let new_includes = include_files(new_path, new_format, &new_document, include_base)?;
+    let old_includes = include_graph(old_path, old_format, &old_document, include_base)?;
+    let new_includes = include_graph(new_path, new_format, &new_document, include_base)?;
     let mut includes = Vec::new();
-    for path in old_includes.difference(&new_includes) {
-        includes.push(IncludeChange {
-            kind: "removed",
-            path: path.clone(),
-        });
+    for path in old_includes.keys() {
+        if !new_includes.contains_key(path) {
+            includes.push(IncludeChange {
+                kind: "removed",
+                path: path.clone(),
+            });
+        }
     }
-    for path in new_includes.difference(&old_includes) {
-        includes.push(IncludeChange {
-            kind: "added",
-            path: path.clone(),
-        });
+    for (path, new_document) in &new_includes {
+        match old_includes.get(path) {
+            Some(old_document) => {
+                let mut file_changes = Vec::new();
+                diff_value(old_document, new_document, "", &mut file_changes);
+                for mut change in file_changes {
+                    change.file = Some(path.clone());
+                    changes.push(change);
+                }
+            }
+            None => includes.push(IncludeChange {
+                kind: "added",
+                path: path.clone(),
+            }),
+        }
     }
 
     Ok(ConfigDiff {
@@ -98,26 +130,23 @@ pub(crate) fn render_human(diff: &ConfigDiff) -> String {
         return output;
     }
     for change in &diff.changes {
+        let location = change_location(change);
         match change.kind {
             "added" => output.push_str(&format!(
-                "+ {}: {}\n",
-                change.path,
+                "+ {location}: {}\n",
                 change.new.as_deref().unwrap_or("")
             )),
             "removed" => output.push_str(&format!(
-                "- {}: {}\n",
-                change.path,
+                "- {location}: {}\n",
                 change.old.as_deref().unwrap_or("")
             )),
             "moved" => output.push_str(&format!(
-                "> {}: {} (moved from {})\n",
-                change.path,
+                "> {location}: {} (moved from {})\n",
                 change.new.as_deref().unwrap_or(""),
                 change.old.as_deref().unwrap_or("")
             )),
             _ => output.push_str(&format!(
-                "~ {}: {} -> {}\n",
-                change.path,
+                "~ {location}: {} -> {}\n",
                 change.old.as_deref().unwrap_or(""),
                 change.new.as_deref().unwrap_or("")
             )),
@@ -142,22 +171,22 @@ fn diff_value(old: &Value, new: &Value, path: &str, changes: &mut Vec<NodeChange
                 let child = join(path, key);
                 match new_map.get(key) {
                     Some(new_value) => diff_value(old_value, new_value, &child, changes),
-                    None => changes.push(NodeChange {
-                        kind: "removed",
-                        path: child,
-                        old: Some(value_label(old_value)),
-                        new: None,
-                    }),
+                    None => changes.push(NodeChange::new(
+                        "removed",
+                        child,
+                        Some(value_label(old_value)),
+                        None,
+                    )),
                 }
             }
             for (key, new_value) in new_map {
                 if !old_map.contains_key(key) {
-                    changes.push(NodeChange {
-                        kind: "added",
-                        path: join(path, key),
-                        old: None,
-                        new: Some(value_label(new_value)),
-                    });
+                    changes.push(NodeChange::new(
+                        "added",
+                        join(path, key),
+                        None,
+                        Some(value_label(new_value)),
+                    ));
                 }
             }
         }
@@ -170,15 +199,22 @@ fn diff_value(old: &Value, new: &Value, path: &str, changes: &mut Vec<NodeChange
         }
         _ => {
             if old != new {
-                changes.push(NodeChange {
-                    kind: "changed",
-                    path: path.to_string(),
-                    old: Some(value_label(old)),
-                    new: Some(value_label(new)),
-                });
+                changes.push(NodeChange::new(
+                    "changed",
+                    path,
+                    Some(value_label(old)),
+                    Some(value_label(new)),
+                ));
             }
         }
     }
+}
+
+fn change_location(change: &NodeChange) -> String {
+    change.file.as_ref().map_or_else(
+        || change.path.clone(),
+        |file| format!("[{file}] {}", change.path),
+    )
 }
 
 fn can_match_arrays(old: &[Value], new: &[Value]) -> bool {
@@ -229,20 +265,20 @@ fn diff_indexed_array(
         );
     }
     for (index, item) in old_items.iter().enumerate().skip(shared) {
-        changes.push(NodeChange {
-            kind: "removed",
-            path: format!("{path}[{index}]"),
-            old: Some(value_label(item)),
-            new: None,
-        });
+        changes.push(NodeChange::new(
+            "removed",
+            format!("{path}[{index}]"),
+            Some(value_label(item)),
+            None,
+        ));
     }
     for (index, item) in new_items.iter().enumerate().skip(shared) {
-        changes.push(NodeChange {
-            kind: "added",
-            path: format!("{path}[{index}]"),
-            old: None,
-            new: Some(value_label(item)),
-        });
+        changes.push(NodeChange::new(
+            "added",
+            format!("{path}[{index}]"),
+            None,
+            Some(value_label(item)),
+        ));
     }
 }
 
@@ -297,22 +333,22 @@ fn diff_matched_array(
 
     for (index, item) in old_items.iter().enumerate() {
         if !old_used[index] {
-            changes.push(NodeChange {
-                kind: "removed",
-                path: format!("{path}[{index}]"),
-                old: Some(value_label(item)),
-                new: None,
-            });
+            changes.push(NodeChange::new(
+                "removed",
+                format!("{path}[{index}]"),
+                Some(value_label(item)),
+                None,
+            ));
         }
     }
     for (index, item) in new_items.iter().enumerate() {
         if !new_used[index] {
-            changes.push(NodeChange {
-                kind: "added",
-                path: format!("{path}[{index}]"),
-                old: None,
-                new: Some(value_label(item)),
-            });
+            changes.push(NodeChange::new(
+                "added",
+                format!("{path}[{index}]"),
+                None,
+                Some(value_label(item)),
+            ));
         }
     }
 
@@ -321,12 +357,12 @@ fn diff_matched_array(
         let old_path = format!("{path}[{old_index}]");
         let new_path = format!("{path}[{new_index}]");
         if old_index != new_index {
-            changes.push(NodeChange {
-                kind: "moved",
-                path: new_path.clone(),
-                old: Some(old_path),
-                new: Some(value_label(&new_items[new_index])),
-            });
+            changes.push(NodeChange::new(
+                "moved",
+                new_path.clone(),
+                Some(old_path),
+                Some(value_label(&new_items[new_index])),
+            ));
         }
         diff_value(
             &old_items[old_index],
@@ -379,14 +415,14 @@ fn truncate(text: &str, limit: usize) -> String {
     shortened
 }
 
-fn include_files(
+fn include_graph(
     root: &Path,
     format: Format,
     document: &Value,
     include_base: Option<&Path>,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<BTreeMap<String, Value>, String> {
     let base = resolve_base(root, include_base)?;
-    let mut files = BTreeSet::new();
+    let mut files = BTreeMap::new();
     let mut visited = HashSet::new();
     let mut stack = Vec::new();
     if let Ok(canonical) = root.canonicalize() {
@@ -411,7 +447,7 @@ fn walk_includes(
     base: &Path,
     visited: &mut HashSet<PathBuf>,
     stack: &mut Vec<PathBuf>,
-    files: &mut BTreeSet<String>,
+    files: &mut BTreeMap<String, Value>,
     depth: usize,
 ) -> Result<(), String> {
     for (location, include) in collect_includes(document) {
@@ -429,7 +465,6 @@ fn walk_includes(
             .strip_prefix(base)
             .map_or_else(|_| display_path(&target), display_path)
             .replace('\\', "/");
-        files.insert(label);
         if !visited.insert(target.clone()) {
             continue;
         }
@@ -438,6 +473,7 @@ fn walk_includes(
         let included_document = target_format
             .parse_document(&text)
             .map_err(|error| format!("parse include `{}`: {error}", display_path(&target)))?;
+        files.insert(label, included_document.clone());
         stack.push(target);
         walk_includes(
             &included_document,

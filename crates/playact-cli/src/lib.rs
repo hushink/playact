@@ -102,10 +102,11 @@ usage: playact diff [--schema PATH] [--include-base PATH] [--json] OLD NEW
 
 Validates both configurations, then compares node structure, parameters, and
 include file sets. Child nodes are matched by type and name/kind/key, so
-insertions and reorders report moves instead of rewriting every index. Include
-file sets are resolved against --include-base, or each input's parent when the
-option is omitted. Exits nonzero when differences are found. --json prints a
-machine-readable report.";
+insertions and reorders report moves instead of rewriting every index. Included
+files with matching relative paths are compared recursively; their findings carry
+a file field. Include file sets are resolved against --include-base, or each
+input's parent when the option is omitted. Exits nonzero when differences are
+found. --json prints a machine-readable report.";
 
 enum Outcome {
     Success,

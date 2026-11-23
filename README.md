@@ -197,8 +197,10 @@ included files are validated but not rewritten unless passed explicitly.
 `fmt --check` writes nothing and exits nonzero when files would change. `diff`
 validates two configurations, then reports path-based node, parameter, and
 include-file set changes; child nodes are matched by type and name/kind/key, so
-insertions and reorders report moves rather than changing every later index. It
-exits nonzero when differences exist and supports `--json` for review tooling.
+insertions and reorders report moves rather than changing every later index.
+Included files with matching relative paths are compared recursively, and their
+findings carry a `file` field. It exits nonzero when differences exist and
+supports `--json` for review tooling.
 
 ## Feature flags
 

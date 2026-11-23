@@ -676,6 +676,52 @@ fn diff_json_report_is_machine_readable() {
 }
 
 #[test]
+fn diff_reports_changes_inside_shared_includes() {
+    let old_dir = TempDir::new();
+    let new_dir = TempDir::new();
+    old_dir.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything","params":{"x":1}}}"#,
+    );
+    new_dir.write(
+        "child.json",
+        r#"{"version":1,"root":{"type":"action","name":"anything","params":{"x":2}}}"#,
+    );
+    let old_root = old_dir.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"child.json"}}"#,
+    );
+    let new_root = new_dir.write(
+        "root.json",
+        r#"{"root":{"type":"include","path":"child.json"}}"#,
+    );
+
+    let output = run(&[
+        "diff",
+        old_root.to_str().expect("old root"),
+        new_root.to_str().expect("new root"),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[child.json]"), "{stdout}");
+    assert!(stdout.contains("root.params.x"), "{stdout}");
+    assert!(stdout.contains("1 -> 2"), "{stdout}");
+
+    let json = run(&[
+        "diff",
+        "--json",
+        old_root.to_str().expect("old root"),
+        new_root.to_str().expect("new root"),
+    ]);
+    let report: Value = serde_json::from_slice(&json.stdout).expect("valid JSON diff");
+    assert!(
+        report["changes"]
+            .as_array()
+            .is_some_and(|changes| { changes.iter().any(|change| change["file"] == "child.json") })
+    );
+}
+
+#[test]
 fn diff_reports_include_file_changes() {
     let directory = TempDir::new();
     directory.write(
