@@ -25,6 +25,10 @@ pub const NODE_ID_SNAPSHOT_VERSION: u32 = 1;
 /// not support snapshots. A snapshot contains no world, blackboard, or closure
 /// capture state.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "snapshot-serde",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct TreeSnapshot {
     /// Snapshot format version, normally equal to [`SNAPSHOT_VERSION`].
     pub version: u32,
@@ -34,17 +38,51 @@ pub struct TreeSnapshot {
     pub services: Vec<Option<Vec<u8>>>,
 }
 
+#[cfg(feature = "snapshot-serde")]
+impl TreeSnapshot {
+    /// Serializes the snapshot as compact JSON.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("TreeSnapshot serialization cannot fail")
+    }
+
+    /// Parses a snapshot from JSON produced by [`TreeSnapshot::to_json`].
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
 /// A snapshot keyed by stable [`NodeId`].
 ///
 /// Unlike [`TreeSnapshot`], this format is independent of child order: every
 /// stateful node with an ID stores its own state in `nodes`. Nodes without IDs
 /// or without [`Node::save_own_state`] support are not included.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "snapshot-serde",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct NodeIdSnapshot {
     /// Snapshot format version, normally [`NODE_ID_SNAPSHOT_VERSION`].
     pub version: u32,
     /// Own state for each stateful node that has an ID.
     pub nodes: BTreeMap<NodeId, Vec<u8>>,
+}
+
+#[cfg(feature = "snapshot-serde")]
+impl NodeIdSnapshot {
+    /// Serializes the snapshot as compact JSON.
+    ///
+    /// Node IDs become JSON object keys.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("NodeIdSnapshot serialization cannot fail")
+    }
+
+    /// Parses a snapshot from JSON produced by [`NodeIdSnapshot::to_json`].
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
 }
 
 /// Errors produced while capturing or restoring an ID-keyed snapshot.
@@ -913,5 +951,44 @@ mod tests {
             right.restore(&snapshot),
             Err(RestoreError::InvalidState { .. })
         ));
+    }
+
+    #[cfg(feature = "snapshot-serde")]
+    #[test]
+    fn tree_snapshot_json_roundtrip() {
+        let mut tree = BehaviorTreeBuilder::<()>::new("snap")
+            .wait(Duration::from_secs(1))
+            .build()
+            .expect("tree");
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Running);
+
+        let snapshot = tree.snapshot();
+        let json = snapshot.to_json();
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"root\""));
+
+        let parsed = TreeSnapshot::from_json(&json).expect("parse snapshot");
+        assert_eq!(parsed, snapshot);
+    }
+
+    #[cfg(feature = "snapshot-serde")]
+    #[test]
+    fn node_id_snapshot_json_roundtrip() {
+        let mut tree = BehaviorTreeBuilder::<()>::new("ids")
+            .wait(Duration::from_secs(1))
+            .id("waiter")
+            .build()
+            .expect("tree");
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Running);
+
+        let snapshot = tree.snapshot_by_id().expect("snapshot by id");
+        assert_eq!(snapshot.nodes.len(), 1);
+        let json = snapshot.to_json();
+        assert!(json.contains("\"waiter\""));
+
+        let parsed = NodeIdSnapshot::from_json(&json).expect("parse snapshot");
+        assert_eq!(parsed, snapshot);
     }
 }

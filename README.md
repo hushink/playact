@@ -150,6 +150,7 @@ cargo run -p playact --example reload_audit --features hot-reload,inspector,diff
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
 | `schema` | JSON Schema generation for `TreeSpec` (requires `config`) |
 | `blackboard-serde` | Opt-in typed blackboard serialization (requires `std`) |
+| `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned trace recording and replay comparison (requires `std`) |
 | `test-util` | Deterministic `TestDriver` with virtual time (requires `std` and `trace-record`) |
 | `inspector` | Self-contained HTML report and zero-dependency debug HTTP server (requires `std`) |

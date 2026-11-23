@@ -53,6 +53,7 @@ modules and methods:
 | `inspector` | HTML report and zero-dependency HTTP server |
 | `diff-serde` | `TreeDiff` / `DiffHistory` JSON serialization and parsing |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard persistence |
+| `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization |
 | `trace-record` | `TraceRecorder` / `TraceRecord` and trace diffing |
 | `tracing` | `TracingTracer` integration |
 | `tokio` | `TokioTask` async adapter |
@@ -694,7 +695,8 @@ tree.restore(&snapshot)?;                // same structure required
 
 Snapshots exclude the world, blackboard values, closure captures, `AsyncAction`
 tasks, and dynamic `SubtreeSlot` state. Persist `snapshot.version`,
-`snapshot.root`, and `snapshot.services` with your serializer.
+`snapshot.root`, and `snapshot.services` with your serializer, or enable
+`snapshot-serde` for `TreeSnapshot::to_json` / `from_json`.
 
 ### ID-keyed snapshots
 
@@ -702,6 +704,9 @@ tasks, and dynamic `SubtreeSlot` state. Persist `snapshot.version`,
 let snapshot = tree.snapshot_by_id()?;   // BTreeMap<NodeId, Vec<u8>>
 tree.restore_by_id(&snapshot)?;          // strict: unknown IDs are errors
 let restored = tree.restore_by_id_matching(&snapshot)?; // tolerate removed IDs
+
+let json = snapshot.to_json();           // snapshot-serde; IDs become object keys
+let snapshot = NodeIdSnapshot::from_json(&json)?;
 ```
 
 Use ID-keyed snapshots when node order may change. Custom stateful nodes must

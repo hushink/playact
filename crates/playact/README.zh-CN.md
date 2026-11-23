@@ -533,6 +533,15 @@ rebuilt.restore(&snapshot)?;
 嵌套树与服务。格式带 `SNAPSHOT_VERSION`；数据损坏、结构变化或服务数量不一致会
 返回 `RestoreError`。
 
+启用 `snapshot-serde` 后，两种快照都支持紧凑 JSON：
+
+```rust
+let json = snapshot.to_json();
+let snapshot = TreeSnapshot::from_json(&json)?;
+
+let id_json = id_snapshot.to_json(); // NodeIdSnapshot：ID 作为对象 key
+```
+
 自定义节点可实现 `Node::save_state` / `load_state`；自定义组合节点需要递归编码
 子树状态。
 
@@ -907,6 +916,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
 | `schema` | `TreeSpec::json_schema()` JSON Schema 生成（依赖 `config`） |
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
+| `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化（依赖 `std`） |
 | `trace-record` | owned `TraceRecord` / `TraceRecorder` 与 trace 对比（依赖 `std`） |
 | `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std` + `trace-record`） |
 | `inspector` | 带实时状态/耗时的 HTML 报告与零依赖调试 HTTP 服务（依赖 `std`） |

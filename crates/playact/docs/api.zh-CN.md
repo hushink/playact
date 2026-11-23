@@ -48,6 +48,7 @@ impl Default for World {
 | `inspector` | HTML 报告与零依赖 HTTP 服务 |
 | `diff-serde` | `TreeDiff` / `DiffHistory` JSON 序列化与解析 |
 | `blackboard-serde` | `BlackboardCodec` 类型化黑板持久化 |
+| `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` 的 JSON 序列化 |
 | `trace-record` | `TraceRecorder` / `TraceRecord` 与 trace 对比 |
 | `tracing` | `TracingTracer` 集成 |
 | `tokio` | `TokioTask` 异步适配 |
@@ -666,7 +667,8 @@ tree.restore(&snapshot)?;                // same structure required
 ```
 
 快照不包含世界、黑板值、闭包捕获、`AsyncAction` 任务与 `SubtreeSlot` 动态状态。
-请自行序列化 `snapshot.version`、`snapshot.root`、`snapshot.services`。
+请自行序列化 `snapshot.version`、`snapshot.root`、`snapshot.services`；也可以启用
+`snapshot-serde` 使用 `TreeSnapshot::to_json` / `from_json`。
 
 ### ID 快照
 
@@ -674,6 +676,9 @@ tree.restore(&snapshot)?;                // same structure required
 let snapshot = tree.snapshot_by_id()?;   // BTreeMap<NodeId, Vec<u8>>
 tree.restore_by_id(&snapshot)?;          // strict: unknown IDs are errors
 let restored = tree.restore_by_id_matching(&snapshot)?; // tolerate removed IDs
+
+let json = snapshot.to_json();           // snapshot-serde；ID 作为对象 key
+let snapshot = NodeIdSnapshot::from_json(&json)?;
 ```
 
 节点顺序可能变化时使用 ID 快照。自定义有状态节点需实现

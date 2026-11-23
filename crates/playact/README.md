@@ -555,6 +555,15 @@ and race progress, decorators, `Wait`, nested trees, and services. The format is
 versioned with `SNAPSHOT_VERSION`; malformed data, changed structure, or a service-count
 mismatch return `RestoreError`.
 
+With `snapshot-serde`, both snapshot types serialize to compact JSON:
+
+```rust
+let json = snapshot.to_json();
+let snapshot = TreeSnapshot::from_json(&json)?;
+
+let id_json = id_snapshot.to_json(); // NodeIdSnapshot: IDs become object keys
+```
+
 Custom nodes can opt in with `Node::save_state` / `Node::load_state`. Composite custom
 nodes must encode their children recursively.
 
@@ -953,6 +962,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
 | `schema` | `TreeSpec::json_schema()` JSON Schema generation (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
+| `snapshot-serde` | `TreeSnapshot` / `NodeIdSnapshot` JSON serialization (requires `std`) |
 | `trace-record` | Owned `TraceRecord` / `TraceRecorder` and trace comparison (requires `std`) |
 | `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std` + `trace-record`) |
 | `inspector` | HTML report with live statuses/timings and a zero-dependency debug HTTP server (requires `std`) |

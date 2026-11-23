@@ -20,6 +20,7 @@ inspector = ["std"]
 diff-serde = ["std", "dep:serde", "dep:serde_json"]
 config = ["std", "dep:serde", "dep:serde_json", "dep:serde_path_to_error"]
 blackboard-serde = ["std", "dep:serde", "dep:serde_json"]
+snapshot-serde = ["std", "dep:serde", "dep:serde_json"]
 toml = ["config", "dep:toml"]
 yaml = ["config", "dep:serde_yaml_ng"]
 ron = ["config", "dep:ron"]
@@ -37,6 +38,7 @@ full = [
     "diff-serde",
     "config",
     "blackboard-serde",
+    "snapshot-serde",
     "toml",
     "yaml",
     "ron",
