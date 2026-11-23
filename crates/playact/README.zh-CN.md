@@ -362,7 +362,8 @@ tree.last_status(); // Option<Status>
 
 - `Tracer` 接收 `Enter` / `Exit` / `Abort` / `Error` 事件，路径是子索引路径。
 - `MultiTracer` 将事件按注册顺序广播。
-- `StatsTracer` 按路径统计 tick、终态、abort、错误与 wall-clock 耗时，需要 `std`。
+- `StatsTracer` 按路径统计 tick、终态、abort、错误、最后状态与 wall-clock 耗时，
+  需要 `std`。
 - `last_status()` / `is_running()` 暴露上一次顶层结果。
 - `describe()` 输出 ASCII 树或 Graphviz DOT；builder/配置中的 `NodeId` 会出现在
   `TreeDescription::id` 和 DOT 标签中。
@@ -412,6 +413,21 @@ let board_state = codec.encode(tree.blackboard())?;
 未知 key、重复注册、版本不支持和值类型错误都会返回错误；codec 不会做字符串 key
 查找或公开 `Any`。
 
+## 测试驱动
+
+可选 `test-util` feature 提供确定性测试驱动：
+
+```rust
+use playact::TestDriver;
+
+let mut driver = TestDriver::new(tree, world).with_step(Duration::from_millis(16));
+assert_eq!(driver.tick(), Status::Running);
+driver.advance(Duration::from_secs(1));
+assert_eq!(driver.run_until_terminal(10), Some((1, Status::Success)));
+```
+
+`TestDriver` 持有树和 world，暴露黑板与最后状态，不读系统时钟也不 sleep。
+
 ## 配置驱动
 
 可选 `config` feature 从数据构建行为树，同时保持参数类型安全：
@@ -440,6 +456,10 @@ let mut tree = spec.build(&registry)?;
 - `TreeSpec::validate(&ValidationLimits)` 可在构建前校验版本、最大深度与节点数，
   适合远程配置或用户提交的配置。
 - 可选 `schema` feature 提供 `TreeSpec::json_schema()`，用于编辑器补全与外部校验。
+- 用 `identified` 包装配置节点可指定稳定 `NodeId`：
+  ```json
+  {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
+  ```
 - 完整树示例见 [`examples/battle_ai.json`](examples/battle_ai.json)。
 
 ### Include
@@ -499,6 +519,9 @@ loader.tree_mut().tick(&mut world, time);
 `RemoteTreeLoader` 使用 `reqwest::blocking`，支持 ETag / Last-Modified，刷新失败
 保留旧树。请求在调用线程同步执行；高延迟环境请放到工作线程或设置 Client 超时。
 include 使用 `json_with_resolver` / `with_client_and_resolver`。
+
+响应体限制为 `MAX_REMOTE_CONFIG_BYTES`（1 MiB），必须是 UTF-8，并在构建前通过
+`TreeSpec::validate`（默认 `ValidationLimits`）校验；过大或结构过深的配置会被拒绝。
 
 ## 异步动作
 
@@ -596,6 +619,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
 | `schema` | `TreeSpec::json_schema()` JSON Schema 生成（依赖 `config`） |
 | `blackboard-serde` | `BlackboardCodec` typed 黑板序列化（依赖 `std`） |
+| `test-util` | 虚拟时间与 run-until 辅助的 `TestDriver`（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

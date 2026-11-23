@@ -119,6 +119,8 @@ pub mod snapshot;
 pub mod stats;
 pub mod status;
 pub mod subtree;
+#[cfg(feature = "test-util")]
+pub mod testing;
 pub mod time;
 pub mod trace;
 pub mod tree;
@@ -151,7 +153,7 @@ pub use node::{BoxedNode, IdentifiedNode, Kind, Node, NodeId};
 #[cfg(feature = "blackboard-serde")]
 pub use persistence::{BLACKBOARD_SNAPSHOT_VERSION, BlackboardCodec, BlackboardCodecError};
 #[cfg(feature = "remote-config")]
-pub use remote_config::{RemoteConfigError, RemoteTreeLoader};
+pub use remote_config::{MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader};
 #[cfg(feature = "std")]
 pub use shared::SharedBlackboard;
 pub use snapshot::{RestoreError, SNAPSHOT_VERSION, TreeSnapshot};
@@ -159,6 +161,8 @@ pub use snapshot::{RestoreError, SNAPSHOT_VERSION, TreeSnapshot};
 pub use stats::{NodeStats, StatsTracer};
 pub use status::Status;
 pub use subtree::{SubtreeFactory, SubtreeSlot};
+#[cfg(feature = "test-util")]
+pub use testing::TestDriver;
 pub use time::Time;
 pub use trace::{AbortReason, MultiTracer, TraceEvent, Tracer};
 pub use tree::{BehaviorTree, TreeDescription};
@@ -171,6 +175,8 @@ pub use playact_macros::bt;
 
 /// Centralized imports of common types and macros.
 pub mod prelude {
+    #[cfg(feature = "test-util")]
+    pub use crate::TestDriver;
     #[cfg(feature = "tokio")]
     pub use crate::TokioTask;
     #[cfg(feature = "macros")]
@@ -198,7 +204,7 @@ pub mod prelude {
     #[cfg(feature = "hot-reload")]
     pub use crate::{HotReloadError, TreeWatcher};
     #[cfg(feature = "remote-config")]
-    pub use crate::{RemoteConfigError, RemoteTreeLoader};
+    pub use crate::{MAX_REMOTE_CONFIG_BYTES, RemoteConfigError, RemoteTreeLoader};
     #[cfg(feature = "config")]
     pub use crate::{TreeParser, ValidationLimits};
 }

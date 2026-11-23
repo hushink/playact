@@ -131,6 +131,7 @@ cargo run -p playact --example battle_ai_config --features config
 | `config` | `TreeSpec`、`NodeRegistry`、JSON、typed 参数、include（依赖 `std`） |
 | `schema` | `TreeSpec` 的 JSON Schema 生成（依赖 `config`） |
 | `blackboard-serde` | 可选的 typed 黑板序列化（依赖 `std`） |
+| `test-util` | 确定性虚拟时间 `TestDriver`（依赖 `std`） |
 | `toml` | TOML 解析器 |
 | `yaml` | YAML 解析器（`serde_yaml_ng`） |
 | `ron` | RON 解析器 |

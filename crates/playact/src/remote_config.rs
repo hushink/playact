@@ -16,6 +16,7 @@
 //! - Tracers are not preserved; reinstall them through
 //!   [`RemoteTreeLoader::tree_mut`] after a refresh.
 
+use std::io::Read;
 use std::time::{Duration, Instant};
 
 pub use reqwest;
@@ -25,10 +26,14 @@ use reqwest::header::{IF_MODIFIED_SINCE, IF_NONE_MATCH};
 
 use crate::config::{
     ConfigBuildError, ConfigError, IncludeResolver, NodeRegistry, TreeParser, TreeSpec,
+    ValidationLimits,
 };
 use crate::status::Status;
 use crate::time::Time;
 use crate::tree::BehaviorTree;
+
+/// Maximum response body accepted from a remote configuration endpoint.
+pub const MAX_REMOTE_CONFIG_BYTES: usize = 1024 * 1024;
 
 /// Remote configuration error.
 #[derive(Debug)]
@@ -36,7 +41,14 @@ use crate::tree::BehaviorTree;
 pub enum RemoteConfigError {
     /// HTTP request or response error.
     Http(reqwest::Error),
-    /// Failed to parse the configuration text.
+    /// Failed to read the response body.
+    Io(std::io::Error),
+    /// The response body exceeded [`MAX_REMOTE_CONFIG_BYTES`].
+    ResponseTooLarge {
+        /// Maximum accepted body size.
+        limit: usize,
+    },
+    /// Failed to parse or validate the configuration text.
     Parse(ConfigError),
     /// Configuration parsed but building the behavior tree failed.
     Build(ConfigBuildError),
@@ -48,6 +60,10 @@ impl std::fmt::Display for RemoteConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Http(error) => write!(f, "remote-config HTTP error: {error}"),
+            Self::Io(error) => write!(f, "remote-config body read error: {error}"),
+            Self::ResponseTooLarge { limit } => {
+                write!(f, "remote-config response exceeds {limit} bytes")
+            }
             Self::Parse(error) => write!(f, "remote-config parse error: {error}"),
             Self::Build(error) => write!(f, "remote-config build error: {error}"),
             Self::NotModified => f.write_str("remote-config initial response was 304 Not Modified"),
@@ -59,9 +75,10 @@ impl std::error::Error for RemoteConfigError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Http(error) => Some(error),
+            Self::Io(error) => Some(error),
             Self::Parse(error) => Some(error),
             Self::Build(error) => Some(error),
-            Self::NotModified => None,
+            Self::ResponseTooLarge { .. } | Self::NotModified => None,
         }
     }
 }
@@ -346,8 +363,26 @@ fn fetch<W: 'static>(
     let response = response.error_for_status()?;
     let etag = header_string(&response, "etag");
     let last_modified = header_string(&response, "last-modified");
-    let text = response.text()?;
-    let spec = parser(&text)?;
+
+    let mut body = Vec::new();
+    response
+        .take((MAX_REMOTE_CONFIG_BYTES as u64) + 1)
+        .read_to_end(&mut body)
+        .map_err(RemoteConfigError::Io)?;
+    if body.len() > MAX_REMOTE_CONFIG_BYTES {
+        return Err(RemoteConfigError::ResponseTooLarge {
+            limit: MAX_REMOTE_CONFIG_BYTES,
+        });
+    }
+
+    let text = std::str::from_utf8(&body).map_err(|error| {
+        RemoteConfigError::Parse(ConfigError::new(format!(
+            "remote config is not valid UTF-8: {error}"
+        )))
+    })?;
+    let spec = parser(text)?;
+    spec.validate(&ValidationLimits::default())
+        .map_err(RemoteConfigError::Parse)?;
     let tree = match resolver {
         Some(resolver) => spec.build_with_resolver(registry, resolver)?,
         None => spec.build(registry)?,
@@ -495,5 +530,17 @@ mod tests {
             .err()
             .expect("parse error");
         assert!(matches!(error, RemoteConfigError::Parse(_)));
+    }
+
+    #[test]
+    fn oversized_payload_is_rejected_before_parsing() {
+        let url = serve_sequence(vec!["x".repeat(MAX_REMOTE_CONFIG_BYTES + 1)]);
+        let error = RemoteTreeLoader::<()>::json(url, registry())
+            .err()
+            .expect("oversized payload");
+        assert!(matches!(
+            error,
+            RemoteConfigError::ResponseTooLarge { limit } if limit == MAX_REMOTE_CONFIG_BYTES
+        ));
     }
 }

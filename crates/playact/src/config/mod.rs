@@ -331,6 +331,13 @@ pub enum SpecNode {
         #[serde(default)]
         children: Vec<SpecNode>,
     },
+    /// Assigns a stable identity to a child node.
+    Identified {
+        /// Stable node identity.
+        id: String,
+        /// Child node.
+        child: Box<SpecNode>,
+    },
 }
 
 /// Parallel threshold in a configuration.
@@ -379,7 +386,8 @@ impl SpecNode {
             | Self::Cooldown { child, .. }
             | Self::Timeout { child, .. }
             | Self::Limiter { child, .. }
-            | Self::Throttle { child, .. } => vec![child.as_ref()],
+            | Self::Throttle { child, .. }
+            | Self::Identified { child, .. } => vec![child.as_ref()],
             Self::Wait { .. }
             | Self::Action { .. }
             | Self::Condition { .. }
@@ -839,6 +847,27 @@ mod tests {
         assert!(text.contains("\"root\""));
         assert!(text.contains("\"sequence\""));
         assert!(text.contains("\"wait\""));
+        assert!(text.contains("\"identified\""));
+    }
+
+    #[test]
+    fn identified_nodes_carry_stable_ids() {
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "root": {
+                    "type": "identified",
+                    "id": "root_id",
+                    "child": {"type": "action", "name": "ok"}
+                }
+            }"#,
+        )
+        .unwrap();
+        let tree = spec.build(&action_registry()).expect("tree");
+
+        assert_eq!(
+            tree.describe().id.as_ref().map(|id| id.as_str()),
+            Some("root_id")
+        );
     }
 
     #[test]

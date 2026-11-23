@@ -37,6 +37,8 @@ pub struct NodeStats {
     pub aborts: u64,
     /// Number of reported errors.
     pub errors: u64,
+    /// Status returned by the most recent completed tick.
+    pub last_status: Option<Status>,
     /// Total wall-clock time across all ticks.
     pub total_time: Duration,
     /// Longest wall-clock time of a single tick.
@@ -54,6 +56,7 @@ impl NodeStats {
             running: 0,
             aborts: 0,
             errors: 0,
+            last_status: None,
             total_time: Duration::ZERO,
             max_time: Duration::ZERO,
         }
@@ -73,6 +76,7 @@ impl NodeStats {
 
     fn record(&mut self, status: Status, elapsed: Duration) {
         self.ticks += 1;
+        self.last_status = Some(status);
         match status {
             Status::Success => self.successes += 1,
             Status::Failure => self.failures += 1,
@@ -251,6 +255,7 @@ mod tests {
         assert_eq!(root.ticks, 2);
         assert_eq!(root.successes, 1);
         assert_eq!(root.running, 1);
+        assert_eq!(root.last_status, Some(Status::Success));
 
         let preempt = stats.node(&[0]).expect("condition stats");
         assert_eq!(preempt.ticks, 2);
@@ -260,6 +265,7 @@ mod tests {
         let hold = stats.node(&[1]).expect("action stats");
         assert_eq!(hold.ticks, 1);
         assert_eq!(hold.running, 1);
+        assert_eq!(hold.last_status, Some(Status::Running));
         assert_eq!(hold.aborts, 1);
         assert!(hold.average_time() <= hold.max_time);
 
@@ -286,6 +292,7 @@ mod tests {
         let root = stats.node(&[]).expect("root stats");
         assert_eq!(root.errors, 1);
         assert_eq!(root.failures, 1);
+        assert_eq!(root.last_status, Some(Status::Failure));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::decorator::{
     UntilFailure, UntilSuccess,
 };
 use crate::leaf::Wait;
-use crate::node::BoxedNode;
+use crate::node::{BoxedNode, IdentifiedNode};
 use crate::tree::{BehaviorTree, Named};
 
 use super::error::{ConfigBuildError, ConfigBuildErrorKind};
@@ -269,6 +269,10 @@ fn build_node<W: 'static>(
                 Some(name) => Ok(Box::new(Named::new(name.clone(), node))),
                 None => Ok(node),
             }
+        }
+        SpecNode::Identified { id, child } => {
+            let child = build_node(child, ctx, &child_path(path))?;
+            Ok(Box::new(IdentifiedNode::new(id.clone(), child)))
         }
         SpecNode::Include {
             path: include_path,

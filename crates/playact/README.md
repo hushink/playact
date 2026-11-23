@@ -370,8 +370,8 @@ tree.last_status(); // Option<Status>
 
 - `Tracer` receives `Enter` / `Exit` / `Abort` / `Error` events with a child-index path.
 - `MultiTracer` fans events out to multiple tracers.
-- `StatsTracer` tracks per-path tick counts, status counts, aborts, reported errors, and
-  wall-clock time (requires `std`).
+- `StatsTracer` tracks per-path tick counts, status counts, aborts, reported errors,
+  last status, and wall-clock time (requires `std`).
 - `last_status()` and `is_running()` expose the last top-level result.
 - `describe()` renders an ASCII tree or Graphviz DOT; builder/app-config IDs appear in
   `TreeDescription::id` and DOT labels.
@@ -424,6 +424,22 @@ let board_state = codec.encode(tree.blackboard())?;
 Unknown keys, duplicate registration, unsupported versions, and wrong value types are
 reported as errors; the codec never performs string-keyed or `Any` lookups.
 
+## Test driver
+
+The optional `test-util` feature provides a deterministic driver:
+
+```rust
+use playact::TestDriver;
+
+let mut driver = TestDriver::new(tree, world).with_step(Duration::from_millis(16));
+assert_eq!(driver.tick(), Status::Running);
+driver.advance(Duration::from_secs(1));
+assert_eq!(driver.run_until_terminal(10), Some((1, Status::Success)));
+```
+
+`TestDriver` owns the tree and world, exposes the blackboard and last status, and never
+reads the system clock or sleeps.
+
 ## Configuration
 
 The optional `config` feature builds trees from data while keeping parameters typed:
@@ -454,6 +470,10 @@ let mut tree = spec.build(&registry)?;
   before building. This is useful for remote or user-supplied configuration.
 - The optional `schema` feature exposes `TreeSpec::json_schema()` for editor completion
   and external validation.
+- Wrap a configuration node in `identified` to assign a stable `NodeId`:
+  ```json
+  {"type":"identified","id":"root","child":{"type":"sequence","children":[]}}
+  ```
 - See [`examples/battle_ai.json`](examples/battle_ai.json) for a complete tree.
 
 ### Includes
@@ -515,6 +535,10 @@ loader.tree_mut().tick(&mut world, time);
 the old tree on refresh errors. Requests happen on the calling thread; use a worker
 thread or a custom `Client` timeout in high-latency environments. Includes are
 available through `json_with_resolver` / `with_client_and_resolver`.
+
+Response bodies are limited to `MAX_REMOTE_CONFIG_BYTES` (1 MiB), must be UTF-8, and
+are checked with `TreeSpec::validate` using `ValidationLimits::default()` before build.
+Oversized or structurally excessive configurations are rejected.
 
 ## Async actions
 
@@ -614,6 +638,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 | `config` | `TreeSpec`, `NodeRegistry`, JSON parsing, typed parameters, includes (requires `std`) |
 | `schema` | `TreeSpec::json_schema()` JSON Schema generation (requires `config`) |
 | `blackboard-serde` | `BlackboardCodec` typed blackboard serialization (requires `std`) |
+| `test-util` | `TestDriver` with virtual time and run-until helpers (requires `std`) |
 | `toml` | TOML parser |
 | `yaml` | YAML parser (`serde_yaml_ng`) |
 | `ron` | RON parser |
