@@ -876,6 +876,30 @@ mod tests {
     }
 
     #[test]
+    fn config_rejects_duplicate_node_ids() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .action::<()>("ok", |_| |_: &mut Context<'_, ()>| Status::Success)
+            .unwrap();
+
+        let spec = TreeSpec::from_json_str(
+            r#"{
+                "root": {"type":"sequence","children":[
+                    {"type":"identified","id":"dup","child":{"type":"action","name":"ok"}},
+                    {"type":"identified","id":"dup","child":{"type":"action","name":"ok"}}
+                ]}
+            }"#,
+        )
+        .expect("valid spec");
+        let error = spec.build(&registry).err().expect("duplicate id");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::DuplicateNodeId { id } if id == "dup"
+        ));
+        assert_eq!(error.path(), Some("root"));
+    }
+
+    #[test]
     fn validate_counts_services() {
         let spec = TreeSpec::from_json_str(
             r#"{

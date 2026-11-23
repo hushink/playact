@@ -35,6 +35,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
 
+      - name: Test examples
+        run: cargo test --workspace --all-features --examples
+
       - name: no_std core
         if: matrix.toolchain == 'stable'
         run: cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib
@@ -52,3 +55,7 @@ jobs:
       - name: Example battle_ai_config
         if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: cargo run -p playact --example battle_ai_config --features config --quiet > /dev/null
+
+      - name: Example battle_ai_showcase
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: cargo run -p playact --example battle_ai_showcase --features hot-reload --quiet > /dev/null

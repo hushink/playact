@@ -1,0 +1,70 @@
+
+{
+  "version": 1,
+  "name": "battle showcase v1",
+  "services": [
+    {"type": "action", "name": "sense"}
+  ],
+  "root": {
+    "type": "identified",
+    "id": "root_selector",
+    "child": {
+      "type": "utility_selector",
+      "hysteresis": 0.3,
+      "branches": [
+        {
+          "score": "heal_urgency",
+          "params": {"threshold": 0.35, "weight": 8.0},
+          "child": {
+            "type": "identified",
+            "id": "heal_branch",
+            "child": {
+              "type": "guard",
+              "condition": "hp_below",
+              "params": {"ratio": 0.35},
+              "child": {
+                "type": "identified",
+                "id": "heal",
+                "child": {
+                  "type": "try_action",
+                  "name": "heal",
+                  "params": {"amount": 14.0}
+                }
+              }
+            }
+          }
+        },
+        {
+          "score": "attack_value",
+          "params": {"base": 5.0, "finish_bonus": 4.0},
+          "child": {
+            "type": "identified",
+            "id": "attack_branch",
+            "child": {
+              "type": "guard",
+              "condition": "target_visible",
+              "child": {
+                "type": "identified",
+                "id": "attack",
+                "child": {
+                  "type": "try_action",
+                  "name": "attack",
+                  "params": {"damage": 6.0}
+                }
+              }
+            }
+          }
+        },
+        {
+          "score": "idle_value",
+          "params": {"base": 2.0},
+          "child": {
+            "type": "wait_for_event",
+            "event": "showcase.scan_pulse",
+            "name": "wait_scan"
+          }
+        }
+      ]
+    }
+  }
+}

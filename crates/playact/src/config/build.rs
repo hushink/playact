@@ -80,6 +80,15 @@ impl TreeSpec {
             tree.add_service(node);
         }
 
+        if let Some(id) = tree.duplicate_node_id() {
+            return Err(
+                ConfigBuildError::new(ConfigBuildErrorKind::DuplicateNodeId {
+                    id: String::from(id.as_str()),
+                })
+                .at("root"),
+            );
+        }
+
         Ok(tree)
     }
 }

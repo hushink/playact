@@ -497,7 +497,9 @@ rebuilt.restore_by_id(&snapshot)?;
 ID 快照不会遍历 `SubtreeSlot` 的动态子节点或嵌套树的 services。
 
 如果新树可能改名或删除 ID，使用 `restore_by_id_matching`：它只应用仍存在 ID 的
-条目，忽略其余条目，并返回恢复的节点数量。
+条目，忽略其余条目，并返回恢复的节点数量。builder 构建的树可用
+`BehaviorTree::duplicate_node_id()` 在快照前检查重复 ID；`TreeSpec` 构建会自动
+拒绝重复 ID。
 
 > 节点快照不包含 world、黑板值、闭包捕获状态、`AsyncAction` 任务、`SubtreeSlot`
 > 动态子树或 Tracer 状态，这些需要单独持久化。时间型节点保存的是绝对 `Time.now`，
@@ -599,6 +601,7 @@ let mut tree = spec.build(&registry)?;
   构建期反序列化为 key 的 value 或 event 类型。
 - `utility_selector` 的分支引用 `registry.score` 注册的评分函数；评分函数接收
   类型化参数，并在每个 tick 重新计算。
+- 构建出的根节点与服务中存在重复 `NodeId` 时，构建会直接失败。
 
 `TreeSpec.services` 声明在每个 tick 的根节点之前运行的服务节点：
 
@@ -881,6 +884,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo test --workspace --all-features --examples
 cargo bench -p playact
 cargo doc --workspace --all-features --no-deps
 cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib

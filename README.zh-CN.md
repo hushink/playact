@@ -160,6 +160,7 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo test --workspace --all-features --examples
 cargo bench -p playact
 cargo doc --workspace --all-features --no-deps
 cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib

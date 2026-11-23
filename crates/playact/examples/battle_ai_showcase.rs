@@ -190,150 +190,9 @@ fn build_registry() -> NodeRegistry<World> {
     registry
 }
 
-const CONFIG_V1: &str = r#"
-{
-  "version": 1,
-  "name": "battle showcase v1",
-  "services": [
-    {"type": "action", "name": "sense"}
-  ],
-  "root": {
-    "type": "identified",
-    "id": "root_selector",
-    "child": {
-      "type": "utility_selector",
-      "hysteresis": 0.3,
-      "branches": [
-        {
-          "score": "heal_urgency",
-          "params": {"threshold": 0.35, "weight": 8.0},
-          "child": {
-            "type": "identified",
-            "id": "heal_branch",
-            "child": {
-              "type": "guard",
-              "condition": "hp_below",
-              "params": {"ratio": 0.35},
-              "child": {
-                "type": "identified",
-                "id": "heal",
-                "child": {
-                  "type": "try_action",
-                  "name": "heal",
-                  "params": {"amount": 14.0}
-                }
-              }
-            }
-          }
-        },
-        {
-          "score": "attack_value",
-          "params": {"base": 5.0, "finish_bonus": 4.0},
-          "child": {
-            "type": "identified",
-            "id": "attack_branch",
-            "child": {
-              "type": "guard",
-              "condition": "target_visible",
-              "child": {
-                "type": "identified",
-                "id": "attack",
-                "child": {
-                  "type": "try_action",
-                  "name": "attack",
-                  "params": {"damage": 6.0}
-                }
-              }
-            }
-          }
-        },
-        {
-          "score": "idle_value",
-          "params": {"base": 2.0},
-          "child": {
-            "type": "wait_for_event",
-            "event": "showcase.scan_pulse",
-            "name": "wait_scan"
-          }
-        }
-      ]
-    }
-  }
-}
-"#;
+const CONFIG_V1: &str = include_str!("battle_ai_showcase.json");
 
-const CONFIG_V2: &str = r#"
-{
-  "version": 1,
-  "name": "battle showcase v2",
-  "services": [
-    {"type": "action", "name": "sense"},
-    {"type": "action", "name": "scan_extra"}
-  ],
-  "root": {
-    "type": "identified",
-    "id": "root_selector",
-    "child": {
-      "type": "utility_selector",
-      "hysteresis": 0.2,
-      "branches": [
-        {
-          "score": "heal_urgency",
-          "params": {"threshold": 0.30, "weight": 9.0},
-          "child": {
-            "type": "identified",
-            "id": "heal_branch",
-            "child": {
-              "type": "guard",
-              "condition": "hp_below",
-              "params": {"ratio": 0.30},
-              "child": {
-                "type": "identified",
-                "id": "heal",
-                "child": {
-                  "type": "try_action",
-                  "name": "heal",
-                  "params": {"amount": 10.0}
-                }
-              }
-            }
-          }
-        },
-        {
-          "score": "attack_value",
-          "params": {"base": 7.0, "finish_bonus": 5.0},
-          "child": {
-            "type": "identified",
-            "id": "attack_branch",
-            "child": {
-              "type": "guard",
-              "condition": "target_visible",
-              "child": {
-                "type": "identified",
-                "id": "attack",
-                "child": {
-                  "type": "try_action",
-                  "name": "attack",
-                  "params": {"damage": 9.0}
-                }
-              }
-            }
-          }
-        },
-        {
-          "score": "idle_value",
-          "params": {"base": 1.0},
-          "child": {
-            "type": "wait_for_event",
-            "event": "showcase.scan_pulse",
-            "name": "wait_scan"
-          }
-        }
-      ]
-    }
-  }
-}
-"#;
+const CONFIG_V2: &str = include_str!("battle_ai_showcase_v2.json");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::temp_dir().join(format!(
@@ -409,5 +268,65 @@ fn advance(world: &mut World) {
     world.distance = (world.distance - 2.0).max(4.0);
     if world.enemy_hp > 0.0 {
         world.player_hp = (world.player_hp - 5.0).max(0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use playact::config::TreeSpec;
+
+    use super::*;
+
+    #[test]
+    fn showcase_configs_build_with_expected_services() {
+        let registry = build_registry();
+
+        let v1 = TreeSpec::from_json_str(CONFIG_V1)
+            .expect("v1 spec")
+            .build(&registry)
+            .expect("v1 tree");
+        assert_eq!(v1.service_count(), 1);
+        assert_eq!(v1.duplicate_node_id(), None);
+
+        let v2 = TreeSpec::from_json_str(CONFIG_V2)
+            .expect("v2 spec")
+            .build(&registry)
+            .expect("v2 tree");
+        assert_eq!(v2.service_count(), 2);
+        assert_eq!(v2.duplicate_node_id(), None);
+    }
+
+    #[test]
+    fn showcase_scenario_reports_try_action_errors() {
+        let registry = build_registry();
+        let stats = StatsTracer::new();
+        let mut world = World::new();
+
+        let mut tree = TreeSpec::from_json_str(CONFIG_V1)
+            .expect("v1 spec")
+            .build(&registry)
+            .expect("v1 tree");
+        tree.set_tracer(Some(Box::new(stats.clone())));
+        for tick in 0..10_u64 {
+            world.turn = tick as u32;
+            let _ = tree.tick(&mut world, Time::from_millis(tick * 1000, 1000));
+            advance(&mut world);
+        }
+
+        let mut tree = TreeSpec::from_json_str(CONFIG_V2)
+            .expect("v2 spec")
+            .build(&registry)
+            .expect("v2 tree");
+        tree.set_tracer(Some(Box::new(stats.clone())));
+        for tick in 10..20_u64 {
+            world.turn = tick as u32;
+            let _ = tree.tick(&mut world, Time::from_millis(tick * 1000, 1000));
+            advance(&mut world);
+        }
+
+        let errors: u64 = stats.nodes().iter().map(|(_, node)| node.errors).sum();
+        assert!(errors > 0, "expected try_action errors, got {errors}");
+        assert!(world.enemy_hp < 80.0);
+        assert!(world.player_hp > 0.0);
     }
 }

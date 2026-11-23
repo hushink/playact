@@ -1,6 +1,7 @@
 //! Behavior tree driver shell and structure description.
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::{self, Write};
@@ -96,6 +97,37 @@ impl<W> BehaviorTree<W> {
     #[must_use]
     pub fn service_count(&self) -> usize {
         self.services.len()
+    }
+
+    /// Returns the first [`NodeId`] that appears more than once across the root
+    /// and services.
+    ///
+    /// Traversal follows [`Node::children`], matching ID-keyed snapshots. Dynamic
+    /// `SubtreeSlot` children and the services of a nested `BehaviorTree` are not
+    /// traversed.
+    #[must_use]
+    pub fn duplicate_node_id(&self) -> Option<NodeId> {
+        fn visit<W>(node: &(dyn Node<W> + Send), seen: &mut BTreeSet<NodeId>) -> Option<NodeId> {
+            if let Some(id) = node.id()
+                && !seen.insert(id.clone())
+            {
+                return Some(id.clone());
+            }
+            node.children()
+                .iter()
+                .find_map(|child| visit(child.as_ref(), seen))
+        }
+
+        let mut seen = BTreeSet::new();
+        if let Some(id) = visit(self.root.as_ref(), &mut seen) {
+            return Some(id);
+        }
+        for service in &self.services {
+            if let Some(id) = visit(service.as_ref(), &mut seen) {
+                return Some(id);
+            }
+        }
+        None
     }
 
     /// Drives one logic frame.
@@ -852,6 +884,47 @@ mod tests {
         tree.reset();
         assert_eq!(tree.last_status(), None);
         assert!(!tree.is_running());
+    }
+
+    #[test]
+    fn duplicate_node_id_detects_root_and_service_duplicates() {
+        let duplicate = BehaviorTreeBuilder::<()>::new("duplicate")
+            .selector(|b| {
+                b.action("first", |_| Status::Success)
+                    .id("same")
+                    .action("second", |_| Status::Success)
+                    .id("same")
+            })
+            .build()
+            .expect("tree");
+        assert_eq!(duplicate.duplicate_node_id(), Some(NodeId::new("same")));
+
+        let mut with_service = BehaviorTreeBuilder::<()>::new("root")
+            .action("root", |_| Status::Success)
+            .id("shared")
+            .build()
+            .expect("tree");
+        let service = BehaviorTreeBuilder::<()>::new("service")
+            .action("service", |_| Status::Success)
+            .id("shared")
+            .build()
+            .expect("service");
+        with_service.add_service(Box::new(service));
+        assert_eq!(
+            with_service.duplicate_node_id(),
+            Some(NodeId::new("shared"))
+        );
+
+        let unique = BehaviorTreeBuilder::<()>::new("unique")
+            .selector(|b| {
+                b.action("first", |_| Status::Success)
+                    .id("a")
+                    .action("second", |_| Status::Success)
+                    .id("b")
+            })
+            .build()
+            .expect("tree");
+        assert_eq!(unique.duplicate_node_id(), None);
     }
 
     #[test]

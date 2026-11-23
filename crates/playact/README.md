@@ -516,6 +516,8 @@ children and nested-tree services are not traversed by ID snapshots.
 
 If the new tree may rename or remove IDs, use `restore_by_id_matching`: it applies
 entries whose IDs exist, ignores the rest, and returns the number of nodes restored.
+Use `BehaviorTree::duplicate_node_id()` to check builder-created trees before
+snapshotting; `TreeSpec` builds reject duplicate IDs automatically.
 
 > Node snapshots do not include the world, blackboard values, closure captures,
 > `AsyncAction` tasks, `SubtreeSlot` dynamic subtrees, or Tracer state. Persist those
@@ -623,6 +625,7 @@ let mut tree = spec.build(&registry)?;
   values deserialize into the key's value or event type at build time.
 - `utility_selector` branches reference score functions registered with
   `registry.score`; scores receive typed parameters and are re-evaluated every tick.
+- A duplicate `NodeId` across the built root and services is rejected at build time.
 
 `TreeSpec.services` declares nodes that run before the root on every tick:
 
@@ -919,6 +922,7 @@ cargo run -p playact --example live_inspector --features inspector
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo test --workspace --all-features --examples
 cargo bench -p playact
 cargo doc --workspace --all-features --no-deps
 cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib
