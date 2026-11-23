@@ -684,7 +684,8 @@ let mut tree = spec.build(&registry)?;
   `custom` factories, and `scoped` / `contract` subtree boundaries.
 - `subtree` configuration nodes reference a `SubtreeFactory` registered with
   `registry.subtree(name, factory)`, so complex code-built subtrees can be reused
-  by name from JSON/TOML/YAML/RON.
+  by name from JSON/TOML/YAML/RON. `registry.subtree_with_params::<P>(...)`
+  deserializes the node's `params` into `P` before creating the template.
 - `try_action` registrations return fallible tick closures; errors are reported
   through the tracer and become `Failure`. `async_action` registrations return
   `AsyncTask` starters for thread, Tokio, or custom remote tasks.

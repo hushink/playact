@@ -44,6 +44,8 @@ type BoxedTryTick<W, E> =
 type BoxedPredicate<W> = Box<dyn for<'a> Fn(&Context<'a, W>) -> bool + Send + 'static>;
 type BoxedStart<W> =
     Box<dyn for<'a> FnMut(&mut Context<'a, W>) -> Box<dyn AsyncTask> + Send + 'static>;
+type SubtreeBuilder<W> =
+    Box<dyn Fn(&Value) -> Result<SubtreeFactory<W>, ConfigBuildError> + Send + Sync>;
 
 /// Factory that turns typed params into an independent tick closure per node.
 ///
@@ -160,7 +162,7 @@ pub struct NodeRegistry<W: 'static> {
     try_actions: HashMap<String, ErasedTryActionFactory<W>>,
     async_actions: HashMap<String, ErasedAsyncActionFactory<W>>,
     custom: HashMap<String, Factory<W>>,
-    subtrees: HashMap<String, SubtreeFactory<W>>,
+    subtrees: HashMap<String, SubtreeBuilder<W>>,
 }
 
 impl<W: 'static> NodeRegistry<W> {
@@ -499,7 +501,32 @@ impl<W: 'static> NodeRegistry<W> {
     ) -> Result<(), RegistryError> {
         let name = name.into();
         ensure_name_available(&self.subtrees, "subtree", &name)?;
-        self.subtrees.insert(name, factory);
+        let erased: SubtreeBuilder<W> = Box::new(move |_params| Ok(factory.clone()));
+        self.subtrees.insert(name, erased);
+        Ok(())
+    }
+
+    /// Registers a parameterized code-built subtree template.
+    ///
+    /// The configured `params` value is deserialized into `P` once per
+    /// `subtree` node, and the factory returns the template for that instance.
+    /// When `params` is omitted it is deserialized from `null`; use `P = ()`
+    /// for parameterless templates.
+    pub fn subtree_with_params<P>(
+        &mut self,
+        name: impl Into<String>,
+        factory: impl Fn(P) -> SubtreeFactory<W> + Send + Sync + 'static,
+    ) -> Result<(), RegistryError>
+    where
+        P: DeserializeOwned + Send + 'static,
+    {
+        let name = name.into();
+        ensure_name_available(&self.subtrees, "subtree", &name)?;
+        let erased: SubtreeBuilder<W> = Box::new(move |params| {
+            let params: P = parse_params(params)?;
+            Ok(factory(params))
+        });
+        self.subtrees.insert(name, erased);
         Ok(())
     }
 
@@ -675,9 +702,13 @@ impl<W: 'static> NodeRegistry<W> {
         }
     }
 
-    pub(crate) fn build_subtree(&self, template: &str) -> Result<BoxedNode<W>, ConfigBuildError> {
+    pub(crate) fn build_subtree(
+        &self,
+        template: &str,
+        params: &Value,
+    ) -> Result<BoxedNode<W>, ConfigBuildError> {
         match self.subtrees.get(template) {
-            Some(factory) => Ok(factory.instantiate()),
+            Some(builder) => Ok(builder(params)?.instantiate()),
             None => Err(ConfigBuildError::new(
                 ConfigBuildErrorKind::UnknownSubtreeTemplate {
                     template: template.to_string(),

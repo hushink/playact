@@ -929,6 +929,7 @@ let mut tree = spec.build(&registry)?;
 | `async_action::<P>(...)` | async action returning a task |
 | `custom::<P>(kind, factory)` | arbitrary node factory with typed params and children |
 | `subtree(name, factory)` | code-built `SubtreeFactory` template for `subtree` nodes |
+| `subtree_with_params::<P>(name, factory)` | same, with `"params"` deserialized into `P` per node |
 | `switch_key(key)` / `set_value_key(key)` / `event_key(key)` | typed keys referenced by config |
 | `contract_key(key)` / `scoped_key(key)` | typed keys for `contract` / `scoped` boundaries; scoped values must be `Clone` |
 
@@ -1016,7 +1017,8 @@ Examples:
 {
   "type": "subtree",
   "template": "goblin_patrol",
-  "name": "patrol"
+  "name": "patrol",
+  "params": {"speed": 3}
 }
 ```
 

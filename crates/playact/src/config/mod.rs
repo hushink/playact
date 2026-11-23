@@ -494,6 +494,9 @@ pub enum SpecNode {
         name: Option<String>,
         /// Registered template name.
         template: String,
+        /// Template parameters.
+        #[serde(default)]
+        params: Value,
     },
     /// Custom node.
     Custom {
@@ -749,6 +752,16 @@ mod tests {
     use crate::time::Time;
 
     use super::*;
+
+    fn ok_subtree() -> SubtreeFactory<()> {
+        SubtreeFactory::new(|| {
+            BehaviorTreeBuilder::<()>::new("template")
+                .action("ok", |_| Status::Success)
+                .build()
+                .expect("template")
+                .into_root()
+        })
+    }
 
     fn action_registry() -> NodeRegistry<()> {
         let mut registry = NodeRegistry::<()>::new();
@@ -1203,6 +1216,55 @@ mod tests {
 
         let mut world = ();
         assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+    }
+
+    #[test]
+    fn builds_parameterized_subtree_template() {
+        static SCALE: Key<u32> = Key::new("test.config.subtree.scale");
+
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .subtree_with_params::<u32>("scaled", |scale| {
+                SubtreeFactory::new(move || {
+                    BehaviorTreeBuilder::<()>::new("scaled")
+                        .action("apply", move |ctx: &mut Context<'_, ()>| {
+                            ctx.blackboard().set(&SCALE, scale);
+                            Status::Success
+                        })
+                        .build()
+                        .expect("scaled")
+                        .into_root()
+                })
+            })
+            .expect("register subtree");
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"subtree","template":"scaled","params":9}}"#,
+        )
+        .expect("valid spec");
+        let mut tree = spec.build(&registry).expect("build tree");
+        let mut world = ();
+        assert_eq!(tree.tick(&mut world, Time::ZERO), Status::Success);
+        assert_eq!(tree.blackboard().get(&SCALE), Some(&9));
+    }
+
+    #[test]
+    fn invalid_subtree_params_report_path() {
+        let mut registry = NodeRegistry::<()>::new();
+        registry
+            .subtree_with_params::<u32>("scaled", |_| ok_subtree())
+            .expect("register subtree");
+
+        let spec = TreeSpec::from_json_str(
+            r#"{"root":{"type":"subtree","template":"scaled","params":"bad"}}"#,
+        )
+        .expect("valid spec");
+        let error = spec.build(&registry).err().expect("invalid subtree params");
+        assert!(matches!(
+            error.kind(),
+            ConfigBuildErrorKind::InvalidParams { .. }
+        ));
+        assert_eq!(error.path(), Some("root"));
     }
 
     #[test]
