@@ -184,7 +184,8 @@ The test suite covers every node, builder, config layer, reload path, remote loa
 snapshot, async adapter, public-API integration tests, doctests, compile-fail checks,
 and deterministic randomized stress tests. Benchmarks are dependency-free and cover
 tick paths, blackboard access, construction, and `describe`. CI runs stable and
-MSRV 1.92 on Linux and Windows, plus an embedded `no_std` check.
+MSRV 1.92 on Linux and Windows, an embedded `no_std` check, and warning-free
+builds for individual feature combinations.
 
 ## Documentation
 

@@ -42,6 +42,18 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --lib
 
+      - name: Feature combinations
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          set -euo pipefail
+          for features in config,schema diff-serde inspector inspector,diff-serde hot-reload remote-config; do
+            echo "::group::features=$features"
+            cargo check -p playact --no-default-features --features "$features" --lib
+            echo "::endgroup::"
+          done
+
       - name: Docs
         if: matrix.toolchain == 'stable'
         env:

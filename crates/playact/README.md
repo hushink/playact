@@ -1021,4 +1021,5 @@ cargo check -p playact --no-default-features --target thumbv7em-none-eabihf --li
   reset, describe, and Send invariants.
 - `benches/engine.rs` is a dependency-free microbenchmark suite for tick paths,
   blackboard access, construction, and describe output.
-- CI runs stable and MSRV 1.92 on Linux and Windows, plus an embedded no_std check.
+- CI runs stable and MSRV 1.92 on Linux and Windows, an embedded no_std check,
+  and warning-free builds for individual feature combinations.
